@@ -106,45 +106,58 @@
       border-left: 4px solid var(--accent);
       background: var(--surface);
     }
+
+    .boxed {
+      padding: 12px 14px;
+      border: solid 1px #888;
+      background: var(--surface);
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>TclWire</h1>
-    <p class="lead">TclWire is a Tcl application server being shaped around small, composable server implementations. The current runtime focuses on HTTP while the threading, routing, logging, and configuration model settle.</p>
+    <h1 class="boxed"> TclWire </h1>
+    <p class="lead">TclWire is a Tcl application server shaped around small, composable server implementations. The current runtime starts HTTP by default and again supports selectable FTP and HTTP proxy services alongside the shared threading, logging, and configuration model.</p>
   </header>
 
   <main>
     <section>
       <h2>Current Runtime</h2>
-      <p>The application entry point is <code>tclwire.tcl</code>. By default it starts one HTTP listener on <code>127.0.0.1:8990</code>.</p>
+      <p>The application entry point is <code>tclwire.tcl</code>. By default it starts one HTTP listener on <code>127.0.0.1:8990</code>. FTP and proxy listeners are available when selected from the command line.</p>
       <pre><code>tclsh tclwire.tcl</code></pre>
-      <p>Use <code>--httpport</code> and <code>--host</code> to choose a different endpoint.</p>
+      <p>Use <code>--httpport</code> and <code>--host</code> to choose a different HTTP endpoint.</p>
       <pre><code>tclsh tclwire.tcl --host 127.0.0.1 --httpport 8080</code></pre>
+      <p>Use <code>--startservers</code> to start the default listeners for multiple protocols. Repeat <code>--service</code> with the same selected protocols when explicit port pairs are needed.</p>
+      <pre><code>tclsh tclwire.tcl --startservers http,ftp,proxy
+tclsh tclwire.tcl --startservers all
+tclsh tclwire.tcl --startservers http,ftp,proxy --service http:8080 --service ftp:2121 --service proxy:8992</code></pre>
     </section>
 
     <section>
-      <h2>HTTP Serving</h2>
+      <h2>Services</h2>
       <p>The HTTP service serves <code>::tclwire::CApplication</code>. Its default routing behavior is static file serving from the configured document root.</p>
       <p>For <code>GET</code> and <code>HEAD</code> requests, paths are resolved under the active document root. Existing application routes can still return dynamic responses before the static fallback is used.</p>
-      <p class="note">The current default service set is intentionally restricted to HTTP. HTTPS, FTP, and proxy code may still exist in the repository, but they are not part of the default startup path while the TclWire architecture is being reorganized.</p>
+      <p>The FTP service exposes the configured FTP root and supports interactive file operations through the FTP worker thread. The HTTP proxy service accepts proxy-form HTTP requests and <code>CONNECT</code> tunnels, with proxy authentication support for protected test targets.</p>
+      <p class="note">HTTP remains the default service set. FTP, FTPS, HTTPS, and proxy listeners are implemented but must be requested with <code>--startservers</code> or <code>--service</code>. Secure listeners require the configured TLS certificate and key files to be present.</p>
     </section>
 
     <section>
       <h2>Document Roots</h2>
-      <p>The active document root is selected in this order:</p>
+      <p>The active document root for HTTP and HTTPS is selected in this order:</p>
       <ul>
         <li><code>--docroot /path/to/root</code></li>
         <li><code>TCLWIRE_DOC_ROOT</code></li>
         <li><code>/tmp/tclwire</code></li>
       </ul>
-      <p>If the configured document root does not exist, TclWire creates it and seeds it with the built-in index content. If the directory already exists, TclWire leaves its contents untouched. Document roots are retained when the server exits.</p>
+      <p>If the configured document root does not exist, TclWire creates it. TclWire seeds the built-in index content when <code>index.html</code> is missing, and preserves any existing file. Document roots are retained when the server exits.</p>
       <pre><code>tclsh tclwire.tcl --docroot /var/tmp/tclwire-site</code></pre>
+      <p>The FTP root defaults to the document root unless <code>TCLWIRE_FTP_ROOT</code> or <code>--ftproot</code> is supplied. When an FTP or FTPS listener is selected, TclWire creates the FTP root if necessary and seeds it with a welcome file.</p>
+      <pre><code>tclsh tclwire.tcl --startservers ftp --ftproot /var/tmp/tclwire-ftp</code></pre>
     </section>
 
     <section>
       <h2>Threading Model</h2>
-      <p>The master thread owns the listening sockets. When a client connects, the HTTP service asks <code>::tclwire::ThreadMaster</code> for an idle worker thread.</p>
+      <p>The master thread owns the listening sockets. When a client connects, the selected service asks <code>::tclwire::ThreadMaster</code> for an idle worker thread for that protocol class.</p>
       <p>The accepted socket channel is transferred to the selected worker with <code>thread::transfer</code>. The worker configures the channel for nonblocking binary I/O, installs readable events, and serves the connection until it closes.</p>
       <p>Workers receive the parsed runtime configuration from the master, including the active document root. Connection open and close events are recorded by the master-side connection database.</p>
     </section>
@@ -154,8 +167,10 @@
       <pre><code>tclsh tclwire.tcl \
   ?--host address? \
   ?--httpport port? \
+  ?--httpsport port? ?--ftpport port? ?--ftpsport port? ?--proxyport port? \
   ?--service protocol:port? ... \
   ?--docroot path? ?--ftproot path? \
+  ?--certfile path? ?--keyfile path? ?--noftp-user-check? \
   ?--logfile path? \
   ?--startservers protocol[,protocol,...]|all? \
   ?--quiet? ?--debug?</code></pre>
@@ -176,8 +191,28 @@
             <td>Set the HTTP listener port. Default: <code>8990</code>.</td>
           </tr>
           <tr>
+            <td><code>--httpsport</code></td>
+            <td>Set the HTTPS listener port when HTTPS is selected. Default: <code>9443</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--ftpport</code></td>
+            <td>Set the FTP listener port when FTP is selected. Default: <code>8991</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--ftpsport</code></td>
+            <td>Set the implicit FTPS listener port when FTPS is selected. Default: <code>990</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--proxyport</code></td>
+            <td>Set the HTTP proxy listener port when proxy is selected. Default: <code>8992</code>.</td>
+          </tr>
+          <tr>
             <td><code>--service</code></td>
-            <td>Add an explicit service entry such as <code>http:8080</code>.</td>
+            <td>Add an explicit service entry such as <code>http:8080</code>, <code>ftp:2121</code>, or <code>proxy:8992</code>. May be repeated; entries still need to be selected by <code>--startservers</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--startservers</code></td>
+            <td>Select the default service entries to start. Use a comma-separated list such as <code>http,ftp,proxy</code> or <code>all</code>.</td>
           </tr>
           <tr>
             <td><code>--docroot</code></td>
@@ -185,7 +220,19 @@
           </tr>
           <tr>
             <td><code>--ftproot</code></td>
-            <td>Set the FTP root for future FTP service runs. It is not created during HTTP-only startup.</td>
+            <td>Set the root directory exposed by FTP and FTPS listeners.</td>
+          </tr>
+          <tr>
+            <td><code>--noftp-user-check</code></td>
+            <td>Disable system user verification for FTP login.</td>
+          </tr>
+          <tr>
+            <td><code>--certfile</code></td>
+            <td>Set the TLS certificate file used by HTTPS and FTPS listeners.</td>
+          </tr>
+          <tr>
+            <td><code>--keyfile</code></td>
+            <td>Set the TLS private key file used by HTTPS and FTPS listeners.</td>
           </tr>
           <tr>
             <td><code>--logfile</code></td>
@@ -239,8 +286,8 @@
 
     <section>
       <h2>Project Direction</h2>
-      <p>The active architecture is moving toward a master process that owns listeners and dispatches accepted channels to worker threads. Each worker runs a server instance and reports lifecycle, errors, and request logging back to the master.</p>
-      <p>The next useful steps are to generalize the HTTP worker script into a reusable server-worker template, rename <code>CApplication</code> to an HTTP-specific application class, and continue separating protocol-neutral runtime support from HTTP-specific behavior.</p>
+      <p>The active architecture uses a master process that owns listeners and dispatches accepted channels to worker threads. Each worker runs a server instance and reports lifecycle, errors, and request logging back to the master.</p>
+      <p>The reintroduced FTP and proxy services share the same selectable-service startup path as HTTP. The next useful steps are to keep consolidating protocol-neutral worker support, rename <code>CApplication</code> to an HTTP-specific application class, and continue separating shared runtime support from protocol-specific behavior.</p>
     </section>
   </main>
 </body>

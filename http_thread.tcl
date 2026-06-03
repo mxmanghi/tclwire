@@ -33,6 +33,9 @@ set ::tclwire::http_thread_script [format {
             variable server
 
             if {$server ne {}} {
+                if {[dict exists $config docroot] && [dict get $config docroot] ne {}} {
+                    [$server application] set_doc_root [dict get $config docroot]
+                }
                 return $server
             }
 
@@ -43,6 +46,9 @@ set ::tclwire::http_thread_script [format {
                 -host [dict get $config host] \
                 -port [dict get $config port] \
                 -serviceconfig $config]
+            if {[dict exists $config docroot] && [dict get $config docroot] ne {}} {
+                [$server application] set_doc_root [dict get $config docroot]
+            }
             return $server
         }
 

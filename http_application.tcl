@@ -24,6 +24,35 @@ if {[info commands ::tclwire::CApplication] eq {}} {
     # matches the future worker-thread handoff boundary.
 
     oo::class create ::tclwire::CApplication {
+        variable document_root
+
+        constructor args {
+            set document_root [::tclwire::doc_root]
+
+            foreach {name value} $args {
+                switch -exact -- $name {
+                    -docroot {
+                        set document_root [file normalize $value]
+                    }
+                    default {
+                        error "unknown option: $name"
+                    }
+                }
+            }
+        }
+
+        method set_doc_root {path} {
+            set document_root [file normalize $path]
+            return $document_root
+        }
+
+        method doc_root {} {
+            if {![info exists document_root] || $document_root eq {}} {
+                set document_root [::tclwire::doc_root]
+            }
+            return $document_root
+        }
+
         method header_lines {header_block} {
             return [regexp -all -inline {[^\r\n]+} $header_block]
         }
@@ -130,9 +159,6 @@ if {[info commands ::tclwire::CApplication] eq {}} {
             }
         }
 
-        # Mock worker entry point. The service passes the channel and the full
-        # request here today; later the same method can move the channel and
-        # buffered bytes to a worker thread.
         method service_request {service chan request} {
 
             # parsing the main HTTP request line. In case of
@@ -153,8 +179,7 @@ if {[info commands ::tclwire::CApplication] eq {}} {
                 set response [my route_request $service $method $path $target $version $headers $request]
                 dict set response head_only [expr {$method eq "HEAD"}]
                 set response [$service build_response_dict $response]
-                $service log_request \
-                    "method=$method status=[dict get $response status] path=[::tclwire::log_value $path]"
+                $service log_request "method=$method status=[dict get $response status] path=[::tclwire::log_value $path]"
                 if {[dict exists $response delay_ms]} {
                     set callback [list $service send_response $chan $response]
                     if {[dict exists $response close_only] && [dict get $response close_only]} {
@@ -206,8 +231,9 @@ if {[info commands ::tclwire::CApplication] eq {}} {
                 }
             }
 
-            set doc_root [::tclwire::doc_root]
+            set doc_root [my doc_root]
             set fs_path [file join $doc_root {*}$relative_segments]
+            #puts $fs_path
             if {[file isdirectory $fs_path]} {
                 set fs_path [file join $fs_path index.html]
             }

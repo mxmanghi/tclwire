@@ -637,8 +637,8 @@ proc ::tclwire::configure_roots {config} {
 
         if {!$docroot_exists} {
             file mkdir $docroot
-            seed_doc_root $docroot
         }
+        seed_doc_root $docroot
         ::tclwire::set_doc_root $docroot
     }
 

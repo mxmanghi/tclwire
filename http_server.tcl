@@ -47,6 +47,7 @@ oo::class create ::tclwire::http_service {
 
         next {*}$service_args
         set application [$application_class new]
+        my apply_service_config
     }
 
     destructor {
@@ -58,6 +59,13 @@ oo::class create ::tclwire::http_service {
 
     method application {} {
         return $application
+    }
+
+    method apply_service_config {} {
+        set config [my service_config]
+        if {[dict exists $config docroot] && [dict get $config docroot] ne {}} {
+            $application set_doc_root [dict get $config docroot]
+        }
     }
 
     method description {} {
