@@ -1,6 +1,6 @@
 # ftp_server.tcl --
 #
-# Implementation of a simple FTP server for testing of the tclcurl extension
+# Implementation of a simple FTP server for TclWire.
 #
 # Copyright (c) 2024-2026 Massimo Manghi
 #
@@ -12,15 +12,27 @@
 
 namespace eval ::tclwire {}
 
+package require Thread
+
 oo::class create ::tclwire::ftp_service {
     superclass ::tclwire::service
 
-    variable ftp_root sessions
+    variable ftp_root ftp_user_check sessions connection_ids
 
     constructor args {
-        set ftp_root [::tclwire::ftp_root]
         array set sessions {}
+        array set connection_ids {}
         next {*}$args
+
+        set ftp_root [::tclwire::ftp_root]
+        set ftp_user_check 1
+        set config [my service_config]
+        if {[dict exists $config ftproot] && [dict get $config ftproot] ne {}} {
+            set ftp_root [file normalize [dict get $config ftproot]]
+        }
+        if {[dict exists $config ftp_user_check]} {
+            set ftp_user_check [expr {[dict get $config ftp_user_check] ? 1 : 0}]
+        }
     }
 
     destructor {
@@ -31,19 +43,71 @@ oo::class create ::tclwire::ftp_service {
     }
 
     method start {} {
-        file mkdir $ftp_root
-        set listener [socket -server [list [self] accept] \
-            -myaddr [my host] [my port]]
+        if {[file exists $ftp_root] && ![file isdirectory $ftp_root]} {
+            error "FTP root exists but is not a directory: $ftp_root"
+        }
+        if {![file exists $ftp_root]} {
+            file mkdir $ftp_root
+            ::tclwire::seed_ftp_root $ftp_root
+        }
+
+        set listener [my open_listener_socket]
+        if {$listener eq {}} {
+            return {}
+        }
         my set_listener $listener
         my log [my listening_message]
         return $listener
     }
 
     method description {} {
-        return "FTP test server"
+        return "FTP server"
     }
 
     method accept {chan host port} {
+        after idle [list [self] dispatch_accept $chan $host $port]
+    }
+
+    method dispatch_accept {chan host port} {
+        set thread_master [my thread_master]
+        if {$thread_master eq {}} {
+            ::tclwire::msgoutput "no FTP thread master available for chan=$chan"
+            catch {close $chan}
+            return
+        }
+
+        set worker_thread_id [$thread_master acquire_worker]
+        if {$worker_thread_id eq {}} {
+            ::tclwire::msgoutput "no idle FTP worker available for chan=$chan"
+            catch {close $chan}
+            return
+        }
+
+        set connection_id [::tclwire::record_connection_opened \
+            [my protocol] $chan $host $port [my endpoint] $worker_thread_id]
+
+        if {[catch {thread::transfer $worker_thread_id $chan} transfer_error]} {
+            ::tclwire::record_connection_closed $connection_id $transfer_error
+            ::tclwire::msgoutput "FTP channel transfer failed chan=$chan worker=$worker_thread_id error=$transfer_error"
+            catch {$thread_master return_thread $worker_thread_id}
+            catch {close $chan}
+            return
+        }
+
+        set config [my service_config]
+        dict set config protocol [my protocol]
+        dict set config connection_class [my connection_class]
+        dict set config secure [my secure]
+        dict set config host [my host]
+        dict set config port [my port]
+        ::tclwire::msgoutput "dispatch FTP connection id=$connection_id chan=$chan worker=$worker_thread_id"
+        thread::send -async $worker_thread_id \
+            [list ::tclwire::serve_transferred_ftp_connection $chan $connection_id $host $port $config]
+    }
+
+    method serve_connection {chan connection_id host port} {
+        ::tclwire::msgoutput "worker serve FTP connection id=$connection_id chan=$chan"
+        set connection_ids($chan) $connection_id
         chan configure $chan -blocking 0 \
                              -buffering line \
                              -translation crlf \
@@ -55,9 +119,11 @@ oo::class create ::tclwire::ftp_service {
                                          pending_action {} \
                                          restart_offset 0 \
                                          rename_from {} \
+                                         username {} \
+                                         authenticated 0 \
                                          last_command {} \
                                          last_argument {}]
-        my send_reply $chan 220 "TclCurl FTP test server ready"
+        my send_reply $chan 220 "TclWire FTP server ready"
         chan event $chan readable [list [self] read_command $chan]
     }
 
@@ -82,7 +148,17 @@ oo::class create ::tclwire::ftp_service {
         set argument [string trim [string range $line [string length $command] end]]
         dict set sessions($chan) last_command $command
         dict set sessions($chan) last_argument $argument
+
+        if {[my command_requires_login $command] && ![dict get $sessions($chan) authenticated]} {
+            my send_reply $chan 530 "Please login with USER and PASS"
+            return
+        }
+
         my handle_command $chan $command $argument
+    }
+
+    method command_requires_login {command} {
+        return [expr {$command ni {USER PASS QUIT SYST FEAT NOOP}}]
     }
 
     method handle_command {chan command argument} {
@@ -90,12 +166,29 @@ oo::class create ::tclwire::ftp_service {
             return
         }
 
-        ::tclwire::msgoutput "TclCurl FTP Server: command '$command' received"
+        ::tclwire::msgoutput "TclWire FTP server: command '$command' received"
         switch -- $command {
             USER {
-                my send_reply $chan 331 "Anonymous login ok, send password"
+                dict set sessions($chan) username $argument
+                dict set sessions($chan) authenticated 0
+                if {$argument eq {}} {
+                    my send_reply $chan 501 "Missing user name"
+                    return
+                }
+                my send_reply $chan 331 "User name ok, send password"
             }
             PASS {
+                set username [dict get $sessions($chan) username]
+                if {$username eq {}} {
+                    my send_reply $chan 503 "Login with USER first"
+                    return
+                }
+                if {![my authenticate_user $username $argument]} {
+                    my send_reply $chan 530 "Login incorrect"
+                    return
+                }
+
+                dict set sessions($chan) authenticated 1
                 my send_reply $chan 230 "Login successful"
             }
             SYST {
@@ -235,6 +328,30 @@ oo::class create ::tclwire::ftp_service {
                 my send_reply $chan 502 "Command not implemented"
             }
         }
+    }
+
+    method authenticate_user {username password} {
+        if {!$ftp_user_check} {
+            return 1
+        }
+
+        return [my authenticate_system_user $username $password]
+    }
+
+    method authenticate_system_user {username password} {
+        if {$username eq {} || $password eq {}} {
+            return 0
+        }
+
+        if {[catch {exec id -u -- $username}]} {
+            return 0
+        }
+
+        # Pure Tcl cannot validate Unix shadow/PAM passwords safely. Keep this
+        # path fail-closed until TclWire grows a native PAM/system-auth helper.
+        ::tclwire::msgoutput \
+            "FTP system password verification is unavailable in pure Tcl; use --noftp-user-check for local test sessions"
+        return 0
     }
 
     method send_reply {chan code message} {
@@ -519,9 +636,24 @@ oo::class create ::tclwire::ftp_service {
             return
         }
 
+        set connection_id {}
+        if {[info exists connection_ids($chan)]} {
+            set connection_id $connection_ids($chan)
+            unset connection_ids($chan)
+        }
+
         my reset_passive_state $chan
         catch {close $chan}
         unset sessions($chan)
+
+        if {$connection_id ne {} && [info exists ::master_thread_id] && $::master_thread_id ne {}} {
+            thread::send -async $::master_thread_id \
+                [list ::tclwire::record_connection_closed $connection_id]
+        }
+
+        if {[info commands ::tclwire::accounting] ne {}} {
+            catch {::tclwire::accounting change_thread_status [thread::id] idle}
+        }
     }
 }
 

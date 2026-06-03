@@ -2,7 +2,7 @@
 #
 # tclwire.tcl -- TclWire application server entry point.
 #
-# Implementation of the HTTP server support used by the TclCurl extension.
+# TclWire application server entry point.
 #
 # Copyright (c) 2024-2026 Massimo Manghi
 #
@@ -21,18 +21,24 @@ namespace eval ::tclwire {
     variable next_service_id 0
     variable next_connection_id 0
     variable service_classes
+    variable connection_classes
+    variable thread_masters
     variable logger_logchan {}
     variable connections {}
     array set service_classes {}
+    array set connection_classes {}
+    array set thread_masters {}
 }
 
 oo::class create ::tclwire::service {
     variable protocol host port quiet listener logfile
-    variable thread_master service_config
+    variable thread_master service_config connection_class secure
 
     constructor args {
         array set options {
             -protocol {}
+            -connectionclass {}
+            -secure 0
             -host 127.0.0.1
             -port {}
             -quiet 0
@@ -56,6 +62,8 @@ oo::class create ::tclwire::service {
         }
 
         set protocol    $options(-protocol)
+        set connection_class $options(-connectionclass)
+        set secure      [expr {$options(-secure) ? 1 : 0}]
         set host        $options(-host)
         set port        $options(-port)
         set quiet       $options(-quiet)
@@ -63,6 +71,10 @@ oo::class create ::tclwire::service {
         set thread_master $options(-threadmaster)
         set service_config $options(-serviceconfig)
         set listener    {}
+
+        if {$connection_class eq {}} {
+            set connection_class $protocol
+        }
     }
 
     destructor {
@@ -85,8 +97,16 @@ oo::class create ::tclwire::service {
         return "[my protocol]://[my host]:[my port]/"
     }
 
+    method connection_class {} {
+        return $connection_class
+    }
+
+    method secure {} {
+        return $secure
+    }
+
     method description {} {
-        return "[string toupper [my protocol]] test server"
+        return "[string toupper [my protocol]] server"
     }
 
     method listening_message {} {
@@ -123,6 +143,32 @@ oo::class create ::tclwire::service {
     method set_listener {chan} {
         set listener $chan
         return $listener
+    }
+
+    method open_listener_socket {} {
+        set accept_callback [list [self] accept]
+
+        if {![my secure]} {
+            return [socket -server $accept_callback -myaddr [my host] [my port]]
+        }
+
+        if {![::tclwire::https_credentials_available]} {
+            my log "TLS credentials not available, skipping [my protocol] listener"
+            return {}
+        }
+
+        if {[catch {package require tls} tls_error]} {
+            my log "TLS package not available, skipping [my protocol] listener: $tls_error"
+            return {}
+        }
+
+        return [::tls::socket -server $accept_callback \
+            -myaddr [my host] \
+            -certfile [::tclwire::https_cert_file] \
+            -keyfile [::tclwire::https_key_file] \
+            -ssl2 0 \
+            -ssl3 0 \
+            [my port]]
     }
 
     method stop {} {
@@ -233,18 +279,22 @@ proc ::tclwire::usage {} {
     puts stderr "      Port for the default HTTPS server. Default: 9443"
     puts stderr "  --ftpport <port>"
     puts stderr "      Port for the default FTP server. Default: 8991"
+    puts stderr "  --ftpsport <port>"
+    puts stderr "      Port for the default implicit FTPS server. Default: 990"
     puts stderr "  --proxyport <port>"
     puts stderr "      Port for the default HTTP proxy server. Default: 8992"
     puts stderr "  --certfile <path>"
-    puts stderr "      TLS certificate file for HTTPS."
+    puts stderr "      TLS certificate file for secure listeners."
     puts stderr "  --keyfile <path>"
-    puts stderr "      TLS key file for HTTPS."
+    puts stderr "      TLS key file for secure listeners."
     puts stderr "  --service <protocol:port>"
     puts stderr "      Add an explicit service entry. May be repeated."
     puts stderr "  --docroot <path>"
     puts stderr "      Document root for HTTP/HTTPS test content."
     puts stderr "  --ftproot <path>"
     puts stderr "      Root directory exposed by the FTP server."
+    puts stderr "  --noftp-user-check"
+    puts stderr "      Disable system user verification for FTP login."
     puts stderr "  --logfile <path>"
     puts stderr "      File where request log lines are appended."
     puts stderr "      Default: /tmp/tclwire.log"
@@ -254,37 +304,93 @@ proc ::tclwire::usage {} {
     puts stderr "      Enable verbose test debug output."
 }
 
-proc ::tclwire::register_service_class {protocol class_name} {
-
+proc ::tclwire::register_connection_class {protocol spec} {
+    variable connection_classes
     variable service_classes
-    set service_classes($protocol) $class_name
+
+    if {![dict exists $spec service_class]} {
+        error "missing service_class for connection protocol: $protocol"
+    }
+    if {![dict exists $spec connection_class]} {
+        dict set spec connection_class $protocol
+    }
+    if {![dict exists $spec secure]} {
+        dict set spec secure 0
+    }
+    if {![dict exists $spec thread_script]} {
+        dict set spec thread_script {}
+    }
+
+    set connection_classes($protocol) $spec
+    set service_classes($protocol) [dict get $spec service_class]
     namespace ensemble configure ::tclwire -map [command_map]
+    return $spec
+}
+
+proc ::tclwire::register_service_class {protocol class_name} {
+    set spec [dict create \
+        service_class $class_name \
+        connection_class $protocol \
+        secure 0]
+
+    switch -exact -- $protocol {
+        http  { dict set spec default_port 8990 }
+        ftp   { dict set spec default_port 8991 }
+        proxy { dict set spec default_port 8992 }
+    }
+
+    register_connection_class $protocol $spec
     return $class_name
 }
 
-proc ::tclwire::service_class {protocol} {
-    variable service_classes
+proc ::tclwire::connection_class_spec {protocol} {
+    variable connection_classes
 
-    if {![info exists service_classes($protocol)]} {
+    if {![info exists connection_classes($protocol)]} {
         error "unsupported protocol: $protocol"
     }
-    return $service_classes($protocol)
+    return $connection_classes($protocol)
+}
+
+proc ::tclwire::service_class {protocol} {
+    return [dict get [connection_class_spec $protocol] service_class]
 }
 
 proc ::tclwire::implemented_protocols {} {
-    variable service_classes
+    variable connection_classes
 
-    return [lsort [array names service_classes]]
+    return [lsort [array names connection_classes]]
+}
+
+proc ::tclwire::connection_protocols_for_class {connection_class} {
+    variable connection_classes
+
+    set protocols {}
+    foreach protocol [array names connection_classes] {
+        if {[dict get $connection_classes($protocol) connection_class] eq $connection_class} {
+            lappend protocols $protocol
+        }
+    }
+    return [lsort $protocols]
 }
 
 proc ::tclwire::default_protocols {} {
     return [list http]
 }
 
+proc ::tclwire::default_port {protocol} {
+    set spec [connection_class_spec $protocol]
+    if {[dict exists $spec default_port]} {
+        return [dict get $spec default_port]
+    }
+    error "missing default port for protocol: $protocol"
+}
+
 proc ::tclwire::parse_service_spec {spec} {
     if {![regexp {^([a-z0-9_+-]+):([0-9]+)$} $spec -> protocol port]} {
         error "invalid service spec: $spec"
     }
+    connection_class_spec $protocol
     if {$port < 1 || $port > 65535} {
         error "invalid port: $port"
     }
@@ -335,12 +441,14 @@ proc ::tclwire::parse_args {argv} {
     set certfile {}
     set keyfile {}
     set logfile [file normalize /tmp/tclwire.log]
+    set ftp_user_check 1
     set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
-    array set default_ports {
-        http        8990
-        https       9443
-        ftp         8991
-        proxy       8992
+    array set default_ports {}
+    foreach protocol [implemented_protocols] {
+        set spec [connection_class_spec $protocol]
+        if {[dict exists $spec default_port]} {
+            set default_ports($protocol) [dict get $spec default_port]
+        }
     }
     set startservers [default_protocols]
     set services {}
@@ -361,12 +469,18 @@ proc ::tclwire::parse_args {argv} {
                 if {$i >= [llength $argv]} {
                     error "missing value after --httpport"
                 }
+                if {![info exists default_ports(http)]} {
+                    error "HTTP protocol is not available"
+                }
                 set default_ports(http) [parse_port_value --httpport [lindex $argv $i]]
             }
             --httpsport {
                 incr i
                 if {$i >= [llength $argv]} {
                     error "missing value after --httpsport"
+                }
+                if {![info exists default_ports(https)]} {
+                    error "HTTPS protocol is not available"
                 }
                 set default_ports(https) [parse_port_value --httpsport [lindex $argv $i]]
             }
@@ -375,12 +489,28 @@ proc ::tclwire::parse_args {argv} {
                 if {$i >= [llength $argv]} {
                     error "missing value after --ftpport"
                 }
+                if {![info exists default_ports(ftp)]} {
+                    error "FTP protocol is not available"
+                }
                 set default_ports(ftp) [parse_port_value --ftpport [lindex $argv $i]]
+            }
+            --ftpsport {
+                incr i
+                if {$i >= [llength $argv]} {
+                    error "missing value after --ftpsport"
+                }
+                if {![info exists default_ports(ftps)]} {
+                    error "FTPS protocol is not available"
+                }
+                set default_ports(ftps) [parse_port_value --ftpsport [lindex $argv $i]]
             }
             --proxyport {
                 incr i
                 if {$i >= [llength $argv]} {
                     error "missing value after --proxyport"
+                }
+                if {![info exists default_ports(proxy)]} {
+                    error "proxy protocol is not available"
                 }
                 set default_ports(proxy) [parse_port_value --proxyport [lindex $argv $i]]
             }
@@ -423,6 +553,9 @@ proc ::tclwire::parse_args {argv} {
                 set ftproot [file normalize [lindex $argv $i]]
                 set ftproot_follows_docroot 0
             }
+            --noftp-user-check {
+                set ftp_user_check 0
+            }
             --logfile {
                 incr i
                 if {$i >= [llength $argv]} {
@@ -460,6 +593,9 @@ proc ::tclwire::parse_args {argv} {
     if {!$custom_services} {
         set services {}
         foreach protocol $startservers {
+            if {![info exists default_ports($protocol)]} {
+                error "missing default port for protocol: $protocol"
+            }
             lappend services [dict create protocol $protocol port $default_ports($protocol)]
         }
     } else {
@@ -475,6 +611,7 @@ proc ::tclwire::parse_args {argv} {
     return [dict create host $host quiet $quiet debug $debug        \
                         docroot $docroot ftproot $ftproot           \
                         certfile $certfile keyfile $keyfile         \
+                        ftp_user_check $ftp_user_check              \
                         logfile $logfile                            \
                         services $services startservers $startservers]
 }
@@ -482,13 +619,17 @@ proc ::tclwire::parse_args {argv} {
 proc ::tclwire::configure_roots {config} {
     set docroot [dict get $config docroot]
     set ftproot [dict get $config ftproot]
-    set protocols {}
+    set connection_classes {}
 
     foreach service_spec [dict get $config services] {
-        lappend protocols [dict get $service_spec protocol]
+        set spec [connection_class_spec [dict get $service_spec protocol]]
+        set connection_class [dict get $spec connection_class]
+        if {$connection_class ni $connection_classes} {
+            lappend connection_classes $connection_class
+        }
     }
 
-    if {[lsearch -exact $protocols http] >= 0 || [lsearch -exact $protocols https] >= 0} {
+    if {[lsearch -exact $connection_classes http] >= 0} {
         set docroot_exists [file exists $docroot]
         if {$docroot_exists && ![file isdirectory $docroot]} {
             error "document root exists but is not a directory: $docroot"
@@ -501,13 +642,14 @@ proc ::tclwire::configure_roots {config} {
         ::tclwire::set_doc_root $docroot
     }
 
-    if {[lsearch -exact $protocols ftp] >= 0} {
+    if {[lsearch -exact $connection_classes ftp] >= 0} {
         if {[file exists $ftproot] && ![file isdirectory $ftproot]} {
             error "FTP root exists but is not a directory: $ftproot"
         }
 
         if {![file exists $ftproot]} {
             file mkdir $ftproot
+            seed_ftp_root $ftproot
         }
         ::tclwire::set_ftp_root $ftproot
     }
@@ -525,66 +667,94 @@ proc ::tclwire::configure_https_credentials {config} {
     }
 }
 
-proc ::tclwire::manual_html_source {} {
-    set repo_root [::tclwire::repo_root]
-    foreach candidate [list \
-        [file join $repo_root doc tclcurl.n.html] \
-        [file join $repo_root doc tclcurl.html]] {
-        if {[file exists $candidate]} {
-            return $candidate
-        }
-    }
-
-    return {}
-}
-
-proc ::tclwire::manual_html_files {} {
-    set repo_root [::tclwire::repo_root]
-    set manuals {}
-
-    foreach name [list tclcurl.html tclcurl_multi.html tclcurl_share.html] {
-        set source_path [file join $repo_root doc $name]
-        if {[file exists $source_path]} {
-            dict set manuals $name $source_path
-        }
-    }
-
-    return $manuals
-}
-
 proc ::tclwire::seed_doc_root {docroot} {
     set index_source [file join [::tclwire::repo_root] index.html]
     set index_target [file join $docroot index.html]
     if {[file exists $index_source] && ![file exists $index_target]} {
         file copy $index_source $index_target
     }
+}
 
-    dict for {target_name source_path} [manual_html_files] {
-        set target_path [file join $docroot $target_name]
-        if {![file exists $target_path]} {
-            file copy $source_path $target_path
+proc ::tclwire::seed_ftp_root {ftproot} {
+    set welcome_target [file join $ftproot welcome.txt]
+    if {![file exists $welcome_target]} {
+        set chan [open $welcome_target w]
+        try {
+            puts $chan "Welcome to TclWire FTP."
+        } finally {
+            close $chan
+        }
+    }
+}
+
+proc ::tclwire::thread_script_for_connection_class {connection_class} {
+    variable connection_classes
+
+    foreach protocol [array names connection_classes] {
+        set spec $connection_classes($protocol)
+        if {[dict get $spec connection_class] ne $connection_class} {
+            continue
+        }
+        if {[dict exists $spec thread_script] && [dict get $spec thread_script] ne {}} {
+            return [dict get $spec thread_script]
         }
     }
 
-    set manual_source [manual_html_source]
-    if {$manual_source eq {}} {
-        return
+    switch -exact -- $connection_class {
+        http {
+            return $::tclwire::http_thread_script
+        }
+        ftp {
+            return $::tclwire::ftp_thread_script
+        }
+        proxy {
+            return $::tclwire::proxy_thread_script
+        }
+        default {
+            return {}
+        }
+    }
+}
+
+proc ::tclwire::thread_master_for_connection_class {connection_class} {
+    variable thread_masters
+
+    set thread_script [thread_script_for_connection_class $connection_class]
+    if {$thread_script eq {}} {
+        return {}
     }
 
-    set manual_target [file join $docroot tclcurl-man.html]
-    if {![file exists $manual_target]} {
-        file copy $manual_source $manual_target
+    if {![info exists thread_masters($connection_class)]} {
+        set thread_masters($connection_class) [::tclwire::ThreadMaster new $thread_script]
+    }
+
+    return $thread_masters($connection_class)
+}
+
+proc ::tclwire::stop_thread_masters {} {
+    variable thread_masters
+
+    foreach connection_class [array names thread_masters] {
+        set thread_master $thread_masters($connection_class)
+        catch {$thread_master stop_threads}
+        catch {$thread_master destroy}
+        unset thread_masters($connection_class)
     }
 }
 
 proc ::tclwire::create_service {protocol host port quiet logfile thread_master service_config} {
     variable next_service_id
 
-    set class_name [service_class $protocol]
+    set connection_spec [connection_class_spec $protocol]
+    set class_name [dict get $connection_spec service_class]
+    set connection_class [dict get $connection_spec connection_class]
+    set secure [dict get $connection_spec secure]
     set object_name ::tclwire::service[incr next_service_id]
 
     return [$class_name create  $object_name \
                                 -protocol $protocol \
+                                -connectionclass $connection_class \
+                                -secure   $secure \
                                 -host     $host \
                                 -port     $port \
                                 -quiet    $quiet \
@@ -597,18 +767,20 @@ proc ::tclwire::start_services {config} {
     set host [dict get $config host]
     set quiet [dict get $config quiet]
     set logfile [dict get $config logfile]
-    set thread_master [::tclwire::ThreadMaster new $::tclwire::http_thread_script]
     set instances {}
 
     foreach service_spec [dict get $config services] {
         set protocol [dict get $service_spec protocol]
         set port [dict get $service_spec port]
+        set connection_spec [connection_class_spec $protocol]
+        set connection_class [dict get $connection_spec connection_class]
+        set thread_master [thread_master_for_connection_class $connection_class]
         set service [create_service $protocol $host $port $quiet $logfile $thread_master $config]
         $service start
         lappend instances $service
     }
 
-    return [dict create services $instances thread_master $thread_master]
+    return [dict create services $instances]
 }
 
 proc ::tclwire::stop_services {service_state} {
@@ -616,9 +788,7 @@ proc ::tclwire::stop_services {service_state} {
     foreach service $services {
         catch {$service destroy}
     }
-    set thread_master [dict get $service_state thread_master]
-    catch {$thread_master stop_threads}
-    catch {$thread_master destroy}
+    stop_thread_masters
 }
 
 proc ::tclwire::run {argv} {
@@ -640,21 +810,25 @@ proc ::tclwire::command_map {} {
     return [dict create \
         configure_https_credentials ::tclwire::configure_https_credentials \
         configure_roots ::tclwire::configure_roots \
+        connection_class_spec ::tclwire::connection_class_spec \
         connection_database ::tclwire::connection_database \
+        connection_protocols_for_class ::tclwire::connection_protocols_for_class \
         create_service ::tclwire::create_service \
+        default_port ::tclwire::default_port \
         log_value ::tclwire::log_value \
-        manual_html_files ::tclwire::manual_html_files \
-        manual_html_source ::tclwire::manual_html_source \
         default_protocols ::tclwire::default_protocols \
         parse_args ::tclwire::parse_args \
         parse_service_spec ::tclwire::parse_service_spec \
+        register_connection_class ::tclwire::register_connection_class \
         register_service_class ::tclwire::register_service_class \
         run ::tclwire::run \
         seed_doc_root ::tclwire::seed_doc_root \
+        seed_ftp_root ::tclwire::seed_ftp_root \
         service_class ::tclwire::service_class \
         start_services ::tclwire::start_services \
         start_logfile ::tclwire::start_logfile \
         stop_services ::tclwire::stop_services \
+        stop_thread_masters ::tclwire::stop_thread_masters \
         stop_logfile ::tclwire::stop_logfile \
         timestamp ::tclwire::timestamp \
         write_log_line ::tclwire::write_log_line \
@@ -664,11 +838,22 @@ proc ::tclwire::command_map {} {
 namespace ensemble create -command ::tclwire -map [::tclwire::command_map]
 
 source [file join [file dirname [file normalize [info script]]] http_thread.tcl]
+source [file join [file dirname [file normalize [info script]]] ftp_thread.tcl]
+source [file join [file dirname [file normalize [info script]]] proxy_thread.tcl]
 source [file join [file dirname [file normalize [info script]]] http_endpoint.tcl]
 source [file join [file dirname [file normalize [info script]]] http_server.tcl]
-#source [file join [file dirname [file normalize [info script]]] https_server.tcl]
-#source [file join [file dirname [file normalize [info script]]] ftp_server.tcl]
-#source [file join [file dirname [file normalize [info script]]] proxy_server.tcl]
+source [file join [file dirname [file normalize [info script]]] ftp_server.tcl]
+source [file join [file dirname [file normalize [info script]]] proxy_server.tcl]
+::tclwire::register_connection_class https [dict create \
+    service_class ::tclwire::http_service \
+    connection_class http \
+    secure 1 \
+    default_port 9443]
+::tclwire::register_connection_class ftps [dict create \
+    service_class ::tclwire::ftp_service \
+    connection_class ftp \
+    secure 1 \
+    default_port 990]
 
 if {[info exists argv0] && [file normalize $argv0] eq [file normalize [info script]]} {
     if {[catch {::tclwire::run $argv} message]} {

@@ -1,6 +1,6 @@
 # http_server.tcl -- Implementation of a simple HTTP server 
 #
-# Implementation of the HTTP server support used by the TclCurl extension.
+# HTTP server support for TclWire.
 #
 # Copyright (c) 2024-2026 Massimo Manghi
 #
@@ -21,6 +21,7 @@ if {[info commands ::tclwire::CApplication] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_application.tcl]
 }
 if {[info commands ::tclwire::CTestApplication] eq {}} {
+    source [file join [file dirname [file normalize [info script]]] http_test_support.tcl]
     source [file join [file dirname [file normalize [info script]]] http_test_application.tcl]
 }
 
@@ -95,6 +96,8 @@ oo::class create ::tclwire::http_service {
 
         set config [my service_config]
         dict set config protocol [my protocol]
+        dict set config connection_class [my connection_class]
+        dict set config secure [my secure]
         dict set config host [my host]
         dict set config port [my port]
         ::tclwire::msgoutput "dispatch connection id=$connection_id chan=$chan worker=$worker_thread_id"
@@ -191,8 +194,8 @@ oo::class create ::tclwire::http_service {
         set decoded {}
         set cursor 0
 
-        # libcurl can emit "Transfer-Encoding: chunked" for an empty POST
-        # request without sending an explicit terminating zero-size chunk.
+        # Some clients can send an empty chunked POST without an explicit
+        # terminating zero-size chunk.
         if {$body eq {}} {
             return [dict create complete 1 decoded_body {} consumed_length 0]
         }

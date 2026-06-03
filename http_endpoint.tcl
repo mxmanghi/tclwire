@@ -1,6 +1,6 @@
 # http_endpoint.tcl --
 #
-# Shared HTTP endpoint plumbing for TclCurl test servers.
+# Shared HTTP endpoint plumbing for TclWire servers.
 #
 # Copyright (c) 2024-2026 Massimo Manghi
 #
@@ -44,7 +44,10 @@ if {[info commands ::tclwire::http_endpoint_service] eq {}} {
         }
 
         method start {} {
-            set listener [socket -server [list [self] accept] -myaddr [my host] [my port]]
+            set listener [my open_listener_socket]
+            if {$listener eq {}} {
+                return {}
+            }
             my set_listener $listener
             my log [my listening_message]
             return $listener

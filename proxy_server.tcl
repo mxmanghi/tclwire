@@ -1,6 +1,6 @@
 # proxy_server.tcl --
 #
-# Implementation of a minimal HTTP proxy server for testing TclCurl.
+# Implementation of a minimal HTTP proxy server.
 #
 # Copyright (c) 2024-2026 Massimo Manghi
 #
@@ -13,6 +13,7 @@
 namespace eval ::tclwire {}
 
 package require base64
+package require Thread
 
 if {[info commands ::tclwire::http_endpoint_service] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_endpoint.tcl]
@@ -28,13 +29,14 @@ if {[info commands ::tclwire::CApplication] eq {}} {
 oo::class create ::tclwire::proxy_service {
     superclass ::tclwire::http_endpoint_service
 
-    variable application tunnel_peer tunnel_root tunnel_pending
+    variable application tunnel_peer tunnel_root tunnel_pending connection_ids
 
     constructor args {
         set application [::tclwire::CApplication new]
         array set tunnel_peer {}
         array set tunnel_root {}
         array set tunnel_pending {}
+        array set connection_ids {}
         next {*}$args
     }
 
@@ -53,7 +55,56 @@ oo::class create ::tclwire::proxy_service {
     }
 
     method description {} {
-        return "HTTP proxy test server"
+        return "HTTP proxy server"
+    }
+
+    method accept {chan host port} {
+        after idle [list [self] dispatch_accept $chan $host $port]
+    }
+
+    method dispatch_accept {chan host port} {
+        set thread_master [my thread_master]
+        if {$thread_master eq {}} {
+            ::tclwire::msgoutput "no proxy thread master available for chan=$chan"
+            catch {close $chan}
+            return
+        }
+
+        set worker_thread_id [$thread_master acquire_worker]
+        if {$worker_thread_id eq {}} {
+            ::tclwire::msgoutput "no idle proxy worker available for chan=$chan"
+            catch {close $chan}
+            return
+        }
+
+        set connection_id [::tclwire::record_connection_opened \
+            [my protocol] $chan $host $port [my endpoint] $worker_thread_id]
+
+        if {[catch {thread::transfer $worker_thread_id $chan} transfer_error]} {
+            ::tclwire::record_connection_closed $connection_id $transfer_error
+            ::tclwire::msgoutput "proxy channel transfer failed chan=$chan worker=$worker_thread_id error=$transfer_error"
+            catch {$thread_master return_thread $worker_thread_id}
+            catch {close $chan}
+            return
+        }
+
+        set config [my service_config]
+        dict set config protocol [my protocol]
+        dict set config connection_class [my connection_class]
+        dict set config secure [my secure]
+        dict set config host [my host]
+        dict set config port [my port]
+        ::tclwire::msgoutput "dispatch proxy connection id=$connection_id chan=$chan worker=$worker_thread_id"
+        thread::send -async $worker_thread_id \
+            [list ::tclwire::serve_transferred_proxy_connection $chan $connection_id $config]
+    }
+
+    method serve_connection {chan connection_id} {
+        ::tclwire::msgoutput "worker serve proxy connection id=$connection_id chan=$chan"
+        set connection_ids($chan) $connection_id
+        chan configure $chan -blocking 0 -buffering none -translation binary
+        chan event $chan readable [list [self] read_request $chan]
+        after idle [list [self] read_request_if_open $chan]
     }
 
     # Convert either an absolute proxy target or an origin-form target plus
@@ -152,7 +203,7 @@ oo::class create ::tclwire::proxy_service {
     }
 
     # Read the upstream response without blocking the event loop. The proxy and
-    # origin services run in the same test server process, so a blocking read
+    # origin services may run in the same process, so a blocking read
     # would deadlock while the origin waits for the event loop to dispatch its
     # own readable callbacks.
     method read_upstream_response {upstream} {
@@ -196,8 +247,8 @@ oo::class create ::tclwire::proxy_service {
         catch {unset tunnel_root($peer)}
         catch {unset tunnel_peer($root)}
         catch {unset tunnel_peer($peer)}
-        catch {close $root}
         catch {close $peer}
+        my close_client $root
     }
 
     # Complete one direction of an asynchronous CONNECT tunnel copy. The tunnel
@@ -260,10 +311,7 @@ oo::class create ::tclwire::proxy_service {
     # Build the standard proxy reply for malformed requests before any upstream
     # forwarding is attempted.
     method bad_request_response {} {
-        return [dict create status      400 \
-                            reason      "Bad Request" \
-                            body        "bad proxy request\n" \
-                            headers     {}]
+        return [my error_response 400]
     }
 
     # Parse the proxy request, enforce proxy-specific policy and forward the
@@ -312,7 +360,7 @@ oo::class create ::tclwire::proxy_service {
                     "method=$method status=407 target=[::tclwire::log_value $path]"
                 my proxy_response $chan 407 \
                     "Proxy Authentication Required" "proxy-auth=$auth_status\n" \
-                    [list "Proxy-Authenticate: Basic realm=\"TclCurl Proxy Test\""]
+                    [list "Proxy-Authenticate: Basic realm=\"TclWire Proxy\""]
                 return
             }
         }
@@ -382,6 +430,34 @@ oo::class create ::tclwire::proxy_service {
         }
         ::tclwire::msgoutput "proxy complete chan=$chan"
         my close_client $chan
+    }
+
+    method log_request {message} {
+        if {[info exists ::master_thread_id] && $::master_thread_id ne {}} {
+            thread::send -async $::master_thread_id \
+                [list ::tclwire::log_from_worker [my protocol] $message]
+            return
+        }
+        next $message
+    }
+
+    method close_client {chan {error {}}} {
+        set connection_id {}
+        if {[info exists connection_ids($chan)]} {
+            set connection_id $connection_ids($chan)
+            unset connection_ids($chan)
+        }
+
+        next $chan $error
+
+        if {$connection_id ne {} && [info exists ::master_thread_id] && $::master_thread_id ne {}} {
+            thread::send -async $::master_thread_id \
+                [list ::tclwire::record_connection_closed $connection_id $error]
+        }
+
+        if {[info commands ::tclwire::accounting] ne {}} {
+            catch {::tclwire::accounting change_thread_status [thread::id] idle}
+        }
     }
 }
 

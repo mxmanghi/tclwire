@@ -1,10 +1,10 @@
-# http_thread.tcl --
+# proxy_thread.tcl --
 #
-# Worker-thread script template for HTTP service instances.
+# Worker-thread script template for HTTP proxy service instances.
 
 namespace eval ::tclwire {}
 
-set ::tclwire::http_thread_script [format {
+set ::tclwire::proxy_thread_script [format {
     namespace eval :: {
         package require TclOO
         package require Thread
@@ -17,26 +17,20 @@ set ::tclwire::http_thread_script [format {
         variable server {}
         variable master_thread_id {}
 
-        proc apply_http_config {config} {
+        proc apply_proxy_config {config} {
             if {[dict exists $config debug]} {
                 ::tclwire::configure_debug_output [dict get $config debug]
             }
-            if {[dict exists $config docroot] && [dict get $config docroot] ne {}} {
-                ::tclwire::set_doc_root [dict get $config docroot]
-            }
-            if {[dict exists $config ftproot] && [dict get $config ftproot] ne {}} {
-                ::tclwire::set_ftp_root [dict get $config ftproot]
-            }
         }
 
-        proc ensure_http_server {config} {
+        proc ensure_proxy_server {config} {
             variable server
 
             if {$server ne {}} {
                 return $server
             }
 
-            set server [::tclwire::http_service new \
+            set server [::tclwire::proxy_service new \
                 -protocol [dict get $config protocol] \
                 -connectionclass [dict get $config connection_class] \
                 -secure [dict get $config secure] \
@@ -46,13 +40,13 @@ set ::tclwire::http_thread_script [format {
             return $server
         }
 
-        proc ::tclwire::serve_transferred_http_connection {chan connection_id config} {
+        proc ::tclwire::serve_transferred_proxy_connection {chan connection_id config} {
             set accounting ::tclwire::accounting
-            ::tclwire::msgoutput "worker command start id=$connection_id chan=$chan"
+            ::tclwire::msgoutput "worker proxy command start id=$connection_id chan=$chan"
 
-            apply_http_config $config
-            set server [ensure_http_server $config]
-            $accounting change_thread_status [::thread::id] running "http connection $connection_id"
+            apply_proxy_config $config
+            set server [ensure_proxy_server $config]
+            $accounting change_thread_status [::thread::id] running "proxy connection $connection_id"
 
             if {[catch {$server serve_connection $chan $connection_id} error options]} {
                 catch {close $chan}

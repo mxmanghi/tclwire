@@ -1,6 +1,6 @@
 # -- thread_master.tcl -- Implementation of thread pool manager
 #
-# Implementation of the HTTP server support used by the TclCurl extension.
+# Thread pool manager for TclWire services.
 #
 # Copyright (c) 2024-2026 Massimo Manghi
 #
@@ -56,25 +56,75 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     variable accounting
     variable thread_script
     variable logger
+    variable owned_threads
 
     # Boundary rule:
     # ::tclwire::accounting is the shared ledger visible to workers and
     # inspectors. ThreadMaster owns pool policy and lifecycle transitions.
 
     method accounting_snapshot {} {
-        return [$accounting get_threads_database]
+        set snapshot [dict create]
+        foreach thread_id [[self] thread_ids all] {
+            set thread_account [$accounting get_thread_account $thread_id]
+            if {$thread_account ne {}} {
+                dict set snapshot $thread_id $thread_account
+            }
+        }
+        return $snapshot
     }
 
     method per_status_lists {} {
-        return [$accounting per_status_lists]
+        set per_status_db [dict create created {} allocated {} idle {} running {} terminating {}]
+        dict for {thread_id thread_account} [[self] accounting_snapshot] {
+            set status [dict get $thread_account status]
+            if {![dict exists $per_status_db $status]} {
+                dict set per_status_db $status {}
+            }
+            dict lappend per_status_db $status $thread_id
+        }
+        return $per_status_db
     }
 
     method thread_ids {{filter all}} {
+        set live_thread_ids {}
+        set retained_thread_ids {}
+        foreach thread_id $owned_threads {
+            set thread_account [$accounting get_thread_account $thread_id]
+            if {$thread_account eq {}} {
+                continue
+            }
+            lappend retained_thread_ids $thread_id
+            if {$filter eq "all" || [dict get $thread_account status] eq $filter} {
+                lappend live_thread_ids $thread_id
+            }
+        }
+        set owned_threads $retained_thread_ids
+        return $live_thread_ids
+    }
+
+    method owns_thread {thread_id} {
+        return [expr {[lsearch -exact [[self] thread_ids all] $thread_id] >= 0}]
+    }
+
+    method allocate_owned_idle_thread {thread_id_v} {
+        upvar 1 $thread_id_v thread_id
+
+        foreach candidate [[self] thread_ids idle] {
+            if {[catch {$accounting change_thread_status $candidate allocated}]} {
+                continue
+            }
+            set thread_id $candidate
+            return true
+        }
+        return false
+    }
+
+    method all_accounting_thread_ids {{filter all}} {
         if {$filter eq "all"} {
-            return [dict keys [[self] accounting_snapshot]]
+            return [dict keys [$accounting get_threads_database]]
         }
 
-        set per_status_lists [[self] per_status_lists]
+        set per_status_lists [$accounting per_status_lists]
         if {[dict exists $per_status_lists $filter]} {
             return [dict get $per_status_lists $filter]
         }
@@ -117,6 +167,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         set accounting ::tclwire::accounting
         set thread_script $tscript
         set logger [::tclwire::logger new]
+        set owned_threads {}
     }
 
     destructor {
@@ -145,15 +196,24 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     method allocate_thread {thread_id_v} {
         upvar 1 $thread_id_v thread_id
 
-        set thread_id [$accounting allocate_idle_thread]
-        if {$thread_id != ""} { return true }
+        if {[[self] allocate_owned_idle_thread thread_id]} {
+            return true
+        }
         ::tsv::lock tclwire {
             set live_threads_number 0
-            if {[::tsv::exists tclwire accounting]} {
-                set live_threads_number [llength [::tsv::keylkeys tclwire accounting]]
+            set retained_thread_ids {}
+            foreach owned_thread_id $owned_threads {
+                if {![::tsv::keylget tclwire accounting $owned_thread_id thread_account]} {
+                    continue
+                }
+                lappend retained_thread_ids $owned_thread_id
+                incr live_threads_number
             }
-            if {$live_threads_number < $max_threads_number} { 
+            set owned_threads $retained_thread_ids
+
+            if {$live_threads_number < $max_threads_number} {
                 set thread_id [[self] start_worker_thread $thread_script]
+                lappend owned_threads $thread_id
                 ::tsv::keylset tclwire accounting $thread_id [$accounting new_thread_account allocated]
                 return true
             } 
@@ -170,6 +230,9 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     }
 
     method return_thread {thread_id} {
+        if {![[self] owns_thread $thread_id]} {
+            error "Thread $thread_id is not owned by this ThreadMaster"
+        }
         set status [[self] thread_status $thread_id]
         switch -exact -- $status {
             allocated -
@@ -190,10 +253,16 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     }
 
     method worker_ready {thread_id} {
+        if {![[self] owns_thread $thread_id]} {
+            error "Thread $thread_id is not owned by this ThreadMaster"
+        }
         $accounting change_thread_status $thread_id idle
     }
 
     method run_on_thread {thread_id cmd} {
+        if {![[self] owns_thread $thread_id]} {
+            error "Thread $thread_id is not owned by this ThreadMaster"
+        }
         set status [[self] thread_status $thread_id]
         if {$status eq {}} {
             error "Thread $thread_id is not in the pool"
