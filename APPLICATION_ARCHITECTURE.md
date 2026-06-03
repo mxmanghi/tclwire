@@ -192,3 +192,22 @@ cycle, the likely next move is:
 
 That would leave the endpoint service as a lightweight accept/buffer layer and
 move the full request-processing flow into application-controlled worker code.
+
+## Better Agent encapsulation 
+
+Following the line of rationalization of the code on which we were working,
+there is much more to do. I think the connection management method in service_base.tcl
+shouldn't go into the worker threads that still inherit this stuff through, for instance,
+http_endpoint.tcl...
+
+I think that we should determine more sharply and more intelligently the contract among server components.
+ We have: 
+    1. an entry point agent: CLI processing, service configuration database buildup,
+creation of listening sockets for each configured service. 
+    2. Connection objects. It's not clear to me how they work for the ftp and proxy server,
+but let's focus on the HTTP server. I think they should be able to process a request header
+and determine through the Host HTTP header line which (virtual) host the request is directed to.
+Different host may in general serve entirely different applications.
+    3. we have worker threads. After what we did today I would restring the worker thread to
+the application generation. In this moment
+
