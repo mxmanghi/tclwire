@@ -2,22 +2,22 @@
 #
 #
 
-set thread_script {
-
     namespace eval :: {
 
         package require TclOO
         package require Thread
+        source [file join [pwd] threads_shared_db.tcl]
+        source [file join [pwd] support.tcl]
 
-        source [file join [pwd] testservers http_application.tcl]
-        source [file join [pwd] testservers threads_shared_db.tcl]
-        # source [file join [file dirname [file normalize [info script]]] http_application.tcl]
-        source [file join [pwd] testservers logger.tcl]
+        set tclwire_root [::tclwire::repo_root]
 
-        namespace eval ::tclcurl::testserver {}
+        source [file join $tclwire_root http_application.tcl]
+        source [file join $tclwire_root logger.tcl]
 
-        oo::class create ::tclcurl::testserver::CMockUpApplication {
-            superclass ::tclcurl::testserver::CApplication
+        namespace eval ::tclwire {}
+
+        oo::class create ::tclwire::CMockUpApplication {
+            superclass ::tclwire::CApplication
 
             variable logger
 
@@ -40,10 +40,10 @@ set thread_script {
             }
 
         }
-        #set app [::tclcurl::testserver::CTestApplication new]
+        #set app [::tclwire::CTestApplication new]
 
         set logger [::tclwire::logger new]
-        variable application [::tclcurl::testserver::CMockUpApplication new $logger]
+        variable application [::tclwire::CMockUpApplication new $logger]
         variable accounting ::tclwire::accounting
 
         $logger log "CMockUpApplication created as $application"
@@ -78,7 +78,7 @@ set thread_script {
         #$logger log "CApplicationController created as $app_controller"
 
         set master_thread_id ""
-        set ::auto_path [concat [file join [pwd] testservers] $::auto_path]
+        set ::auto_path [concat [pwd] $::auto_path]
 
         proc demand_thread_exit {} {
             variable accounting
@@ -94,8 +94,4 @@ set thread_script {
 
         $accounting remove_thread [::thread::id]
     }
-
-};#
-#
-
 

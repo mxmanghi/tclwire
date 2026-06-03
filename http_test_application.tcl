@@ -10,21 +10,21 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 
-namespace eval ::tclcurl::testserver {}
+namespace eval ::tclwire {}
 
 package require sha256
 package require zlib
 package require base64
 
-if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
+if {[info commands ::tclwire::CApplication] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_application.tcl]
 }
 
-if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
+if {[info commands ::tclwire::CTestApplication] eq {}} {
     # Application that reproduces the current TclCurl test-suite routes. This
     # is the first concrete example of a general server application.
-    oo::class create ::tclcurl::testserver::CTestApplication {
-        superclass ::tclcurl::testserver::CApplication
+    oo::class create ::tclwire::CTestApplication {
+        superclass ::tclwire::CApplication
 
         method route_request {service method path target version headers request} {
             if {[regexp {^/redir_([0-9]+)$} $path -> redirect_step]} {
@@ -70,7 +70,7 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                     if {$static_response ne {}} {
                         return $static_response
                     }
-                    set index_path [file join [::tclcurl::test::repo_root] testservers index.html]
+                    set index_path [file join [::tclwire::repo_root] index.html]
                     if {[file exists $index_path]} {
                         set fh [open $index_path rb]
                         try {
@@ -92,7 +92,7 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                     if {$static_response ne {}} {
                         return $static_response
                     }
-                    set manual_path [::tclcurl::testserver::manual_html_source]
+                    set manual_path [::tclwire::manual_html_source]
                     if {$manual_path ne {} && [file exists $manual_path]} {
                         set fh [open $manual_path rb]
                         try {
@@ -225,7 +225,7 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                     return [dict create status 200 reason OK body $body headers {}]
                 }
                 /deflated-data {
-                    set body [::tclcurl::test::negotiation_payload]
+                    set body [::tclwire::negotiation_payload]
                     return [dict create \
                         status 200 \
                         reason OK \
@@ -233,7 +233,7 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                         headers [list "Content-Encoding: deflate"]]
                 }
                 /chunked-data {
-                    set body [::tclcurl::test::negotiation_payload]
+                    set body [::tclwire::negotiation_payload]
                     return [dict create \
                         status 200 \
                         reason OK \
@@ -242,7 +242,7 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                         transfer_encoding chunked]
                 }
                 /slow-chunked-data {
-                    set body [::tclcurl::test::negotiation_payload]
+                    set body [::tclwire::negotiation_payload]
                     return [dict create \
                         status 200 \
                         reason OK \
@@ -254,7 +254,7 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                             [list 50 [string range $body 10 end]]]]
                 }
                 /slow-body-1 {
-                    set body [::tclcurl::test::negotiation_payload]
+                    set body [::tclwire::negotiation_payload]
                     return [dict create \
                         status 200 \
                         reason OK \
@@ -265,7 +265,7 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                             [list 6000 [string range $body 10 end]]]]
                 }
                 /slow-body-2 {
-                    set body [string range [::tclcurl::test::range_fixture] 0 191]
+                    set body [string range [::tclwire::range_fixture] 0 191]
                     set stream_chunks {}
                     for {set offset 0} {$offset < [string length $body]} {incr offset 32} {
                         lappend stream_chunks [list 1000 [string range $body $offset [expr {$offset + 31}]]]
@@ -278,10 +278,10 @@ if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
                         stream_chunks $stream_chunks]
                 }
                 /range-data {
-                    return [my byte_range_response $service $headers [::tclcurl::test::range_fixture]]
+                    return [my byte_range_response $service $headers [::tclwire::range_fixture]]
                 }
                 /shutdown {
-                    set ::tclcurl::testserver::forever "no more"
+                    set ::tclwire::forever "no more"
                     return [dict create status 200 reason OK body "server orderly shutdown\n" headers {}]
                 }
                 default {

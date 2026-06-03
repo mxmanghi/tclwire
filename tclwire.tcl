@@ -1,6 +1,6 @@
 #!/usr/bin/env tclsh
 #
-# testserver.tcl -- Start the server implementations needed by the test suite 
+# tclwire.tcl -- TclWire application server entry point.
 #
 # Implementation of the HTTP server support used by the TclCurl extension.
 #
@@ -12,21 +12,23 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 
-set ::argv_saved_for_testserver $argv
-set argv {}
-source [file join [file dirname [file dirname [file normalize [info script]]]] tests support.tcl]
-set argv $::argv_saved_for_testserver
-unset ::argv_saved_for_testserver
+source [file join [file dirname [file normalize [info script]]] support.tcl]
+source [file join [file dirname [file normalize [info script]]] threads_shared_db.tcl]
+source [file join [file dirname [file normalize [info script]]] logger.tcl]
+source [file join [file dirname [file normalize [info script]]] thread_master.tcl]
 
-namespace eval ::tclcurl::testserver {
+namespace eval ::tclwire {
     variable next_service_id 0
+    variable next_connection_id 0
     variable service_classes
     variable logger_logchan {}
+    variable connections {}
     array set service_classes {}
 }
 
-oo::class create ::tclcurl::testserver::service {
+oo::class create ::tclwire::service {
     variable protocol host port quiet listener logfile
+    variable thread_master service_config
 
     constructor args {
         array set options {
@@ -35,6 +37,8 @@ oo::class create ::tclcurl::testserver::service {
             -port {}
             -quiet 0
             -logfile {}
+            -threadmaster {}
+            -serviceconfig {}
         }
 
         foreach {name value} $args {
@@ -56,6 +60,8 @@ oo::class create ::tclcurl::testserver::service {
         set port        $options(-port)
         set quiet       $options(-quiet)
         set logfile     $options(-logfile)
+        set thread_master $options(-threadmaster)
+        set service_config $options(-serviceconfig)
         set listener    {}
     }
 
@@ -99,11 +105,19 @@ oo::class create ::tclcurl::testserver::service {
         }
 
         if {[catch {
-            ::tclcurl::testserver::write_log_line "[my protocol] $message"
+            ::tclwire::write_log_line "[my protocol] $message"
         } log_error]} {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "request log failed protocol=$protocol error=$log_error"
         }
+    }
+
+    method thread_master {} {
+        return $thread_master
+    }
+
+    method service_config {} {
+        return $service_config
     }
 
     method set_listener {chan} {
@@ -123,15 +137,15 @@ oo::class create ::tclcurl::testserver::service {
     }
 }
 
-proc ::tclcurl::testserver::timestamp {} {
+proc ::tclwire::timestamp {} {
     return [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S"]
 }
 
-proc ::tclcurl::testserver::log_value {value} {
+proc ::tclwire::log_value {value} {
     return [string map [list "\\" "\\\\" "\n" "\\n" "\r" "\\r" "\t" "\\t"] $value]
 }
 
-proc ::tclcurl::testserver::write_log_line {line} {
+proc ::tclwire::write_log_line {line} {
     variable logger_logchan
 
     set stamped_line "[timestamp] $line"
@@ -139,7 +153,49 @@ proc ::tclcurl::testserver::write_log_line {line} {
     flush $logger_logchan
 }
 
-proc ::tclcurl::testserver::start_logfile {config} {
+proc ::tclwire::log_from_worker {protocol message} {
+    write_log_line "$protocol $message"
+}
+
+proc ::tclwire::record_connection_opened {protocol chan host port service_endpoint worker_thread_id} {
+    variable next_connection_id
+    variable connections
+
+    set connection_id [incr next_connection_id]
+    dict set connections $connection_id [dict create \
+        id $connection_id \
+        created_on [clock seconds] \
+        closed_on 0 \
+        protocol $protocol \
+        channel $chan \
+        peer_host $host \
+        peer_port $port \
+        service_endpoint $service_endpoint \
+        worker_thread_id $worker_thread_id \
+        status open \
+        error {}]
+
+    return $connection_id
+}
+
+proc ::tclwire::record_connection_closed {connection_id {error {}}} {
+    variable connections
+
+    if {![dict exists $connections $connection_id]} {
+        return
+    }
+
+    dict set connections $connection_id closed_on [clock seconds]
+    dict set connections $connection_id status closed
+    dict set connections $connection_id error $error
+}
+
+proc ::tclwire::connection_database {} {
+    variable connections
+    return $connections
+}
+
+proc ::tclwire::start_logfile {config} {
     variable logger_logchan
 
     set logfile [dict get $config logfile]
@@ -150,7 +206,7 @@ proc ::tclcurl::testserver::start_logfile {config} {
     chan configure $logger_logchan -buffering line -translation lf -encoding utf-8
 }
 
-proc ::tclcurl::testserver::stop_logfile {} {
+proc ::tclwire::stop_logfile {} {
     variable logger_logchan
 
     if {$logger_logchan ne {}} {
@@ -159,9 +215,9 @@ proc ::tclcurl::testserver::stop_logfile {} {
     }
 }
 
-proc ::tclcurl::testserver::usage {} {
+proc ::tclwire::usage {} {
     set implemented_servers [join [implemented_protocols] ", "]
-    puts stderr "Usage: tclsh testservers/testserver.tcl ?options?"
+    puts stderr "Usage: tclsh tclwire.tcl ?options?"
     puts stderr ""
     puts stderr "Options:"
     puts stderr "  --help"
@@ -189,26 +245,24 @@ proc ::tclcurl::testserver::usage {} {
     puts stderr "      Document root for HTTP/HTTPS test content."
     puts stderr "  --ftproot <path>"
     puts stderr "      Root directory exposed by the FTP server."
-    puts stderr "  --keepdocroot"
-    puts stderr "      Leave the generated document root on disk after exit."
     puts stderr "  --logfile <path>"
     puts stderr "      File where request log lines are appended."
-    puts stderr "      Default: /tmp/tclcurl.log"
+    puts stderr "      Default: /tmp/tclwire.log"
     puts stderr "  --quiet"
     puts stderr "      Suppress listener startup messages."
     puts stderr "  --debug"
     puts stderr "      Enable verbose test debug output."
 }
 
-proc ::tclcurl::testserver::register_service_class {protocol class_name} {
+proc ::tclwire::register_service_class {protocol class_name} {
 
     variable service_classes
     set service_classes($protocol) $class_name
-    namespace ensemble configure ::tclcurl::testserver -map [command_map]
+    namespace ensemble configure ::tclwire -map [command_map]
     return $class_name
 }
 
-proc ::tclcurl::testserver::service_class {protocol} {
+proc ::tclwire::service_class {protocol} {
     variable service_classes
 
     if {![info exists service_classes($protocol)]} {
@@ -217,13 +271,17 @@ proc ::tclcurl::testserver::service_class {protocol} {
     return $service_classes($protocol)
 }
 
-proc ::tclcurl::testserver::implemented_protocols {} {
+proc ::tclwire::implemented_protocols {} {
     variable service_classes
 
     return [lsort [array names service_classes]]
 }
 
-proc ::tclcurl::testserver::parse_service_spec {spec} {
+proc ::tclwire::default_protocols {} {
+    return [list http]
+}
+
+proc ::tclwire::parse_service_spec {spec} {
     if {![regexp {^([a-z0-9_+-]+):([0-9]+)$} $spec -> protocol port]} {
         error "invalid service spec: $spec"
     }
@@ -234,14 +292,14 @@ proc ::tclcurl::testserver::parse_service_spec {spec} {
     return [dict create protocol $protocol port $port]
 }
 
-proc ::tclcurl::testserver::parse_port_value {name value} {
+proc ::tclwire::parse_port_value {name value} {
     if {![string is integer -strict $value] || $value < 1 || $value > 65535} {
         error "invalid value for $name: $value"
     }
     return $value
 }
 
-proc ::tclcurl::testserver::parse_startservers_value {value} {
+proc ::tclwire::parse_startservers_value {value} {
     set normalized [string trim $value]
     if {$normalized eq {}} {
         error "invalid value for --startservers: empty list"
@@ -268,24 +326,23 @@ proc ::tclcurl::testserver::parse_startservers_value {value} {
     return $selected
 }
 
-proc ::tclcurl::testserver::parse_args {argv} {
+proc ::tclwire::parse_args {argv} {
     set host 127.0.0.1
     set quiet 0
     set debug 0
-    set docroot [::tclcurl::test::doc_root]
-    set ftproot [::tclcurl::test::ftp_root]
+    set docroot [::tclwire::doc_root]
+    set ftproot [::tclwire::ftp_root]
     set certfile {}
     set keyfile {}
-    set logfile [file normalize /tmp/tclcurl.log]
+    set logfile [file normalize /tmp/tclwire.log]
     set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
-    set keepdocroot 0
     array set default_ports {
         http        8990
         https       9443
         ftp         8991
         proxy       8992
     }
-    set startservers [implemented_protocols]
+    set startservers [default_protocols]
     set services {}
     set custom_services 0
 
@@ -366,9 +423,6 @@ proc ::tclcurl::testserver::parse_args {argv} {
                 set ftproot [file normalize [lindex $argv $i]]
                 set ftproot_follows_docroot 0
             }
-            --keepdocroot {
-                set keepdocroot 1
-            }
             --logfile {
                 incr i
                 if {$i >= [llength $argv]} {
@@ -421,35 +475,58 @@ proc ::tclcurl::testserver::parse_args {argv} {
     return [dict create host $host quiet $quiet debug $debug        \
                         docroot $docroot ftproot $ftproot           \
                         certfile $certfile keyfile $keyfile         \
-                        keepdocroot $keepdocroot logfile $logfile   \
+                        logfile $logfile                            \
                         services $services startservers $startservers]
 }
 
-proc ::tclcurl::testserver::configure_roots {config} {
+proc ::tclwire::configure_roots {config} {
     set docroot [dict get $config docroot]
     set ftproot [dict get $config ftproot]
+    set protocols {}
 
-    file mkdir $docroot
-    file mkdir $ftproot
-    ::tclcurl::test::set_doc_root $docroot
-    ::tclcurl::test::set_ftp_root $ftproot
-    seed_doc_root $docroot
+    foreach service_spec [dict get $config services] {
+        lappend protocols [dict get $service_spec protocol]
+    }
+
+    if {[lsearch -exact $protocols http] >= 0 || [lsearch -exact $protocols https] >= 0} {
+        set docroot_exists [file exists $docroot]
+        if {$docroot_exists && ![file isdirectory $docroot]} {
+            error "document root exists but is not a directory: $docroot"
+        }
+
+        if {!$docroot_exists} {
+            file mkdir $docroot
+            seed_doc_root $docroot
+        }
+        ::tclwire::set_doc_root $docroot
+    }
+
+    if {[lsearch -exact $protocols ftp] >= 0} {
+        if {[file exists $ftproot] && ![file isdirectory $ftproot]} {
+            error "FTP root exists but is not a directory: $ftproot"
+        }
+
+        if {![file exists $ftproot]} {
+            file mkdir $ftproot
+        }
+        ::tclwire::set_ftp_root $ftproot
+    }
 }
 
-proc ::tclcurl::testserver::configure_https_credentials {config} {
+proc ::tclwire::configure_https_credentials {config} {
     set certfile    [dict get $config certfile]
     set keyfile     [dict get $config keyfile]
 
     if {$certfile ne {}} {
-        ::tclcurl::test::set_https_cert_file $certfile
+        ::tclwire::set_https_cert_file $certfile
     }
     if {$keyfile ne {}} {
-        ::tclcurl::test::set_https_key_file $keyfile
+        ::tclwire::set_https_key_file $keyfile
     }
 }
 
-proc ::tclcurl::testserver::manual_html_source {} {
-    set repo_root [::tclcurl::test::repo_root]
+proc ::tclwire::manual_html_source {} {
+    set repo_root [::tclwire::repo_root]
     foreach candidate [list \
         [file join $repo_root doc tclcurl.n.html] \
         [file join $repo_root doc tclcurl.html]] {
@@ -461,8 +538,8 @@ proc ::tclcurl::testserver::manual_html_source {} {
     return {}
 }
 
-proc ::tclcurl::testserver::manual_html_files {} {
-    set repo_root [::tclcurl::test::repo_root]
+proc ::tclwire::manual_html_files {} {
+    set repo_root [::tclwire::repo_root]
     set manuals {}
 
     foreach name [list tclcurl.html tclcurl_multi.html tclcurl_share.html] {
@@ -475,8 +552,8 @@ proc ::tclcurl::testserver::manual_html_files {} {
     return $manuals
 }
 
-proc ::tclcurl::testserver::seed_doc_root {docroot} {
-    set index_source [file join [::tclcurl::test::repo_root] testservers index.html]
+proc ::tclwire::seed_doc_root {docroot} {
+    set index_source [file join [::tclwire::repo_root] index.html]
     set index_target [file join $docroot index.html]
     if {[file exists $index_source] && ![file exists $index_target]} {
         file copy $index_source $index_target
@@ -500,108 +577,103 @@ proc ::tclcurl::testserver::seed_doc_root {docroot} {
     }
 }
 
-proc ::tclcurl::testserver::cleanup_doc_root {config} {
-    if {[dict get $config keepdocroot]} {
-        return
-    }
-
-    set docroot [dict get $config docroot]
-    if {$docroot eq {} || ![file exists $docroot]} {
-        return
-    }
-
-    catch {file delete -force $docroot}
-}
-
-proc ::tclcurl::testserver::create_service {protocol host port quiet logfile} {
+proc ::tclwire::create_service {protocol host port quiet logfile thread_master service_config} {
     variable next_service_id
 
     set class_name [service_class $protocol]
-    set object_name ::tclcurl::testserver::service[incr next_service_id]
+    set object_name ::tclwire::service[incr next_service_id]
 
     return [$class_name create  $object_name \
                                 -protocol $protocol \
                                 -host     $host \
                                 -port     $port \
                                 -quiet    $quiet \
-                                -logfile  $logfile]
+                                -logfile  $logfile \
+                                -threadmaster $thread_master \
+                                -serviceconfig $service_config]
 }
 
-proc ::tclcurl::testserver::start_services {config} {
+proc ::tclwire::start_services {config} {
     set host [dict get $config host]
     set quiet [dict get $config quiet]
     set logfile [dict get $config logfile]
+    set thread_master [::tclwire::ThreadMaster new $::tclwire::http_thread_script]
     set instances {}
 
     foreach service_spec [dict get $config services] {
         set protocol [dict get $service_spec protocol]
         set port [dict get $service_spec port]
-        set service [create_service $protocol $host $port $quiet $logfile]
+        set service [create_service $protocol $host $port $quiet $logfile $thread_master $config]
         $service start
         lappend instances $service
     }
 
-    return $instances
+    return [dict create services $instances thread_master $thread_master]
 }
 
-proc ::tclcurl::testserver::stop_services {services} {
+proc ::tclwire::stop_services {service_state} {
+    set services [dict get $service_state services]
     foreach service $services {
         catch {$service destroy}
     }
+    set thread_master [dict get $service_state thread_master]
+    catch {$thread_master stop_threads}
+    catch {$thread_master destroy}
 }
 
-proc ::tclcurl::testserver::run {argv} {
+proc ::tclwire::run {argv} {
     set config [parse_args $argv]
-    ::tclcurl::test::configure_debug_output [dict get $config debug]
+    ::tclwire::configure_debug_output [dict get $config debug]
     configure_roots $config
     configure_https_credentials $config
     start_logfile $config
-    set services [start_services $config]
+    set service_state [start_services $config]
     try {
-        vwait ::tclcurl::testserver::forever
+        vwait ::tclwire::forever
     } finally {
-        stop_services $services
+        stop_services $service_state
         stop_logfile
-        cleanup_doc_root $config
     }
 }
 
-proc ::tclcurl::testserver::command_map {} {
+proc ::tclwire::command_map {} {
     return [dict create \
-        cleanup_doc_root ::tclcurl::testserver::cleanup_doc_root \
-        configure_https_credentials ::tclcurl::testserver::configure_https_credentials \
-        configure_roots ::tclcurl::testserver::configure_roots \
-        create_service ::tclcurl::testserver::create_service \
-        log_value ::tclcurl::testserver::log_value \
-        manual_html_files ::tclcurl::testserver::manual_html_files \
-        manual_html_source ::tclcurl::testserver::manual_html_source \
-        parse_args ::tclcurl::testserver::parse_args \
-        parse_service_spec ::tclcurl::testserver::parse_service_spec \
-        register_service_class ::tclcurl::testserver::register_service_class \
-        run ::tclcurl::testserver::run \
-        seed_doc_root ::tclcurl::testserver::seed_doc_root \
-        service_class ::tclcurl::testserver::service_class \
-        start_services ::tclcurl::testserver::start_services \
-        start_logfile ::tclcurl::testserver::start_logfile \
-        stop_services ::tclcurl::testserver::stop_services \
-        stop_logfile ::tclcurl::testserver::stop_logfile \
-        timestamp ::tclcurl::testserver::timestamp \
-        write_log_line ::tclcurl::testserver::write_log_line \
-        usage ::tclcurl::testserver::usage]
+        configure_https_credentials ::tclwire::configure_https_credentials \
+        configure_roots ::tclwire::configure_roots \
+        connection_database ::tclwire::connection_database \
+        create_service ::tclwire::create_service \
+        log_value ::tclwire::log_value \
+        manual_html_files ::tclwire::manual_html_files \
+        manual_html_source ::tclwire::manual_html_source \
+        default_protocols ::tclwire::default_protocols \
+        parse_args ::tclwire::parse_args \
+        parse_service_spec ::tclwire::parse_service_spec \
+        register_service_class ::tclwire::register_service_class \
+        run ::tclwire::run \
+        seed_doc_root ::tclwire::seed_doc_root \
+        service_class ::tclwire::service_class \
+        start_services ::tclwire::start_services \
+        start_logfile ::tclwire::start_logfile \
+        stop_services ::tclwire::stop_services \
+        stop_logfile ::tclwire::stop_logfile \
+        timestamp ::tclwire::timestamp \
+        write_log_line ::tclwire::write_log_line \
+        usage ::tclwire::usage]
 }
 
-namespace ensemble create -command ::tclcurl::testserver -map [::tclcurl::testserver::command_map]
+namespace ensemble create -command ::tclwire -map [::tclwire::command_map]
 
+source [file join [file dirname [file normalize [info script]]] http_thread.tcl]
 source [file join [file dirname [file normalize [info script]]] http_endpoint.tcl]
 source [file join [file dirname [file normalize [info script]]] http_server.tcl]
-source [file join [file dirname [file normalize [info script]]] https_server.tcl]
-source [file join [file dirname [file normalize [info script]]] ftp_server.tcl]
-source [file join [file dirname [file normalize [info script]]] proxy_server.tcl]
+#source [file join [file dirname [file normalize [info script]]] https_server.tcl]
+#source [file join [file dirname [file normalize [info script]]] ftp_server.tcl]
+#source [file join [file dirname [file normalize [info script]]] proxy_server.tcl]
 
-if {[file normalize $argv0] eq [file normalize [info script]]} {
-    if {[catch {::tclcurl::testserver::run $argv} message]} {
+if {[info exists argv0] && [file normalize $argv0] eq [file normalize [info script]]} {
+    if {[catch {::tclwire::run $argv} message]} {
         puts stderr $message
-        ::tclcurl::testserver::usage
+        ::tclwire::usage
         exit 1
     }
     puts stderr "Server exits..."

@@ -10,9 +10,9 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 
-namespace eval ::tclcurl::testserver {}
+namespace eval ::tclwire {}
 
-if {[info commands ::tclcurl::testserver::http_endpoint_service] eq {}} {
+if {[info commands ::tclwire::http_endpoint_service] eq {}} {
     # Shared HTTP connection plumbing for test services that speak HTTP on the
     # client-facing side. Concrete subclasses keep their own request
     # completion details and response behavior, but they all share the same
@@ -20,11 +20,11 @@ if {[info commands ::tclcurl::testserver::http_endpoint_service] eq {}} {
 
     # current services subclassing 'http_endpoint_service' are
     #
-    #   * ::tclcurl::testserver::http_server
-    #   * ::tclcurl::testserver::proxy_service
+    #   * ::tclwire::http_server
+    #   * ::tclwire::proxy_service
 
-    oo::class create ::tclcurl::testserver::http_endpoint_service {
-        superclass ::tclcurl::testserver::service
+    oo::class create ::tclwire::http_endpoint_service {
+        superclass ::tclwire::service
 
         variable request_data
 
@@ -49,32 +49,47 @@ if {[info commands ::tclcurl::testserver::http_endpoint_service] eq {}} {
 
         method accept {chan host port} {
             chan configure $chan -blocking 0 -buffering none -translation binary
-            ::tclcurl::test::msgoutput "accept connection chan=$chan host=$host port=$port"
+            ::tclwire::msgoutput "accept connection chan=$chan host=$host port=$port"
             chan event $chan readable [list [self] read_request $chan]
         }
 
         method read_request {chan} {
+            ::tclwire::msgoutput "readable chan=$chan"
             if {[eof $chan]} {
+                ::tclwire::msgoutput "read eof chan=$chan"
                 my close_client $chan
                 return
             }
 
             set chunk [read $chan]
             if {$chunk eq {}} {
+                ::tclwire::msgoutput "read empty chan=$chan"
                 return
             }
 
+            ::tclwire::msgoutput "read bytes chan=$chan count=[string length $chunk]"
             append request_data($chan) $chunk
             set request [my complete_request $request_data($chan)]
-            if {$request eq {}} { return }
+            if {$request eq {}} {
+                ::tclwire::msgoutput "request incomplete chan=$chan buffered=[string length $request_data($chan)]"
+                return
+            }
 
+            ::tclwire::msgoutput "request complete chan=$chan bytes=[string length $request]"
             unset request_data($chan)
             chan event $chan readable {}
             if {[catch {my handle_request $chan $request} request_error request_options]} {
-                ::tclcurl::test::msgoutput \
+                ::tclwire::msgoutput \
                     "request handling failed chan=$chan error=$request_error options=$request_options"
                 my close_client $chan
             }
+        }
+
+        method read_request_if_open {chan} {
+            if {[lsearch -exact [chan names] $chan] < 0} {
+                return
+            }
+            my read_request $chan
         }
 
         # Default request framing for simple HTTP services: a complete header
@@ -106,7 +121,7 @@ if {[info commands ::tclcurl::testserver::http_endpoint_service] eq {}} {
             error "handle_request must be implemented by subclasses"
         }
 
-        method close_client {chan} {
+        method close_client {chan {error {}}} {
             catch {unset request_data($chan)}
             catch {close $chan}
         }

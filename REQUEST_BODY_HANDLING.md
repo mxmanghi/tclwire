@@ -19,9 +19,9 @@ The relevant flow is:
 
 Relevant code:
 
-- [http_endpoint.tcl](/home/manghi/Projects/tclcurl-ng/testservers/http_endpoint.tcl:56)
-- [http_server.tcl](/home/manghi/Projects/tclcurl-ng/testservers/http_server.tcl:65)
-- [http_application.tcl](/home/manghi/Projects/tclcurl-ng/testservers/http_application.tcl:136)
+- [http_endpoint.tcl](/home/manghi/Projects/tclwire/http_endpoint.tcl:56)
+- [http_server.tcl](/home/manghi/Projects/tclwire/http_server.tcl:65)
+- [http_application.tcl](/home/manghi/Projects/tclwire/http_application.tcl:136)
 
 ### Fixed-Length Bodies
 

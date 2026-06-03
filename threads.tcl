@@ -1,6 +1,5 @@
-lappend auto_path testservers/
+lappend auto_path [pwd]
 package require tclwire::threadpool
-source testservers/thread_base.tcl
+source thread_base.tcl
 
 set tm [::tclwire::ThreadMaster new $thread_script]
-

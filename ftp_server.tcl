@@ -10,15 +10,15 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 
-namespace eval ::tclcurl::testserver {}
+namespace eval ::tclwire {}
 
-oo::class create ::tclcurl::testserver::ftp_service {
-    superclass ::tclcurl::testserver::service
+oo::class create ::tclwire::ftp_service {
+    superclass ::tclwire::service
 
     variable ftp_root sessions
 
     constructor args {
-        set ftp_root [::tclcurl::test::ftp_root]
+        set ftp_root [::tclwire::ftp_root]
         array set sessions {}
         next {*}$args
     }
@@ -76,7 +76,7 @@ oo::class create ::tclcurl::testserver::ftp_service {
             return
         }
 
-        ::tclcurl::test::msgoutput "ftp command chan=$chan line=$line"
+        ::tclwire::msgoutput "ftp command chan=$chan line=$line"
 
         set command [string toupper [lindex [split $line] 0]]
         set argument [string trim [string range $line [string length $command] end]]
@@ -90,7 +90,7 @@ oo::class create ::tclcurl::testserver::ftp_service {
             return
         }
 
-        ::tclcurl::test::msgoutput "TclCurl FTP Server: command '$command' received"
+        ::tclwire::msgoutput "TclCurl FTP Server: command '$command' received"
         switch -- $command {
             USER {
                 my send_reply $chan 331 "Anonymous login ok, send password"
@@ -254,7 +254,7 @@ oo::class create ::tclcurl::testserver::ftp_service {
             set argument [dict get $sessions($chan) last_argument]
             set path [expr {$argument eq {} ? [dict get $sessions($chan) cwd] : $argument}]
             my log_request \
-                "command=$command status=$code path=[::tclcurl::testserver::log_value $path]"
+                "command=$command status=$code path=[::tclwire::log_value $path]"
         }
     }
 
@@ -525,4 +525,4 @@ oo::class create ::tclcurl::testserver::ftp_service {
     }
 }
 
-::tclcurl::testserver register_service_class ftp ::tclcurl::testserver::ftp_service
+::tclwire register_service_class ftp ::tclwire::ftp_service

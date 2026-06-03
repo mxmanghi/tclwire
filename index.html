@@ -1,563 +1,247 @@
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="generator" content="pandoc" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <title>Tclcurl tiny web server</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TclWire application server</title>
   <style>
-    html {
-      color: #1a1a1a;
-      background-color: #fdfdfd;
+    :root {
+      color-scheme: light;
+      --text: #172033;
+      --muted: #526070;
+      --line: #d9e1ea;
+      --surface: #f6f8fb;
+      --accent: #1b5f8f;
     }
+
     body {
       margin: 0 auto;
-      max-width: 64em;
-      padding-left: 50px;
-      padding-right: 50px;
-      padding-top: 50px;
-      padding-bottom: 50px;
-      hyphens: auto;
-      overflow-wrap: break-word;
-      text-rendering: optimizeLegibility;
-      font-kerning: normal;
+      max-width: 860px;
+      padding: 44px 24px 64px;
+      color: var(--text);
+      background: #fff;
+      font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    @media (max-width: 600px) {
-      body {
-        font-size: 0.9em;
-        padding: 12px;
-      }
-      h1 {
-        font-size: 1.8em;
-      }
-    }
-    @media print {
-      html {
-        background-color: white;
-      }
-      body {
-        background-color: transparent;
-        color: black;
-        font-size: 12pt;
-      }
-      p, h2, h3 {
-        orphans: 3;
-        widows: 3;
-      }
-      h2, h3, h4 {
-        page-break-after: avoid;
-      }
-    }
-    p {
-      margin: 1em 0;
-    }
-    a {
-      color: #1a1a1a;
-    }
-    a:visited {
-      color: #1a1a1a;
-    }
-    img {
-      max-width: 100%;
-    }
-    svg {
-      height: auto;
-      max-width: 100%;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      margin-top: 1.4em;
-    }
-    h5, h6 {
-      font-size: 1em;
-      font-style: italic;
-    }
-    h6 {
-      font-weight: normal;
-    }
-    ol, ul {
-      padding-left: 1.7em;
-      margin-top: 1em;
-    }
-    li > ol, li > ul {
-      margin-top: 0;
-    }
-    blockquote {
-      margin: 1em 0 1em 1.7em;
-      padding-left: 1em;
-      border-left: 2px solid #e6e6e6;
-      color: #606060;
-    }
-    code {
-      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
-      font-size: 85%;
-      margin: 0;
-      hyphens: manual;
-    }
-    pre {
-      margin: 1em 0;
-      overflow: auto;
-    }
-    pre code {
-      padding: 0;
-      overflow: visible;
-      overflow-wrap: normal;
-    }
-    .sourceCode {
-     background-color: transparent;
-     overflow: visible;
-    }
-    hr {
-      background-color: #1a1a1a;
-      border: none;
-      height: 1px;
-      margin: 1em 0;
-    }
-    table {
-      margin: 1em 0;
-      border-collapse: collapse;
-      width: 100%;
-      overflow-x: auto;
-      display: block;
-      font-variant-numeric: lining-nums tabular-nums;
-    }
-    table caption {
-      margin-bottom: 0.75em;
-    }
-    tbody {
-      margin-top: 0.5em;
-      border-top: 1px solid #1a1a1a;
-      border-bottom: 1px solid #1a1a1a;
-    }
-    th {
-      border-top: 1px solid #1a1a1a;
-      padding: 0.25em 0.5em 0.25em 0.5em;
-    }
-    td {
-      padding: 0.125em 0.5em 0.25em 0.5em;
-    }
+
     header {
-      margin-bottom: 4em;
-      text-align: center;
+      margin-bottom: 36px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--line);
     }
-    #TOC li {
-      list-style: none;
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 2.35rem;
+      line-height: 1.1;
+      letter-spacing: 0;
     }
-    #TOC ul {
-      padding-left: 1.3em;
+
+    h2 {
+      margin: 34px 0 10px;
+      font-size: 1.35rem;
     }
-    #TOC > ul {
-      padding-left: 0;
+
+    h3 {
+      margin: 24px 0 8px;
+      font-size: 1.05rem;
     }
-    #TOC a:not(:hover) {
-      text-decoration: none;
+
+    p {
+      margin: 0 0 14px;
     }
-    code{white-space: pre-wrap;}
-    span.smallcaps{font-variant: small-caps;}
-    div.columns{display: flex; gap: min(4vw, 1.5em);}
-    div.column{flex: auto; overflow-x: auto;}
-    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
-    /* The extra [class] is a hack that increases specificity enough to
-       override a similar rule in reveal.js */
-    ul.task-list[class]{list-style: none;}
-    ul.task-list li input[type="checkbox"] {
-      font-size: inherit;
-      width: 0.8em;
-      margin: 0 0.8em 0.2em -1.6em;
-      vertical-align: middle;
+
+    ul {
+      margin: 0 0 18px;
+      padding-left: 1.35rem;
     }
-    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
-    /* CSS for syntax highlighting */
-    pre > code.sourceCode { white-space: pre; position: relative; }
-    pre > code.sourceCode > span { line-height: 1.25; }
-    pre > code.sourceCode > span:empty { height: 1.2em; }
-    .sourceCode { overflow: visible; }
-    code.sourceCode > span { color: inherit; text-decoration: inherit; }
-    div.sourceCode { margin: 1em 0; }
-    pre.sourceCode { margin: 0; }
-    @media screen {
-    div.sourceCode { overflow: auto; }
+
+    li {
+      margin: 6px 0;
     }
-    @media print {
-    pre > code.sourceCode { white-space: pre-wrap; }
-    pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
     }
-    pre.numberSource code
-      { counter-reset: source-line 0; }
-    pre.numberSource code > span
-      { position: relative; left: -4em; counter-increment: source-line; }
-    pre.numberSource code > span > a:first-child::before
-      { content: counter(source-line);
-        position: relative; left: -1em; text-align: right; vertical-align: baseline;
-        border: none; display: inline-block;
-        -webkit-touch-callout: none; -webkit-user-select: none;
-        -khtml-user-select: none; -moz-user-select: none;
-        -ms-user-select: none; user-select: none;
-        padding: 0 4px; width: 4em;
-        color: #aaaaaa;
-      }
-    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
-    div.sourceCode
-      {   }
-    @media screen {
-    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+
+    pre {
+      margin: 14px 0 20px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
     }
-    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
-    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
-    code span.at { color: #7d9029; } /* Attribute */
-    code span.bn { color: #40a070; } /* BaseN */
-    code span.bu { color: #008000; } /* BuiltIn */
-    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
-    code span.ch { color: #4070a0; } /* Char */
-    code span.cn { color: #880000; } /* Constant */
-    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
-    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
-    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
-    code span.dt { color: #902000; } /* DataType */
-    code span.dv { color: #40a070; } /* DecVal */
-    code span.er { color: #ff0000; font-weight: bold; } /* Error */
-    code span.ex { } /* Extension */
-    code span.fl { color: #40a070; } /* Float */
-    code span.fu { color: #06287e; } /* Function */
-    code span.im { color: #008000; font-weight: bold; } /* Import */
-    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
-    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
-    code span.op { color: #666666; } /* Operator */
-    code span.ot { color: #007020; } /* Other */
-    code span.pp { color: #bc7a00; } /* Preprocessor */
-    code span.sc { color: #4070a0; } /* SpecialChar */
-    code span.ss { color: #bb6688; } /* SpecialString */
-    code span.st { color: #4070a0; } /* String */
-    code span.va { color: #19177c; } /* Variable */
-    code span.vs { color: #4070a0; } /* VerbatimString */
-    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+
+    table {
+      width: 100%;
+      margin: 14px 0 22px;
+      border-collapse: collapse;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    th,
+    td {
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      background: var(--surface);
+    }
+
+    .lead {
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 1.12rem;
+    }
+
+    .note {
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      background: var(--surface);
+    }
   </style>
 </head>
 <body>
-<header id="title-block-header">
-<h1 class="title">Tclcurl tiny web server</h1>
-</header>
-<h1 id="tclcurl-test-suite">TclCurl Test Suite</h1>
-<p>The repository now has two distinct kinds of files under
-<code>tests/</code>:</p>
-<ul>
-<li><code>*.test</code>: real <code>tcltest</code> test cases that are
-executed by <code>tests/all.tcl</code></li>
-<li><code>legacy/*.tcl</code>: legacy example scripts that are useful as
-references, but are not part of the automated suite</li>
-</ul>
-<p><em>Last update: 2026-05-16</em></p>
-<h2 id="running-the-suite">Running the suite</h2>
-<p><code>tests/all.tcl</code> tries to load TclCurl from the build tree
-first and falls back to an installed package if needed.</p>
-<p>By default, <code>tests/all.tcl</code> enables <code>tcltest</code>’s
-<code>start</code> verbosity, so each test prints a line when it begins
-running. You can still override that from the command line with
-<code>-verbose</code>.</p>
-<p>To run the server-backed suite from a normal working tree, use this
-sequence:</p>
-<ol type="1">
-<li>Start the local test servers in one terminal:</li>
-</ol>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tclsh</span> testservers/testserver.tcl</span></code></pre></div>
-<ol start="2" type="1">
-<li>Run the suite in a second terminal from the repository root:</li>
-</ol>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tclsh</span> tests/all.tcl</span></code></pre></div>
-<ol start="3" type="1">
-<li>To run only one test file, add <code>-file</code>:</li>
-</ol>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tclsh</span> tests/all.tcl <span class="at">-file</span> http.test</span></code></pre></div>
-<ol start="4" type="1">
-<li>If you want the test runner to shut down the HTTP test server when
-it finishes, add <code>-exitserver</code>:</li>
-</ol>
-<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tclsh</span> tests/all.tcl <span class="at">-exitserver</span></span></code></pre></div>
-<p>If one of the configured protocol endpoints is not reachable, the
-corresponding server-backed tests are skipped.</p>
-<h2
-id="testserverstestserver.tcl"><code>testservers/testserver.tcl</code></h2>
-<p>The local server framework accepts the following general command
-form:</p>
-<pre class="text"><code>tclsh testservers/testserver.tcl \
-                  ?--host host? \
-                  ?--httpport port? ?--httpsport port? ?--ftpport port? ?--proxyport port? \
-                  ?--certfile path? ?--keyfile path? \
-                  ?--service protocol:port? ... \
-                  ?--docroot path? ?--ftproot path? ?--keepdocroot? \
-                  ?--logfile path? \
-                  ?--startservers protocol[,protocol,...]|all? \
-                  ?--quiet? ?--debug?</code></pre>
-<p>By default, <code>testservers/testserver.tcl</code> starts four
-services:</p>
-<ul>
-<li>HTTP on <code>127.0.0.1:8990</code></li>
-<li>HTTPS on <code>127.0.0.1:9443</code></li>
-<li>FTP on <code>127.0.0.1:8991</code></li>
-<li>HTTP proxy on <code>127.0.0.1:8992</code></li>
-</ul>
-<p>The HTTP test server keeps its explicit dynamic routes for protocol
-behaviors such as redirects, request inspection, and authentication. For
-<code>GET</code> and <code>HEAD</code> requests that do not match one of
-those routes, it falls back to static file serving rooted at
-<code>TCLCURL_TEST_DOC_ROOT</code> or <code>--docroot</code>.</p>
-<p>Unless <code>--keepdocroot</code> is given, the server removes the
-configured document root when it shuts down.</p>
-<p>The server framework appends timestamped per-request log lines to
-<code>/tmp/tclcurl.log</code> by default. Override that path with
-<code>--logfile</code> when you want to keep the request log
-elsewhere.</p>
-<h2 id="testsall.tcl"><code>tests/all.tcl</code></h2>
-<p><code>tests/all.tcl</code> accepts a small set of TclCurl-specific
-options together with the usual <code>tcltest</code> command-line
-filters and output controls. The general form is:</p>
-<pre class="text"><code>tclsh tests/all.tcl \
-                  ?--httpserver path/to/server.tcl? \
-                  ?--httpport port? ?--httpsport port? ?--ftpport port? ?--proxyport port? \
-                  ?--docroot path? ?--ftproot path? \
-                  ?--certfile path? ?--keyfile path? \
-                  ?--exitserver? ?--debug? \
-                  ?--file pattern? ?--notfile pattern? ?--match pattern? ?--skip pattern? \
-                  ?--verbose level...?</code></pre>
-<p>When the Tcl HTTP test server is wired in, the server script path
-precedence is:</p>
-<ul>
-<li><code>--httpserver /path/to/server.tcl</code></li>
-<li><code>TCLCURL_TEST_HTTP_SERVER_SCRIPT</code></li>
-<li><code>testservers/testserver.tcl</code></li>
-</ul>
-<p><code>testservers/testserver.tcl</code> accepts
-<code>--httpport</code>, <code>--httpsport</code>,
-<code>--ftpport</code>, and <code>--proxyport</code> to override the
-default ports <code>8990</code>, <code>9443</code>, <code>8991</code>,
-and <code>8992</code>.</p>
-<p><code>tests/all.tcl</code> accepts the same double-dash options
-<code>--httpport</code>, <code>--httpsport</code>,
-<code>--ftpport</code>, and <code>--proxyport</code>. It also accepts
-<code>--docroot</code>, <code>--ftproot</code>, <code>--certfile</code>,
-and <code>--keyfile</code>, and maps them to the corresponding
-<code>TCLCURL_TEST_*</code> environment overrides used by the test
-support layer. When you need both entry points to target the same
-services, pass matching values to each script.</p>
-<p>The Tcl test support layer uses protocol-specific base URLs. You can
-override them before running <code>make test</code> or
-<code>tclsh tests/all.tcl</code>:</p>
-<ul>
-<li><code>TCLCURL_TEST_HTTP_BASE_URL</code>: base URL for the running
-Tcl HTTP test server, default <code>http://127.0.0.1:8990/</code></li>
-<li><code>TCLCURL_TEST_HTTPS_BASE_URL</code>: base URL for the running
-Tcl HTTPS test server, default <code>https://127.0.0.1:9443/</code></li>
-<li><code>TCLCURL_TEST_FTP_BASE_URL</code>: base URL for the running Tcl
-FTP test server, default <code>ftp://127.0.0.1:8991/</code></li>
-<li><code>TCLCURL_TEST_PROXY_BASE_URL</code>: base URL for the running
-Tcl HTTP proxy test server, default
-<code>http://127.0.0.1:8992/</code></li>
-<li><code>TCLCURL_TEST_DOC_ROOT</code>: shared document root used by the
-Tcl test servers, default <code>/tmp/tclcurl</code></li>
-<li><code>TCLCURL_TEST_FTP_ROOT</code>: root directory used by the Tcl
-FTP test server, default <code>TCLCURL_TEST_DOC_ROOT</code></li>
-<li><code>TCLCURL_TEST_HTTPS_CERT_FILE</code>: path to the certificate
-file used by the Tcl HTTPS test server, default
-<code>tests/certs/server.crt</code></li>
-<li><code>TCLCURL_TEST_HTTPS_KEY_FILE</code>: path to the private key
-file used by the Tcl HTTPS test server, default
-<code>tests/certs/server.key</code></li>
-<li><code>TCLCURL_TEST_HTTP_SERVER_SCRIPT</code>: path to the Tcl test
-server framework script, used when no <code>-httpserver</code> CLI
-override is given; default <code>testservers/testserver.tcl</code></li>
-</ul>
-<h2 id="running-secure-protocol-tests">Running secure protocol
-tests</h2>
-<p>In order to test the https series of tests you have to create a
-self-signed pair of key/certificate to be stored in tests/certs</p>
-<p>If you want to keep the credentials elsewhere, either:</p>
-<ul>
-<li>start <code>testservers/testserver.tcl</code> with
-<code>--certfile /path/to/server.crt --keyfile /path/to/server.key</code></li>
-<li>or run
-<code>tests/all.tcl --certfile /path/to/server.crt --keyfile /path/to/server.key</code></li>
-<li>or export <code>TCLCURL_TEST_HTTPS_CERT_FILE</code> and
-<code>TCLCURL_TEST_HTTPS_KEY_FILE</code></li>
-</ul>
-<pre><code> mkdir -p tests/certs
+  <header>
+    <h1>TclWire</h1>
+    <p class="lead">TclWire is a Tcl application server being shaped around small, composable server implementations. The current runtime focuses on HTTP while the threading, routing, logging, and configuration model settle.</p>
+  </header>
 
-  openssl req   -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-                -keyout tests/certs/server.key \
-                -out tests/certs/server.crt \
-                -subj &quot;/CN=localhost&quot; \
-                -addext &quot;subjectAltName=DNS:localhost,IP:127.0.0.1&quot;</code></pre>
-<h2 id="shared-transport-scenarios">Shared transport scenarios</h2>
-<p><code>tests/http_common.tcl</code> contains transport-oriented
-scenario helpers that are shared by <code>http.test</code>,
-<code>https.test</code>, <code>redir.test</code>, and
-<code>cookies.test</code>.</p>
-<p>The common layer currently covers:</p>
-<ul>
-<li>basic GET / HEAD requests</li>
-<li>callback delivery through <code>-writeproc</code></li>
-<li><code>getinfo</code> transfer metadata</li>
-<li>redirect handling through <code>-followlocation</code>,
-<code>-maxredirs</code>, <code>-autoreferer</code>, and
-<code>-postredir</code></li>
-<li>request body handling through <code>-post</code>,
-<code>-postfields</code>, <code>-postfieldsize</code>,
-<code>-upload</code>, <code>-readproc</code>, and
-<code>-range</code></li>
-<li>timeout handling through <code>-timeout</code> and
-<code>-timeoutms</code></li>
-<li>cookie engine behaviors such as <code>-cookiefile</code>,
-<code>-cookielist</code>, <code>-cookiejar</code>, and
-<code>-cookiesession</code></li>
-</ul>
-<p>Tests that are primarily about easy-handle lifecycle or share-handle
-lifecycle stay in the protocol-specific files instead of being pulled
-into <code>http_common.tcl</code>.</p>
-<h2 id="current-server-backed-coverage">Current server-backed
-coverage</h2>
-<p><code>tests/http.test</code> focuses on TclCurl behaviors exercised
-over plain HTTP:</p>
-<ul>
-<li>basic GET transfers with <code>-bodyvar</code></li>
-<li>HEAD requests with <code>-headervar</code></li>
-<li>callback delivery through <code>-writeproc</code></li>
-<li><code>getinfo</code> transfer metadata</li>
-<li>easy handle lifecycle operations such as <code>reset</code> and
-<code>duphandle</code></li>
-<li>HTTP error handling through <code>-failonerror</code> and
-<code>-errorbuffer</code></li>
-<li>share handle wiring for DNS sharing</li>
-<li>request body handling through <code>-post</code>,
-<code>-postfields</code>, <code>-postfieldsize</code>,
-<code>-upload</code>, <code>-readproc</code>, and
-<code>-range</code></li>
-<li>timeout handling through <code>-timeout</code> and
-<code>-timeoutms</code></li>
-</ul>
-<p><code>tests/output.test</code> covers output routing:</p>
-<ul>
-<li><code>-file</code> and resetting it to the default destination</li>
-<li><code>-writeheader</code> and resetting it to the default
-destination</li>
-<li><code>-stderr</code> and resetting it to the default
-destination</li>
-</ul>
-<p><code>tests/progress.test</code> covers transfer callbacks and
-related controls:</p>
-<ul>
-<li><code>-command</code></li>
-<li><code>-progressproc</code></li>
-<li>pause / resume callback behavior</li>
-<li><code>-buffersize</code></li>
-</ul>
-<p><code>tests/negotiation.test</code> covers HTTP negotiation-oriented
-options:</p>
-<ul>
-<li><code>-httpversion</code></li>
-<li><code>-encoding</code></li>
-<li><code>-transferencoding</code></li>
-<li><code>-contentdecoding</code></li>
-<li><code>-transferdecoding</code></li>
-</ul>
-<p><code>tests/https.test</code> covers the TLS-specific aspects of the
-same HTTP behaviors:</p>
-<ul>
-<li>HTTPS GET with certificate verification disabled</li>
-<li>HTTPS GET with <code>-cainfo</code> pointing at the local
-self-signed certificate</li>
-<li>expected verification failure when the certificate is not
-trusted</li>
-<li>shared transport scenarios reused from
-<code>tests/http_common.tcl</code></li>
-</ul>
-<p><code>tests/ftp.test</code> covers the local Tcl FTP server:</p>
-<ul>
-<li>upload and download of text and binary files</li>
-<li>directory listing via <code>LIST</code> / <code>NLST</code></li>
-<li><code>-dirlistonly</code></li>
-<li><code>-quote</code> / <code>-postquote</code></li>
-<li><code>-ftpcreatemissingdirs</code></li>
-<li><code>-resumefrom</code></li>
-</ul>
-<p><code>tests/redir.test</code> and <code>tests/cookies.test</code> are
-thin wrappers around the shared transport scenarios, kept as separate
-files for readability and focused <code>tcltest</code> runs.</p>
-<p><code>tests/mime.test</code> currently covers multipart form
-submission through <code>-httppost</code>:</p>
-<ul>
-<li>mixed textual parts</li>
-<li>buffer-backed parts</li>
-<li>file-backed parts</li>
-</ul>
-<h2 id="https-setup">HTTPS setup</h2>
-<p>The HTTPS server requires:</p>
-<ul>
-<li>the Tcl <code>tls</code> package</li>
-<li>a local certificate and private key, by default at:
-<ul>
-<li><code>tests/certs/server.crt</code></li>
-<li><code>tests/certs/server.key</code></li>
-</ul></li>
-</ul>
-<p>You can override those paths:</p>
-<ul>
-<li>for direct server runs, with
-<code>--certfile /path/to/server.crt --keyfile /path/to/server.key</code></li>
-<li>for the test suite, with <code>TCLCURL_TEST_HTTPS_CERT_FILE</code>
-and <code>TCLCURL_TEST_HTTPS_KEY_FILE</code></li>
-</ul>
-<p>These files are intentionally not required to live in the repository.
-When they are missing, HTTPS-backed tests are skipped.</p>
-<p>One simple way to generate them locally is:</p>
-<div class="sourceCode" id="cb8"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> tests/certs</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">openssl</span> req <span class="at">-x509</span> <span class="at">-newkey</span> rsa:2048 <span class="at">-sha256</span> <span class="at">-days</span> 3650 <span class="at">-nodes</span> <span class="dt">\</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">-keyout</span> tests/certs/server.key <span class="dt">\</span></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">-out</span> tests/certs/server.crt <span class="dt">\</span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">-subj</span> <span class="st">&quot;/CN=localhost&quot;</span> <span class="dt">\</span></span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">-addext</span> <span class="st">&quot;subjectAltName=DNS:localhost,IP:127.0.0.1&quot;</span></span></code></pre></div>
-<h2 id="areas-of-active-coverage-growth">Areas of Active Coverage
-Growth</h2>
-<p>The current suite already covers the core HTTP, HTTPS, and FTP
-behaviors used by TclCurl, but some areas are still being expanded. If
-you are looking for the parts of the option surface that are most likely
-to gain broader automated coverage next, the main groups are:</p>
-<ul>
-<li>transfer controls such as <code>-connecttimeout</code></li>
-<li>name resolution and routing options such as <code>-resolve</code>,
-<code>-ipresolve</code>, <code>-interface</code>, <code>-port</code>,
-and <code>-tcpnodelay</code></li>
-<li>authentication options supported by the linked libcurl build, such
-as <code>-userpwd</code>, <code>-username</code>,
-<code>-password</code>, <code>-httpauth</code>, and
-<code>-proxyauth</code></li>
-</ul>
-<p>Other areas that are also expected to grow over time include:</p>
-<ul>
-<li>callback diagnostics such as <code>-debugproc</code></li>
-<li>advanced multipart form handling through <code>-httppost</code>,
-including <code>contentheader</code>, overridden <code>filename</code>,
-and <code>filecontent</code></li>
-<li>broader metadata and utility APIs such as <code>getinfo</code>,
-<code>curl::curlConfig</code>, <code>easystrerror</code>,
-<code>multistrerror</code>, and <code>sharestrerror</code></li>
-</ul>
-<h2 id="current-limitations">Current Limitations</h2>
-<p>Although the local test framework now covers a substantial part of
-TclCurl’s single-transfer behavior, some categories still have more
-limited automated coverage.</p>
-<p>The main remaining limitations are:</p>
-<ul>
-<li>scenarios that depend on more specialized server setups, such as
-proxy, SMTP, POP3, or authentication-specific environments</li>
-<li>cases that require response scripts or fixtures derived from
-<code>curl/tests/data</code></li>
-<li>feature-conditional behaviors such as HTTP/2, HTTP/3, TLS auth, or
-compression variants that depend on how the local libcurl build was
-configured</li>
-</ul>
-<p>In practice, this means that the absence of a test in one of those
-areas does not necessarily indicate lack of support in TclCurl. It more
-often means that the local test framework has not yet been extended to
-exercise that behavior in a reproducible way.</p>
+  <main>
+    <section>
+      <h2>Current Runtime</h2>
+      <p>The application entry point is <code>tclwire.tcl</code>. By default it starts one HTTP listener on <code>127.0.0.1:8990</code>.</p>
+      <pre><code>tclsh tclwire.tcl</code></pre>
+      <p>Use <code>--httpport</code> and <code>--host</code> to choose a different endpoint.</p>
+      <pre><code>tclsh tclwire.tcl --host 127.0.0.1 --httpport 8080</code></pre>
+    </section>
+
+    <section>
+      <h2>HTTP Serving</h2>
+      <p>The HTTP service serves <code>::tclwire::CApplication</code>. Its default routing behavior is static file serving from the configured document root.</p>
+      <p>For <code>GET</code> and <code>HEAD</code> requests, paths are resolved under the active document root. Existing application routes can still return dynamic responses before the static fallback is used.</p>
+      <p class="note">The current default service set is intentionally restricted to HTTP. HTTPS, FTP, and proxy code may still exist in the repository, but they are not part of the default startup path while the TclWire architecture is being reorganized.</p>
+    </section>
+
+    <section>
+      <h2>Document Roots</h2>
+      <p>The active document root is selected in this order:</p>
+      <ul>
+        <li><code>--docroot /path/to/root</code></li>
+        <li><code>TCLWIRE_DOC_ROOT</code></li>
+        <li><code>/tmp/tclwire</code></li>
+      </ul>
+      <p>If the configured document root does not exist, TclWire creates it and seeds it with the built-in index content. If the directory already exists, TclWire leaves its contents untouched. Document roots are retained when the server exits.</p>
+      <pre><code>tclsh tclwire.tcl --docroot /var/tmp/tclwire-site</code></pre>
+    </section>
+
+    <section>
+      <h2>Threading Model</h2>
+      <p>The master thread owns the listening sockets. When a client connects, the HTTP service asks <code>::tclwire::ThreadMaster</code> for an idle worker thread.</p>
+      <p>The accepted socket channel is transferred to the selected worker with <code>thread::transfer</code>. The worker configures the channel for nonblocking binary I/O, installs readable events, and serves the connection until it closes.</p>
+      <p>Workers receive the parsed runtime configuration from the master, including the active document root. Connection open and close events are recorded by the master-side connection database.</p>
+    </section>
+
+    <section>
+      <h2>Command Line</h2>
+      <pre><code>tclsh tclwire.tcl \
+  ?--host address? \
+  ?--httpport port? \
+  ?--service protocol:port? ... \
+  ?--docroot path? ?--ftproot path? \
+  ?--logfile path? \
+  ?--startservers protocol[,protocol,...]|all? \
+  ?--quiet? ?--debug?</code></pre>
+      <table>
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>--host</code></td>
+            <td>Bind services to a specific local address. Default: <code>127.0.0.1</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--httpport</code></td>
+            <td>Set the HTTP listener port. Default: <code>8990</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--service</code></td>
+            <td>Add an explicit service entry such as <code>http:8080</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--docroot</code></td>
+            <td>Set the root directory used by HTTP static file serving.</td>
+          </tr>
+          <tr>
+            <td><code>--ftproot</code></td>
+            <td>Set the FTP root for future FTP service runs. It is not created during HTTP-only startup.</td>
+          </tr>
+          <tr>
+            <td><code>--logfile</code></td>
+            <td>Set the request log path. Default: <code>/tmp/tclwire.log</code>.</td>
+          </tr>
+          <tr>
+            <td><code>--quiet</code></td>
+            <td>Suppress listener startup messages.</td>
+          </tr>
+          <tr>
+            <td><code>--debug</code></td>
+            <td>Enable verbose diagnostic output.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Environment</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Variable</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>TCLWIRE_DOC_ROOT</code></td>
+            <td>Default document root when <code>--docroot</code> is not supplied.</td>
+          </tr>
+          <tr>
+            <td><code>TCLWIRE_FTP_ROOT</code></td>
+            <td>Default FTP root when <code>--ftproot</code> is not supplied.</td>
+          </tr>
+          <tr>
+            <td><code>TCLWIRE_DEBUG</code></td>
+            <td>Enable debug output before command-line parsing.</td>
+          </tr>
+          <tr>
+            <td><code>TCLWIRE_HTTPS_CERT_FILE</code></td>
+            <td>Path to an HTTPS certificate for future HTTPS service work.</td>
+          </tr>
+          <tr>
+            <td><code>TCLWIRE_HTTPS_KEY_FILE</code></td>
+            <td>Path to an HTTPS private key for future HTTPS service work.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Project Direction</h2>
+      <p>The active architecture is moving toward a master process that owns listeners and dispatches accepted channels to worker threads. Each worker runs a server instance and reports lifecycle, errors, and request logging back to the master.</p>
+      <p>The next useful steps are to generalize the HTTP worker script into a reusable server-worker template, rename <code>CApplication</code> to an HTTP-specific application class, and continue separating protocol-neutral runtime support from HTTP-specific behavior.</p>
+    </section>
+  </main>
 </body>
 </html>

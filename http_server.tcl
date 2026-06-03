@@ -10,28 +10,31 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 
-namespace eval ::tclcurl::testserver {}
+namespace eval ::tclwire {}
 
-if {[info commands ::tclcurl::testserver::http_endpoint_service] eq {}} {
+package require Thread
+
+if {[info commands ::tclwire::http_endpoint_service] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_endpoint.tcl]
 }
-if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
+if {[info commands ::tclwire::CApplication] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_application.tcl]
 }
-if {[info commands ::tclcurl::testserver::CTestApplication] eq {}} {
+if {[info commands ::tclwire::CTestApplication] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_test_application.tcl]
 }
 
 # HTTP origin service used by the tests. The shared base handles connection
 # lifecycle and buffering; this class adds origin-specific request framing,
 # and transport-specific response generation.
-oo::class create ::tclcurl::testserver::http_service {
-    superclass ::tclcurl::testserver::http_endpoint_service
-    variable application
+oo::class create ::tclwire::http_service {
+    superclass ::tclwire::http_endpoint_service
+    variable application connection_ids
 
     constructor args {
-        set application_class ::tclcurl::testserver::CTestApplication
+        set application_class ::tclwire::CApplication
         set service_args {}
+        array set connection_ids {}
 
         foreach {name value} $args {
             if {$name eq "-applicationclass"} {
@@ -58,6 +61,53 @@ oo::class create ::tclcurl::testserver::http_service {
 
     method description {} {
         return "HTTP origin test server"
+    }
+
+    method accept {chan host port} {
+        after idle [list [self] dispatch_accept $chan $host $port]
+    }
+
+    method dispatch_accept {chan host port} {
+        set thread_master [my thread_master]
+        if {$thread_master eq {}} {
+            ::tclwire::msgoutput "no thread master available for chan=$chan"
+            catch {close $chan}
+            return
+        }
+
+        set worker_thread_id [$thread_master acquire_worker]
+        if {$worker_thread_id eq {}} {
+            ::tclwire::msgoutput "no idle worker available for chan=$chan"
+            catch {close $chan}
+            return
+        }
+
+        set connection_id [::tclwire::record_connection_opened \
+            [my protocol] $chan $host $port [my endpoint] $worker_thread_id]
+
+        if {[catch {thread::transfer $worker_thread_id $chan} transfer_error]} {
+            ::tclwire::record_connection_closed $connection_id $transfer_error
+            ::tclwire::msgoutput "channel transfer failed chan=$chan worker=$worker_thread_id error=$transfer_error"
+            catch {$thread_master return_thread $worker_thread_id}
+            catch {close $chan}
+            return
+        }
+
+        set config [my service_config]
+        dict set config protocol [my protocol]
+        dict set config host [my host]
+        dict set config port [my port]
+        ::tclwire::msgoutput "dispatch connection id=$connection_id chan=$chan worker=$worker_thread_id"
+        thread::send -async $worker_thread_id \
+            [list ::tclwire::serve_transferred_http_connection $chan $connection_id $config]
+    }
+
+    method serve_connection {chan connection_id} {
+        ::tclwire::msgoutput "worker serve connection id=$connection_id chan=$chan"
+        set connection_ids($chan) $connection_id
+        chan configure $chan -blocking 0 -buffering none -translation binary
+        chan event $chan readable [list [self] read_request $chan]
+        after idle [list [self] read_request_if_open $chan]
     }
 
     # Origin tests also exercise chunked uploads, so request completion needs
@@ -107,6 +157,34 @@ oo::class create ::tclcurl::testserver::http_service {
     # is the synchronous placeholder for the future worker-thread handoff.
     method handle_request {chan request} {
         [my application] service_request [self] $chan $request
+    }
+
+    method log_request {message} {
+        if {[info exists ::master_thread_id] && $::master_thread_id ne {}} {
+            thread::send -async $::master_thread_id \
+                [list ::tclwire::log_from_worker [my protocol] $message]
+            return
+        }
+        next $message
+    }
+
+    method close_client {chan {error {}}} {
+        set connection_id {}
+        if {[info exists connection_ids($chan)]} {
+            set connection_id $connection_ids($chan)
+            unset connection_ids($chan)
+        }
+
+        next $chan $error
+
+        if {$connection_id ne {} && [info exists ::master_thread_id] && $::master_thread_id ne {}} {
+            thread::send -async $::master_thread_id \
+                [list ::tclwire::record_connection_closed $connection_id $error]
+        }
+
+        if {[info commands ::tclwire::accounting] ne {}} {
+            catch {::tclwire::accounting change_thread_status [thread::id] idle}
+        }
     }
 
     method decode_chunked_body {body} {
@@ -208,7 +286,7 @@ oo::class create ::tclcurl::testserver::http_service {
             puts -nonewline $chan "\r\n\r\n"
             flush $chan
         } write_error]} {
-            ::tclcurl::test::msgoutput "response write failed chan=$chan error=$write_error"
+            ::tclwire::msgoutput "response write failed chan=$chan error=$write_error"
             my close_client $chan
             return
         }
@@ -228,7 +306,7 @@ oo::class create ::tclcurl::testserver::http_service {
                     puts -nonewline $chan [my chunk_terminator]
                     flush $chan
                 } write_error]} {
-                    ::tclcurl::test::msgoutput "stream write failed chan=$chan error=$write_error"
+                    ::tclwire::msgoutput "stream write failed chan=$chan error=$write_error"
                 }
             }
             my close_client $chan
@@ -248,7 +326,7 @@ oo::class create ::tclcurl::testserver::http_service {
             }
             flush $chan
         } write_error]} {
-            ::tclcurl::test::msgoutput "stream write failed chan=$chan error=$write_error"
+            ::tclwire::msgoutput "stream write failed chan=$chan error=$write_error"
             my close_client $chan
             return
         }
@@ -259,14 +337,14 @@ oo::class create ::tclcurl::testserver::http_service {
     # Normalize partially specified route results into a complete response
     # dictionary so sending code can follow one path.
     method build_response_dict {response} {
-        set completed_response [dict create status 200 \
-                                            reason OK \
-                                            body {} \
-                                            head_only 0 \
-                                            headers {} \
-                                            status_line {} \
-                                            transfer_encoding {} \
-                                            stream_chunks {}]
+        set completed_response [dict create status              200 \
+                                            reason              OK  \
+                                            body                {}  \
+                                            head_only           0   \
+                                            headers             {}  \
+                                            status_line         {}  \
+                                            transfer_encoding   {}  \
+                                            stream_chunks       {}]
 
         dict for {key value} $response {
             dict set completed_response $key $value
@@ -283,7 +361,7 @@ oo::class create ::tclcurl::testserver::http_service {
             set status_line "HTTP/1.1 $status $reason"
         }
 
-        ::tclcurl::test::msgoutput "send response chan=$chan status=$status reason=$reason body-length=[string length $body]"
+        ::tclwire::msgoutput "send response chan=$chan status=$status reason=$reason body-length=[string length $body]"
 
         set response_headers [list $status_line "Connection: close"]
         if {![regexp -nocase {^Content-Type:} [join $headers "\n"]]} {
@@ -315,7 +393,7 @@ oo::class create ::tclcurl::testserver::http_service {
             }
             flush $chan
         } write_error]} {
-            ::tclcurl::test::msgoutput "response write failed chan=$chan error=$write_error"
+            ::tclwire::msgoutput "response write failed chan=$chan error=$write_error"
             my close_client $chan
             return
         }
@@ -324,4 +402,6 @@ oo::class create ::tclcurl::testserver::http_service {
 
 }
 
-::tclcurl::testserver register_service_class http ::tclcurl::testserver::http_service
+if {[info commands ::tclwire::register_service_class] ne {}} {
+    ::tclwire::register_service_class http ::tclwire::http_service
+}

@@ -10,11 +10,11 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 
-namespace eval ::tclcurl::testserver {}
+namespace eval ::tclwire {}
 
 package require uri
 
-if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
+if {[info commands ::tclwire::CApplication] eq {}} {
 
     # Abstract application model for HTTP origin services. The service keeps
     # ownership of connection acceptance and low-level socket operations,
@@ -23,7 +23,7 @@ if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
     # The current `service_request` entry point is synchronous, but it already
     # matches the future worker-thread handoff boundary.
 
-    oo::class create ::tclcurl::testserver::CApplication {
+    oo::class create ::tclwire::CApplication {
         method header_lines {header_block} {
             return [regexp -all -inline {[^\r\n]+} $header_block]
         }
@@ -148,13 +148,13 @@ if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
 
             dict with request_info_d {
                 set path [lindex [split $target ?] 0]
-                ::tclcurl::test::msgoutput "route request method=$method path=$path"
+                ::tclwire::msgoutput "route request method=$method path=$path"
                 set headers [my parse_headers $request]
                 set response [my route_request $service $method $path $target $version $headers $request]
                 dict set response head_only [expr {$method eq "HEAD"}]
                 set response [$service build_response_dict $response]
                 $service log_request \
-                    "method=$method status=[dict get $response status] path=[::tclcurl::testserver::log_value $path]"
+                    "method=$method status=[dict get $response status] path=[::tclwire::log_value $path]"
                 if {[dict exists $response delay_ms]} {
                     set callback [list $service send_response $chan $response]
                     if {[dict exists $response close_only] && [dict get $response close_only]} {
@@ -206,7 +206,7 @@ if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
                 }
             }
 
-            set doc_root [::tclcurl::test::doc_root]
+            set doc_root [::tclwire::doc_root]
             set fs_path [file join $doc_root {*}$relative_segments]
             if {[file isdirectory $fs_path]} {
                 set fs_path [file join $fs_path index.html]
@@ -287,7 +287,16 @@ if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
         }
 
         method route_request {service method path target version headers request} {
-            error "route_request must be implemented by subclasses"
+            set static_response [my static_file_response $path]
+            if {$static_response ne {}} {
+                return $static_response
+            }
+
+            return [dict create \
+                status 404 \
+                reason "Not Found" \
+                body "path=$path\n" \
+                headers {}]
         }
     }
 }

@@ -334,7 +334,7 @@ connection”.
 An eventual worker flow might look like this:
 
 ```tcl
-set req [::tclcurl::testserver::HttpRequestContext new \
+set req [::tclwire::HttpRequestContext new \
     -channel $chan \
     -method $method \
     -target $target \

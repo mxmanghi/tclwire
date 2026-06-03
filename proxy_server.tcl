@@ -10,14 +10,14 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 
-namespace eval ::tclcurl::testserver {}
+namespace eval ::tclwire {}
 
 package require base64
 
-if {[info commands ::tclcurl::testserver::http_endpoint_service] eq {}} {
+if {[info commands ::tclwire::http_endpoint_service] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_endpoint.tcl]
 }
-if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
+if {[info commands ::tclwire::CApplication] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_application.tcl]
 }
 
@@ -25,13 +25,13 @@ if {[info commands ::tclcurl::testserver::CApplication] eq {}} {
 # listener/buffering mechanics; this class only implements proxy
 # target resolution, proxy authentication and upstream forwarding.
 
-oo::class create ::tclcurl::testserver::proxy_service {
-    superclass ::tclcurl::testserver::http_endpoint_service
+oo::class create ::tclwire::proxy_service {
+    superclass ::tclwire::http_endpoint_service
 
     variable application tunnel_peer tunnel_root tunnel_pending
 
     constructor args {
-        set application [::tclcurl::testserver::CApplication new]
+        set application [::tclwire::CApplication new]
         array set tunnel_peer {}
         array set tunnel_root {}
         array set tunnel_pending {}
@@ -159,7 +159,7 @@ oo::class create ::tclcurl::testserver::proxy_service {
         chan configure $upstream -blocking 0 -buffering none -translation binary
 
         set response {}
-        set wait_var ::tclcurl::testserver::proxy_wait_[string map {: _} $upstream]
+        set wait_var ::tclwire::proxy_wait_[string map {: _} $upstream]
         while 1 {
             set chunk [chan read $upstream]
             if {$chunk ne {}} {
@@ -205,7 +205,7 @@ oo::class create ::tclcurl::testserver::proxy_service {
     # ends with an error.
     method tunnel_copy_done {src dst direction bytes {error {}}} {
         set root $tunnel_root($src)
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy tunnel copy done direction=$direction src=$src dst=$dst bytes=$bytes error=$error"
 
         if {$error ne {}} {
@@ -222,12 +222,12 @@ oo::class create ::tclcurl::testserver::proxy_service {
     # Establish a CONNECT tunnel to the requested upstream endpoint and bridge
     # bytes asynchronously in both directions.
     method start_tunnel {chan host port} {
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy tunnel connect chan=$chan host=$host port=$port"
         if {[catch {set upstream [socket $host $port]} socket_error]} {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy tunnel connect failed chan=$chan error=$socket_error"
-            my log_request "method=CONNECT status=502 target=[::tclcurl::testserver::log_value $host:$port]"
+            my log_request "method=CONNECT status=502 target=[::tclwire::log_value $host:$port]"
             my proxy_response $chan 502 "Bad Gateway" "proxy-error=$socket_error\n" {}
             return
         }
@@ -243,13 +243,13 @@ oo::class create ::tclcurl::testserver::proxy_service {
             puts -nonewline $chan "HTTP/1.1 200 Connection Established\r\n\r\n"
             flush $chan
         } write_error]} {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy tunnel establish failed chan=$chan error=$write_error"
             my close_tunnel $chan
             return
         }
 
-        my log_request "method=CONNECT status=200 target=[::tclcurl::testserver::log_value $host:$port]"
+        my log_request "method=CONNECT status=200 target=[::tclwire::log_value $host:$port]"
 
         chan copy $chan $upstream -command \
             [list [self] tunnel_copy_done $chan $upstream client_to_upstream]
@@ -270,11 +270,11 @@ oo::class create ::tclcurl::testserver::proxy_service {
     # request upstream. The base class already guarantees that the request is
     # fully buffered before this method runs.
     method handle_request {chan request} {
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy handle_request chan=$chan request-bytes=[string length $request]"
         set request_info [$application parse_request_line $request]
         if {$request_info eq {}} {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy bad request chan=$chan reason=request-line-parse-failed"
             my log_request "method=? status=400 target=?"
             my proxy_response $chan 400 "Bad Request" "bad proxy request\n" {}
@@ -282,15 +282,15 @@ oo::class create ::tclcurl::testserver::proxy_service {
         }
 
         dict with request_info {}
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy request-line chan=$chan method=$method target=$target version=$version"
         set headers [$application parse_headers $request]
 
         if {$method eq "CONNECT"} {
             if {[catch {set connect_info [my parse_connect_target $target]} connect_error]} {
-                ::tclcurl::test::msgoutput \
+                ::tclwire::msgoutput \
                     "proxy bad connect target chan=$chan target=$target error=$connect_error"
-                my log_request "method=$method status=400 target=[::tclcurl::testserver::log_value $target]"
+                my log_request "method=$method status=400 target=[::tclwire::log_value $target]"
                 my proxy_response $chan 400 "Bad Request" "bad proxy request\n" {}
                 return
             }
@@ -300,16 +300,16 @@ oo::class create ::tclcurl::testserver::proxy_service {
 
         set target_info [my parse_target $target $headers]
         set path [dict get $target_info path]
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy target chan=$chan path=$path target-info=$target_info"
 
         if {[my auth_required $path]} {
             set auth_status [my validate_proxy_auth $headers]
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy auth chan=$chan path=$path status=$auth_status"
             if {$auth_status ne "ok"} {
                 my log_request \
-                    "method=$method status=407 target=[::tclcurl::testserver::log_value $path]"
+                    "method=$method status=407 target=[::tclwire::log_value $path]"
                 my proxy_response $chan 407 \
                     "Proxy Authentication Required" "proxy-auth=$auth_status\n" \
                     [list "Proxy-Authenticate: Basic realm=\"TclCurl Proxy Test\""]
@@ -320,13 +320,13 @@ oo::class create ::tclcurl::testserver::proxy_service {
         set host [dict get $target_info host]
         set port [dict get $target_info port]
         set origin_path [dict get $target_info path]
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy connect chan=$chan host=$host port=$port origin-path=$origin_path"
         if {[catch {set upstream [socket $host $port]} socket_error]} {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy connect failed chan=$chan error=$socket_error"
             my log_request \
-                "method=$method status=502 target=[::tclcurl::testserver::log_value $origin_path]"
+                "method=$method status=502 target=[::tclwire::log_value $origin_path]"
             my proxy_response $chan 502 "Bad Gateway" "proxy-error=$socket_error\n" {}
             return
         }
@@ -339,15 +339,15 @@ oo::class create ::tclcurl::testserver::proxy_service {
             }
             lappend upstream_headers "[my forwarded_header_name $name]: $value"
         }
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy forward headers chan=$chan count=[llength $upstream_headers]"
 
         set request_body [my request_body $request]
-        ::tclcurl::test::msgoutput \
+        ::tclwire::msgoutput \
             "proxy forward body chan=$chan bytes=[string length $request_body]"
 
         try {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy upstream write start chan=$chan upstream=$upstream"
             puts -nonewline $upstream "$method $origin_path HTTP/$version\r\n"
             puts -nonewline $upstream "[join $upstream_headers "\r\n"]"
@@ -356,13 +356,13 @@ oo::class create ::tclcurl::testserver::proxy_service {
                 puts -nonewline $upstream $request_body
             }
             flush $upstream
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy upstream read start chan=$chan upstream=$upstream"
             set response [my read_upstream_response $upstream]
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy upstream read done chan=$chan response-bytes=[string length $response]"
         } finally {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy upstream close chan=$chan upstream=$upstream"
             catch {close $upstream}
         }
@@ -372,17 +372,17 @@ oo::class create ::tclcurl::testserver::proxy_service {
             set upstream_status $parsed_status
         }
         my log_request \
-            "method=$method status=$upstream_status target=[::tclcurl::testserver::log_value $origin_path]"
+            "method=$method status=$upstream_status target=[::tclwire::log_value $origin_path]"
 
         catch {
-            ::tclcurl::test::msgoutput \
+            ::tclwire::msgoutput \
                 "proxy client write chan=$chan response-bytes=[string length $response]"
             puts -nonewline $chan $response
             flush $chan
         }
-        ::tclcurl::test::msgoutput "proxy complete chan=$chan"
+        ::tclwire::msgoutput "proxy complete chan=$chan"
         my close_client $chan
     }
 }
 
-::tclcurl::testserver register_service_class proxy ::tclcurl::testserver::proxy_service
+::tclwire register_service_class proxy ::tclwire::proxy_service

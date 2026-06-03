@@ -131,7 +131,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     # Returns: thread_id
     #
 
-    method start_worker_thread {} {
+    method start_worker_thread {thread_script} {
 
         set thread_id [thread::create $thread_script]
         thread::preserve $thread_id
@@ -153,12 +153,20 @@ if {[info commands ::tclwire::is_stale] eq {}} {
                 set live_threads_number [llength [::tsv::keylkeys tclwire accounting]]
             }
             if {$live_threads_number < $max_threads_number} { 
-                set thread_id [[self] start_worker_thread]
+                set thread_id [[self] start_worker_thread $thread_script]
                 ::tsv::keylset tclwire accounting $thread_id [$accounting new_thread_account allocated]
                 return true
             } 
         }
         return false
+    }
+
+    method acquire_worker {} {
+        set thread_id ""
+        if {![[self] allocate_thread thread_id]} {
+            return ""
+        }
+        return $thread_id
     }
 
     method return_thread {thread_id} {
