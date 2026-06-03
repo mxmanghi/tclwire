@@ -1,0 +1,30 @@
+{
+  "000": {
+    "reason": "Internal Server Error",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>{{status}} Error</title></head>\n<body>\n<h1>{{status}} Error</h1>\n<p>TclWire could not complete the request.</p>\n</body>\n</html>\n"
+  },
+  "400": {
+    "reason": "Bad Request",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>400 Bad Request</title></head>\n<body>\n<h1>400 Bad Request</h1>\n<p>The request could not be understood by TclWire.</p>\n</body>\n</html>\n"
+  },
+  "403": {
+    "reason": "Forbidden",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>403 Forbidden</title></head>\n<body>\n<h1>403 Forbidden</h1>\n<p>The requested resource is not available for this service.</p>\n</body>\n</html>\n"
+  },
+  "404": {
+    "reason": "Not Found",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>404 Not Found</title></head>\n<body>\n<h1>404 Not Found</h1>\n<p>TclWire could not find <code>{{path}}</code>.</p>\n</body>\n</html>\n"
+  },
+  "405": {
+    "reason": "Method Not Allowed",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>405 Method Not Allowed</title></head>\n<body>\n<h1>405 Method Not Allowed</h1>\n<p>The requested method is not supported for this resource.</p>\n</body>\n</html>\n"
+  },
+  "500": {
+    "reason": "Internal Server Error",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>500 Internal Server Error</title></head>\n<body>\n<h1>500 Internal Server Error</h1>\n<p>TclWire could not complete the request because of an internal error.</p>\n</body>\n</html>\n"
+  },
+  "503": {
+    "reason": "Service Unavailable",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>503 Service Unavailable</title></head>\n<body>\n<h1>503 Service Unavailable</h1>\n<p>The service is temporarily unavailable. Try again later.</p>\n</body>\n</html>\n"
+  }
+}

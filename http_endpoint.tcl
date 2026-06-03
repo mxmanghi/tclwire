@@ -12,6 +12,8 @@
 
 namespace eval ::tclwire {}
 
+package require json
+
 if {[info commands ::tclwire::http_endpoint_service] eq {}} {
     # Shared HTTP connection plumbing for test services that speak HTTP on the
     # client-facing side. Concrete subclasses keep their own request
@@ -26,10 +28,11 @@ if {[info commands ::tclwire::http_endpoint_service] eq {}} {
     oo::class create ::tclwire::http_endpoint_service {
         superclass ::tclwire::service
 
-        variable request_data
+        variable request_data http_error_messages
 
         constructor args {
             array set request_data {}
+            set http_error_messages [my load_http_error_messages]
             next {*}$args
         }
 
@@ -119,6 +122,82 @@ if {[info commands ::tclwire::http_endpoint_service] eq {}} {
 
         method handle_request {chan request} {
             error "handle_request must be implemented by subclasses"
+        }
+
+        method http_error_messages_file {} {
+            return [file join [::tclwire::repo_root] http_error_messages.json]
+        }
+
+        method default_http_error_messages {} {
+            return [dict create \
+                000 [dict create reason "Internal Server Error" body "TclWire could not complete the request.\n"] \
+                400 [dict create reason "Bad Request" body "bad request\n"] \
+                404 [dict create reason "Not Found" body "not found\n"] \
+                500 [dict create reason "Internal Server Error" body "internal server error\n"] \
+                503 [dict create reason "Service Unavailable" body "service unavailable\n"]]
+        }
+
+        method load_http_error_messages {} {
+            set path [my http_error_messages_file]
+            if {![file exists $path]} {
+                return [my default_http_error_messages]
+            }
+
+            set chan [open $path r]
+            try {
+                set content [read $chan]
+            } finally {
+                close $chan
+            }
+
+            if {[catch {::json::json2dict $content} messages]} {
+                ::tclwire::msgoutput "failed to load HTTP error messages file=$path error=$messages"
+                return [my default_http_error_messages]
+            }
+
+            return $messages
+        }
+
+        method html_escape {value} {
+            return [string map [list \
+                &  "&amp;" \
+                <  "&lt;" \
+                >  "&gt;" \
+                \" "&quot;" \
+                '  "&#39;"] $value]
+        }
+
+        method expand_http_error_body {body context} {
+            set replacements {}
+            dict for {name value} $context {
+                lappend replacements "{{$name}}" [my html_escape $value]
+            }
+            if {[llength $replacements] == 0} {
+                return $body
+            }
+            return [string map $replacements $body]
+        }
+
+        method http_error_message {status} {
+            if {[dict exists $http_error_messages $status]} {
+                return [dict get $http_error_messages $status]
+            }
+            return [dict get $http_error_messages 000]
+        }
+
+        method error_response {status {context {}}} {
+            set message [my http_error_message $status]
+            set reason [dict get $message reason]
+            if {![dict exists $context status]} {
+                dict set context status $status
+            }
+            set body [my expand_http_error_body [dict get $message body] $context]
+
+            return [dict create \
+                status $status \
+                reason $reason \
+                body $body \
+                headers [list "Content-Type: text/html; charset=utf-8"]]
         }
 
         method close_client {chan {error {}}} {

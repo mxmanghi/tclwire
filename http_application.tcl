@@ -292,11 +292,7 @@ if {[info commands ::tclwire::CApplication] eq {}} {
                 return $static_response
             }
 
-            return [dict create \
-                status 404 \
-                reason "Not Found" \
-                body "path=$path\n" \
-                headers {}]
+            return [$service error_response 404 [dict create path $path]]
         }
     }
 }

@@ -146,11 +146,7 @@ oo::class create ::tclwire::http_service {
 
     # Build the standard origin-server reply for malformed HTTP requests.
     method bad_request_response {} {
-        return [my build_response_dict [dict create \
-            status 400 \
-            reason "Bad Request" \
-            body "bad request\n" \
-            head_only 0]]
+        return [my build_response_dict [my error_response 400]]
     }
 
     # Delegate the fully buffered request to the configured application. This
