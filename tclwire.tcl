@@ -430,16 +430,16 @@ proc ::tclwire::create_service {protocol host port quiet logfile thread_master s
     set secure [dict get $connection_spec secure]
     set object_name ::tclwire::service[incr next_service_id]
 
-    return [$class_name create  $object_name \
-                                -protocol $protocol \
-                                -connectionclass $connection_class \
-                                -secure   $secure \
-                                -host     $host \
-                                -port     $port \
-                                -quiet    $quiet \
-                                -logfile  $logfile \
-                                -threadmaster $thread_master \
-                                -serviceconfig $service_config]
+    return [$class_name create $object_name \
+                                -protocol           $protocol   \
+                                -connectionclass    $connection_class \
+                                -secure             $secure     \
+                                -host               $host       \
+                                -port               $port       \
+                                -quiet              $quiet      \
+                                -logfile            $logfile    \
+                                -threadmaster       $thread_master \
+                                -serviceconfig      $service_config]
 }
 
 proc ::tclwire::start_services {config} {
@@ -450,7 +450,7 @@ proc ::tclwire::start_services {config} {
 
     foreach service_spec [dict get $config services] {
         set protocol [dict get $service_spec protocol]
-        set port [dict get $service_spec port]
+        set port     [dict get $service_spec port]
         set connection_spec [connection_class_spec $protocol]
         set connection_class [dict get $connection_spec connection_class]
         set thread_master [thread_master_for_connection_class $connection_class]
