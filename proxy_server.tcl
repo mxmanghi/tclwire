@@ -461,4 +461,6 @@ oo::class create ::tclwire::proxy_service {
     }
 }
 
-::tclwire register_service_class proxy ::tclwire::proxy_service
+if {[info commands ::tclwire::register_service_class] ne {}} {
+    ::tclwire::register_service_class proxy ::tclwire::proxy_service
+}

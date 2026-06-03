@@ -196,11 +196,10 @@ if {[info commands ::tclwire::http_endpoint_service] eq {}} {
             }
             set body [my expand_http_error_body [dict get $message body] $context]
 
-            return [dict create \
-                status $status \
-                reason $reason \
-                body $body \
-                headers [list "Content-Type: text/html; charset=utf-8"]]
+            return [dict create status  $status \
+                                reason  $reason \
+                                body    $body   \
+                                headers [list "Content-Type: text/html; charset=utf-8"]]
         }
 
         method close_client {chan {error {}}} {

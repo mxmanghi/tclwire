@@ -46,8 +46,13 @@ request to the configured application object through:
 
 - `application service_request $service $chan $request`
 
-Today this remains synchronous. Later the same boundary can become the
-channel-handoff point to a worker thread.
+This method should be call in asynchronous mode and it should be able to interpret
+the HTTP headers and detect whether the `Host:` header is present. Then it should
+get from the main thread an idle thread id of a worker whose task is to read the 
+data in the request or process the request producing the output to be sent back to
+the client. This task should be part of a CHTTPApplication (or derived) class instance. 
+As soon as the output has been sent the channel control is transferred
+back to the connection service thread.
 
 ### `CApplication`
 

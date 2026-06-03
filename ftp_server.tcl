@@ -657,4 +657,6 @@ oo::class create ::tclwire::ftp_service {
     }
 }
 
-::tclwire register_service_class ftp ::tclwire::ftp_service
+if {[info commands ::tclwire::register_service_class] ne {}} {
+    ::tclwire::register_service_class ftp ::tclwire::ftp_service
+}
