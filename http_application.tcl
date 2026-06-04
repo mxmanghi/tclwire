@@ -208,10 +208,10 @@ if {[info commands ::tclwire::CApplication] eq {}} {
 
         method redirect_response {location {reason "Found"}} {
             set body "redirect=$location\n"
-            return [dict create status 302      \
-                                reason $reason  \
-                                body $body      \
-                                headers [list "Location: $location"]]
+            return [dict create status      302         \
+                                reason      $reason     \
+                                body        $body       \
+                                headers     [list "Location: $location"]]
         }
 
         method static_file_response {path} {
