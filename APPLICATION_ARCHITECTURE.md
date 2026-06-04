@@ -193,9 +193,9 @@ cycle, the likely next move is:
 That would leave the endpoint service as a lightweight accept/buffer layer and
 move the full request-processing flow into application-controlled worker code.
 
-## Better Agent encapsulation 
+## Better Agent Contract
 
-Following the line of rationalization of the code on which we were working,
+Following the code rationalization line of rationalization on which we were working,
 there is much more to do. I think the connection management method in service_base.tcl
 shouldn't go into the worker threads that still inherit this stuff through, for instance,
 http_endpoint.tcl...
