@@ -1,8 +1,8 @@
-# -- thread_master.tcl -- Implementation of thread pool manager
+# -- thread_master.tcl -- Implementation of a thread pool manager
 #
 # Thread pool manager for TclWire services.
 #
-# Copyright (c) 2024-2026 Massimo Manghi
+# Copyright (c) 2026 Massimo Manghi
 #
 # SPDX-License-Identifier: TCL
 #
@@ -10,12 +10,10 @@
 # for information on usage and redistribution of this file, and for the
 # complete disclaimer of warranties and limitation of liability.
 #
-#
 
 package require TclOO
 package require Thread
 
-catch {::tclwire::ThreadMaster destroy }
 #source [file join [file dirname [file normalize [info script]]] threads_shared_db.tcl]
 #source [file join [file dirname [file normalize [info script]]] logger.tcl]
 
