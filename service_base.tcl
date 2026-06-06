@@ -37,16 +37,16 @@ if {[info commands ::tclwire::service] eq {}} {
                 error "missing -port"
             }
 
-            set protocol    $options(-protocol)
-            set connection_class $options(-connectionclass)
-            set secure      [expr {$options(-secure) ? 1 : 0}]
-            set host        $options(-host)
-            set port        $options(-port)
-            set quiet       $options(-quiet)
-            set logfile     $options(-logfile)
-            set thread_master $options(-threadmaster)
-            set service_config $options(-serviceconfig)
-            set listener    {}
+            set protocol    		$options(-protocol)
+            set connection_class 	$options(-connectionclass)
+            set secure      		[expr {$options(-secure) ? 1 : 0}]
+            set host        		$options(-host)
+            set port        		$options(-port)
+            set quiet       		$options(-quiet)
+            set logfile     		$options(-logfile)
+            set thread_master 		$options(-threadmaster)
+            set service_config 		$options(-serviceconfig)
+            set listener    		{}
 
             if {$connection_class eq {}} {
                 set connection_class $protocol

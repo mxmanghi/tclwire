@@ -1,0 +1,130 @@
+# HTTP Application Architecture
+
+## New experimental thread oriented architecture
+
+We'll try to experiment with a extremely thread oriented architecture.
+The general goal will be an architecture where thread footprints should
+be as minimal as possible, enhancing code specialization and relying
+as much as possible on concrete classes to implement components. In case
+components are the central feature running within a thread we'll also
+use the term *Agent*.
+The downside of this approach is a likely increase in inter-thread
+communication and synchronization, that with Tcl threads means relying
+on message passing mechanisms (`::thread::send`). Even shared state variables,
+though protected by the fence of the `::thread::lock` construct, when used
+as communication methods need signal passing mechanism. The convenience of
+using mutex and condition variables instead of message passing shall
+be evaluated.
+
+## General Goals
+
+A general goal will be determining the best tradeoff between component
+comunication cost and their complexity and feature overloading. 
+The application server should be made of agents working within threads
+to which delegate specific tasks concerning different network requests.
+
+The application server should be able to serve real software applications.
+In this document we restrict this goal to Tcl based applications, but we'll
+extend it to possibly other programming languages or external programs.
+Currently we have a small family of Application classes
+
+ - **CApplication** The very base application class which is neatly
+able to serve HTML pages from static storage...(I'm already using it to distribute
+HTML documentation of other projects...it's as fast as it can be...and it
+really surprised me prompting me to write down these specifications). 
+CApplication is therefore the general 'fallback' of an HTTP application. An HTTP
+application that inherits from it could partly or entirely shadow, masquerade
+or extend its features
+ - **CTestApplication** class as just a concrete case developed to implement
+a test suite for the tclcurl-ng project. 
+
+An application manager will in this phase structured into families of
+cooperating agents implemented within threads
+
+1. Server and Transport endpoint Agent (SEA). This Agent is unique.
+2. Connection and I/O Agent (CIA) 
+3. Content Generation Agent (CGA) family
+4. Thread Pools Broker Agent (TPBA). A global unique agent whose handle
+will be stored in the application shared space
+
+### 1 Server Endpoint Agent (SEA)
+
+A server endpoint agent (SEA) (tclwire.tcl) runs an event loop and reacts over the
+events it delivers. Chiefly as a socket listener that devolves newly created
+connections to a suitable CIA. In a subsequent development stage this thread 
+will also be listening on a Unix socket and interpret CLI coming from it. 
+The CLI client talking to SEA will be the server monitor and manager.
+Since the overall architecture will be intensely thread oriented
+a single Thread Pools Broker Agent (TPBA) will be fired by SEA at startup.
+and since Tcl objects are thread private the server will instantiate a globally known
+thread whose id will be stored in shared variable `::tsv tclwire tpba_thread_id`.
+This thread will in turn will manage family of thread pools. This TPBA
+(Thread Pools Broker Agent) thread must implement a mechanism through which other
+threads can interrogate its thread pools and obtain or return threads belonging to
+a given pool serving a specific class of threads. Currently thread pools are instances
+of class ::tclwire::ThreadMaster.
+
+### 2 Connection, Transport and Application Agent (CIA)
+
+CIA components will take the part of CApplication and derived classes that control
+socket channel I/O and transport layer information. 
+Agents of this type should run within their own thread and may or may not manage
+the server response. Let's assume for the moment that they don't provide response content
+which, in general will be devolved to CGA, but simple services might well be implemented
+within CIA.  For HTTP connections this component should build a request object (an
+information rich dictionary) to be handed over to a CGA after they have analyzed
+the header, determined which host and application has to be server and then ask the
+TPBA for an appropriate thread to which send the request object. 
+CIA keeps control of the socket and exposes a thread API surface through which CGAs
+can send output to the socket channel.
+A CIA serving an HTTP request should also provide methods for HTTP manipulation and
+HTTP message response control. A CIA will be able to provide buffering and
+post-processing capabilities, but as a first implementation it will just send output
+over to the channel socket keeping the connection state in order to preserve HTTP
+message format compliance. A CIA will also expose protocol specific API for transport
+control, like for HTTP header construction and manipulation.
+
+### 3 Content Generation Agent (CGA)
+
+A CGA will run the part of CApplication classes that are specific to
+content generation. For socket channel output a first implementation of
+CGAs services will rely on procedures to send output to the associated
+CIA. Let's localize this stuff in their own namespace.
+The output function will therefore be ::tclwire::cga::out and it should
+replace in CApplication derived classes the Tcl puts command. CGA are
+in general per-host specific. The command line should be able to
+associate an application content generator to a specific thread pool
+through the TPBA. The TPBA should be able to locate the application 
+content generator class file and thread script and create a thread
+pool accordingly
+
+The ::tclwire::CApplication class should be therefore be spliced into
+2 classes: a class having those methods now in 
+
+should be a class abstract enough that also FTP and PROXY should
+implement their own concrete application classes inheriting from it.
+An HTTPApplication class should not 
+
+
+
+ +-----+       +--------+           +-------+
+ | SEA |---+---| CIA-1 |<----------| CGA 1 |
+ +-----+   |   +--------+           +-------+
+           |   +--------+           +-------+
+           +---| CIA-2 |<----------| CGA 2 |
+           |   +--------+           +-------+
+           .        .                   .
+           .        .                   .
+           .        .                   .
+           |   +--------+               .
+           +---| CIA-n |               .
+               +--------+               .
+                   .                    .
+                   .                    .
+                   .                    .
+               +--------+-----------+--------+
+               |  pool1 |           | pool n |
+               +--------+-----------+--------+
+               |            TPBA             |
+               +-----------------------------+
+
