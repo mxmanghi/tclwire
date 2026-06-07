@@ -225,8 +225,9 @@ Worker-side instances are created by the procedures in
 
 ### Required Terminological Distinction
 
-The listener-side and worker-side objects are different objects in different
-interpreters, even though they are instances of the same TclOO class.
+The listener-side and worker-side objects are different objects
+in different interpreters, even though they are instances of the same
+TclOO class.
 
 Therefore, specifications should avoid the unqualified expression
 **service object**.
@@ -263,8 +264,7 @@ For example:
 (http, 127.0.0.1, 8990, cleartext)
 ```
 
-A service endpoint is represented at runtime by a listener-side service
-instance.
+A service endpoint is represented at runtime by a listener-side service instance.
 
 ### Listener
 
