@@ -6,7 +6,7 @@
 
         package require TclOO
         package require Thread
-        source [file join [pwd] threads_shared_db.tcl]
+        source [file join [pwd] tcl threads_shared_db.tcl]
         source [file join [pwd] support.tcl]
 
         set tclwire_root [::tclwire::repo_root]

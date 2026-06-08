@@ -14,7 +14,7 @@
 
 source [file join [file dirname [file normalize [info script]]] tclwire_common.tcl]
 source [file join [file dirname [file normalize [info script]]] logger.tcl]
-source [file join [file dirname [file normalize [info script]]] thread_master.tcl]
+source [file join [file dirname [file normalize [info script]]] tcl thread_master.tcl]
 
 namespace eval ::tclwire {
     variable    next_service_id     0
@@ -404,7 +404,8 @@ proc ::tclwire::thread_master_for_connection_class {connection_class} {
     }
 
     if {![info exists thread_masters($connection_class)]} {
-        set thread_masters($connection_class) [::tclwire::ThreadMaster new $thread_script]
+        set thread_masters($connection_class) \
+            [::tclwire::ThreadMaster new $thread_script 100 $connection_class]
     }
 
     return $thread_masters($connection_class)

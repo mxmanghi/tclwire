@@ -1,0 +1,186 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+package require tclwire::tpba 0.1
+
+namespace eval ::tclwire::tpba_test {
+    variable next_worker_id 0
+}
+
+oo::class create ::tclwire::tpba_test::FakeThreadMaster {
+    variable maximum_workers
+    variable workers
+
+    constructor {worker_script maximum {family {}}} {
+        set maximum_workers $maximum
+        set workers [dict create]
+    }
+
+    method acquire_worker {} {
+        dict for {worker_id status} $workers {
+            if {$status eq "idle"} {
+                dict set workers $worker_id allocated
+                return $worker_id
+            }
+        }
+        if {[dict size $workers] >= $maximum_workers} {
+            return {}
+        }
+
+        set worker_id fake-worker-[incr ::tclwire::tpba_test::next_worker_id]
+        dict set workers $worker_id allocated
+        return $worker_id
+    }
+
+    method return_thread {worker_id} {
+        if {![dict exists $workers $worker_id]} {
+            error "unknown fake worker: $worker_id"
+        }
+        dict set workers $worker_id idle
+        return true
+    }
+
+    method resize {maximum} {
+        set maximum_workers $maximum
+        return $maximum_workers
+    }
+
+    method stats {} {
+        set per_status [dict create allocated {} idle {}]
+        dict for {worker_id status} $workers {
+            dict lappend per_status $status $worker_id
+        }
+        return [dict create \
+            max_threads_number $maximum_workers \
+            live_threads_number [dict size $workers] \
+            per_status_lists $per_status]
+    }
+
+    method stop_threads {{filter all}} {
+        return
+    }
+}
+
+proc ::tclwire::tpba_test::new_broker {} {
+    return [::tclwire::ThreadPoolsBrokerAgent new \
+        -threadmasterfactory ::tclwire::tpba_test::FakeThreadMaster]
+}
+
+test tpba-1.1 {dispatcher-controlled keys identify independent pools} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:shop {worker script} \
+            [dict create maximum_workers 2] \
+            [dict create kind application application shop]
+        $broker create_pool transport:http {reactor script} \
+            [dict create maximum_workers 1] \
+            [dict create kind transport endpoint http-main]
+        $broker list_pools
+    } finally {
+        $broker destroy
+    }
+} -result {app:shop transport:http}
+
+test tpba-1.2 {workers are acquired and released through their pool key} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:shop {worker script} \
+            [dict create maximum_workers 1]
+        set worker_id [$broker acquire_worker app:shop]
+        set exhausted [$broker acquire_worker app:shop]
+        set released [$broker release_worker app:shop $worker_id]
+        set reacquired [$broker acquire_worker app:shop]
+        list [string match fake-worker-* $worker_id] $exhausted $released \
+            [expr {$worker_id eq $reacquired}]
+    } finally {
+        $broker destroy
+    }
+} -result {1 {} true 1}
+
+test tpba-1.3 {pool status retains descriptor policy and aggregate stats} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:admin {worker script} \
+            [dict create minimum_workers 1 maximum_workers 3] \
+            [dict create kind application application admin]
+        set status [$broker pool_status app:admin]
+        list \
+            [dict get $status pool_key] \
+            [dict get $status descriptor application] \
+            [dict get $status policy maximum_workers] \
+            [dict get $status stats live_threads_number] \
+            [dict get $status lifecycle_state]
+    } finally {
+        $broker destroy
+    }
+} -result {app:admin admin 3 1 active}
+
+test tpba-1.4 {resize updates both policy and ThreadMaster limit} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool protocol:http {worker script} \
+            [dict create maximum_workers 2]
+        $broker resize_pool protocol:http [dict create maximum_workers 5]
+        set status [$broker pool_status protocol:http]
+        list \
+            [dict get $status policy maximum_workers] \
+            [dict get $status stats max_threads_number]
+    } finally {
+        $broker destroy
+    }
+} -result {5 5}
+
+test tpba-1.5 {dictionary request API preserves correlation identifiers} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        set create_response [$broker handle_request [dict create \
+            correlation_id request-1 \
+            operation create_pool \
+            pool_key app:docs \
+            worker_script {worker script}]]
+        set list_response [$broker handle_request [dict create \
+            correlation_id request-2 \
+            operation list_pools]]
+        list \
+            [dict get $create_response ok] \
+            [dict get $create_response correlation_id] \
+            [dict get $list_response result]
+    } finally {
+        $broker destroy
+    }
+} -result {1 request-1 app:docs}
+
+test tpba-1.6 {dictionary request API returns structured failures} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        set response [$broker handle_request [dict create \
+            correlation_id request-3 \
+            operation acquire_worker \
+            pool_key missing]]
+        list \
+            [dict get $response ok] \
+            [dict get $response correlation_id] \
+            [dict get $response error]
+    } finally {
+        $broker destroy
+    }
+} -result {0 request-3 {unknown thread pool: missing}}
+
+test tpba-1.7 {stopped pools reject further allocation and resizing} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:stopped {worker script}
+        $broker shutdown_pool app:stopped
+        set acquire_error [catch {$broker acquire_worker app:stopped} acquire_message]
+        set resize_error [catch {$broker resize_pool app:stopped 2} resize_message]
+        list $acquire_error $acquire_message $resize_error $resize_message
+    } finally {
+        $broker destroy
+    }
+} -result [list \
+    1 {thread pool is not active: app:stopped} \
+    1 {thread pool is not active: app:stopped}]
+
+cleanupTests

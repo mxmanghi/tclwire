@@ -13,7 +13,7 @@ package require Thread
 package require report
 package require struct::matrix
 
-source [file join [file dirname [file normalize [info script]]] threads_shared_db.tcl]
+source [file join [file dirname [file normalize [info script]]] tcl threads_shared_db.tcl]
 
 namespace eval ::tclwire::inspect_threads_db {
 
@@ -33,8 +33,10 @@ namespace eval ::tclwire::inspect_threads_db {
 
     proc format_report {} {
         set matrix [::struct::matrix]
-        $matrix add columns 8
-        $matrix add row [list # thread_id nruns last_run_start last_run_end created_on status command]
+        $matrix add columns 10
+        $matrix add row [list \
+            # thread_id family http_host nruns last_run_start last_run_end \
+            created_on status command]
 
         set row_number 0
         dict for {tid thread_d} [lsort -dictionary -stride 2 [::tclwire::accounting get_threads_database]] {
@@ -42,6 +44,8 @@ namespace eval ::tclwire::inspect_threads_db {
             $matrix add row [list \
                 $row_number \
                 $tid \
+                [accounting_field $thread_d family] \
+                [accounting_field $thread_d http_host] \
                 [accounting_field $thread_d nruns] \
                 [timestamp [accounting_field $thread_d last_run_start]] \
                 [timestamp [accounting_field $thread_d last_run_end]] \

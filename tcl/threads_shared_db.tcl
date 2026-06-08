@@ -20,6 +20,8 @@
 #	- created_on: timestamp at which the accounting entry was created
 #	- command: command currently or most recently run by the thread
 #	- status: current status (created, allocated, idle, running, terminating)
+#	- family: protocol or execution family assigned by the pool owner
+#	- http_host: current or most recently observed Host header for HTTP workers
 #
 
 package require Thread
@@ -27,37 +29,77 @@ package require Thread
 namespace eval ::tclwire::accounting {
     variable valid_thread_statuses {created allocated idle running terminating}
 
-    ::tsv::lock tclwire {
-        if {![::tsv::exists tclwire timestamp]} {
-            ::tsv::set tclwire timestamp [clock format [clock seconds]]
-            ::tsv::set tclwire accounting {}
+    proc initialize {} {
+        ::tsv::lock tclwire {
+            if {![::tsv::exists tclwire timestamp]} {
+                ::tsv::set tclwire timestamp [clock format [clock seconds]]
+            }
+            if {![::tsv::exists tclwire accounting]} {
+                ::tsv::set tclwire accounting {}
+            }
+        }
+        return
+    }
+
+    proc is_initialized {} {
+        ::tsv::lock tclwire {
+            return [expr {
+                [::tsv::exists tclwire timestamp] &&
+                [::tsv::exists tclwire accounting]
+            }]
         }
     }
 
-    proc new_thread_account {{status created}} {
+    proc reset {} {
+        ::tsv::lock tclwire {
+            ::tsv::set tclwire timestamp [clock format [clock seconds]]
+            ::tsv::set tclwire accounting {}
+        }
+        return
+    }
+
+    proc normalize_family {family} {
+        return [string tolower [string trim $family]]
+    }
+
+    proc new_thread_account {{status created} {family {}} {http_host {}}} {
         variable valid_thread_statuses
         if {$status ni $valid_thread_statuses} {
             error "Unknown thread status '$status'"
         }
 
-        return [list nruns           0 \
-                     last_run_start  0 \
-                     last_run_end    0 \
-                     created_on      [clock seconds] \
-                     command         "" \
-                     status          $status]
+        set family [normalize_family $family]
+        set account [dict create \
+            nruns 0 \
+            last_run_start 0 \
+            last_run_end 0 \
+            created_on [clock seconds] \
+            command {} \
+            status $status \
+            family $family]
+        if {$family eq "http"} {
+            dict set account http_host $http_host
+        }
+        return $account
     }
 
-    proc add_new_thread {tid} {
+    proc register_thread {tid {status created} {family {}}} {
+        initialize
         ::tsv::lock tclwire {
             if {[::tsv::keylget tclwire accounting $tid thread_d]} {
                 error "Thread $tid account already exists"
             }
-            ::tsv::keylset tclwire accounting $tid [new_thread_account]
+            ::tsv::keylset tclwire accounting $tid [new_thread_account $status $family]
         }
+        return $tid
+    }
+
+    proc add_new_thread {tid} {
+        return [register_thread $tid created]
     }
 
     proc allocate_idle_thread {} {
+        initialize
         set idle_thread ""
         ::tsv::lock tclwire {
             foreach tid [::tsv::keylkeys tclwire accounting] {
@@ -75,6 +117,7 @@ namespace eval ::tclwire::accounting {
 
     proc change_thread_status {tid newstatus {tcl_command ""}} {
         variable valid_thread_statuses
+        initialize
         if {$newstatus ni $valid_thread_statuses} {
             error "Unknown thread status '$newstatus'"
         }
@@ -102,13 +145,32 @@ namespace eval ::tclwire::accounting {
         }
     }
 
-    proc remove_thread {tid} {
+    proc set_thread_http_host {tid http_host} {
+        initialize
         ::tsv::lock tclwire {
-            ::tsv::keyldel tclwire accounting $tid
+            if {![::tsv::keylget tclwire accounting $tid thread_d]} {
+                error "Thread $tid account doesn't exist"
+            }
+            if {![dict exists $thread_d family] || [dict get $thread_d family] ne "http"} {
+                error "Thread $tid does not belong to the http family"
+            }
+            dict set thread_d http_host $http_host
+            ::tsv::keylset tclwire accounting $tid $thread_d
+        }
+        return $http_host
+    }
+
+    proc remove_thread {tid} {
+        initialize
+        ::tsv::lock tclwire {
+            if {[::tsv::keylget tclwire accounting $tid thread_d]} {
+                ::tsv::keyldel tclwire accounting $tid
+            }
         }
     }
 
     proc get_thread_account {tid} {
+        initialize
         ::tsv::lock tclwire {
             if {[::tsv::keylget tclwire accounting $tid thread_d]} {
                 return $thread_d
@@ -118,6 +180,7 @@ namespace eval ::tclwire::accounting {
     }
 
     proc get_threads_database {} {
+        initialize
         ::tsv::lock tclwire {
             set threads_acc_d [dict create]
             foreach tid [::tsv::keylkeys tclwire accounting] {
@@ -158,4 +221,7 @@ namespace eval ::tclwire::accounting {
     unset ns_commands
     unset c
 }
-package provide tclwire::accounting 1.1
+
+::tclwire::accounting initialize
+
+package provide tclwire::accounting 1.2

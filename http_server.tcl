@@ -163,6 +163,17 @@ oo::class create ::tclwire::http_service {
     # Delegate the fully buffered request to the configured application. This
     # is the synchronous placeholder for the future worker-thread handoff.
     method handle_request {chan request} {
+        if {[info commands ::tclwire::accounting] ne {}} {
+            set headers [[my application] parse_headers $request]
+            set http_host {}
+            if {[dict exists $headers host]} {
+                set http_host [dict get $headers host]
+            }
+            catch {
+                ::tclwire::accounting set_thread_http_host \
+                    [thread::id] $http_host
+            }
+        }
         [my application] service_request [self] $chan $request
     }
 

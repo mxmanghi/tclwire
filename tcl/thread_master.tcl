@@ -13,8 +13,8 @@
 
 package require TclOO
 package require Thread
+package require tclwire::accounting 1.2
 
-#source [file join [file dirname [file normalize [info script]]] threads_shared_db.tcl]
 #source [file join [file dirname [file normalize [info script]]] logger.tcl]
 
 namespace eval ::tclwire {}
@@ -53,6 +53,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     variable max_threads_number
     variable accounting
     variable thread_script
+    variable thread_family
     variable logger
     variable owned_threads
 
@@ -160,10 +161,12 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         return $max_threads_number
     }
 
-    constructor {tscript {mtn 100}} {
+    constructor {tscript {mtn 100} {family {}}} {
         set max_threads_number $mtn
         set accounting ::tclwire::accounting
+        $accounting initialize
         set thread_script $tscript
+        set thread_family [string tolower [string trim $family]]
         set logger [::tclwire::logger new]
         set owned_threads {}
     }
@@ -184,6 +187,12 @@ if {[info commands ::tclwire::is_stale] eq {}} {
 
         set thread_id [thread::create $thread_script]
         thread::preserve $thread_id
+        if {[catch {
+            $accounting register_thread $thread_id allocated $thread_family
+        } error options]} {
+            catch {thread::release $thread_id}
+            return -options $options $error
+        }
 
         # we allow worker->master thread communication through the ::thread::send
         ::thread::send -async $thread_id [list set ::master_thread_id [::thread::id]]
@@ -197,24 +206,12 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         if {[[self] allocate_owned_idle_thread thread_id]} {
             return true
         }
-        ::tsv::lock tclwire {
-            set live_threads_number 0
-            set retained_thread_ids {}
-            foreach owned_thread_id $owned_threads {
-                if {![::tsv::keylget tclwire accounting $owned_thread_id thread_account]} {
-                    continue
-                }
-                lappend retained_thread_ids $owned_thread_id
-                incr live_threads_number
-            }
-            set owned_threads $retained_thread_ids
 
-            if {$live_threads_number < $max_threads_number} {
-                set thread_id [[self] start_worker_thread $thread_script]
-                lappend owned_threads $thread_id
-                ::tsv::keylset tclwire accounting $thread_id [$accounting new_thread_account allocated]
-                return true
-            } 
+        set live_threads_number [[self] live_threads_number]
+        if {$live_threads_number < $max_threads_number} {
+            set thread_id [[self] start_worker_thread $thread_script]
+            lappend owned_threads $thread_id
+            return true
         }
         return false
     }
