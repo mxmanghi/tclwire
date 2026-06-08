@@ -9,14 +9,14 @@ discussing the evolution of TclWire into a highly threaded application server.
 
 The discussion focused on:
 
-- separating Transport from Protocol processing;
-- delegating content generation to specialized application pools;
-- preserving Tcl channel ownership rules;
-- supporting HTTP virtual hosts and pipelining;
-- centralizing thread-pool management;
-- extending the shared thread-status database;
-- centralizing logging;
-- dynamically releasing idle worker resources.
+- Separating Transport from Protocol processing;
+- Delegating content generation to specialized application pools;
+- Preserving Tcl channel ownership rules;
+- Supporting HTTP virtual hosts and pipelining;
+- Centralizing thread-pool management;
+- Extending the shared thread-status database;
+- Centralizing logging;
+- Dynamically releasing idle worker resources.
 
 ## Current Implementation Versus Future Architecture
 
@@ -31,11 +31,11 @@ TclOO objects are interpreter-local. Equivalent objects loaded in multiple
 interpreters are not shared objects. The substantial resource cost comes
 primarily from:
 
-- operating-system threads;
+- Operating-system threads;
 - Tcl interpreters;
-- loaded packages and class definitions;
-- application state and caches;
-- connection and request buffers.
+- Loaded packages and class definitions;
+- Application state and caches;
+- Connection and request buffers.
 
 The presence of a protocol object in a thread does not imply that the thread
 must remain dedicated to one request for the complete request lifetime.
@@ -49,12 +49,12 @@ A separation between Transport and Protocol is feasible.
 A **Connection/Transport Agent** owns the Tcl channel and performs:
 
 - TCP or TLS channel ownership;
-- nonblocking reads and writes;
-- input and output buffering;
-- flow control and backpressure;
-- connection timeout handling;
+- Nonblocking reads and writes;
+- Input and output buffering;
+- Flow control and backpressure;
+- Connection timeout handling;
 - EOF and transport-error handling;
-- orderly connection shutdown.
+- Orderly connection shutdown.
 
 The Transport Agent should not parse HTTP requests, interpret FTP commands,
 select applications, or execute application behavior.
