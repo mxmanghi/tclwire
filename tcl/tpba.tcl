@@ -46,6 +46,64 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         return $pool_key
     }
 
+    method pool_key {descriptor} {
+        if {[catch {dict size $descriptor}]} {
+            error "pool descriptor must be a dictionary"
+        }
+
+        if {[dict exists $descriptor kind]} {
+            set kind [string tolower [string trim [dict get $descriptor kind]]]
+        } elseif {[dict exists $descriptor role]} {
+            set kind [string tolower [string trim [dict get $descriptor role]]]
+        } else {
+            error "pool descriptor must define kind or role"
+        }
+
+        set prefixes [dict create \
+            application app \
+            connection connection \
+            connection_agent connection \
+            protocol protocol \
+            transport transport]
+        if {[dict exists $prefixes $kind]} {
+            set prefix [dict get $prefixes $kind]
+        } else {
+            set prefix $kind
+        }
+
+        switch -exact -- $prefix {
+            app {
+                set identity_fields {application name protocol family endpoint}
+            }
+            connection -
+            protocol {
+                set identity_fields {protocol name family endpoint application}
+            }
+            transport {
+                set identity_fields {endpoint protocol name family application}
+            }
+            default {
+                set identity_fields {name protocol application endpoint family}
+            }
+        }
+
+        set identity {}
+        foreach field $identity_fields {
+            if {[dict exists $descriptor $field]} {
+                set identity [string tolower [string trim \
+                    [dict get $descriptor $field]]]
+                if {$identity ne {}} {
+                    break
+                }
+            }
+        }
+        if {$identity eq {}} {
+            error "pool descriptor must define a protocol, application, name, endpoint, or family"
+        }
+
+        return [my normalize_pool_key "${prefix}:${identity}"]
+    }
+
     method normalize_policy {policy} {
         if {[catch {dict size $policy}]} {
             error "pool policy must be a dictionary"
@@ -90,7 +148,11 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     }
 
     method create_pool {pool_key worker_script {policy {}} {descriptor {}}} {
-        set pool_key [my normalize_pool_key $pool_key]
+        if {$pool_key eq {}} {
+            set pool_key [my pool_key $descriptor]
+        } else {
+            set pool_key [my normalize_pool_key $pool_key]
+        }
         if {[dict exists $pools $pool_key]} {
             error "thread pool already exists: $pool_key"
         }
@@ -104,16 +166,15 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         set policy [my normalize_policy $policy]
         set maximum_workers [dict get $policy maximum_workers]
         set family [my pool_family $descriptor]
-        set master [{*}$thread_master_factory new \
-            $worker_script $maximum_workers $family]
+        set master [{*}$thread_master_factory new $worker_script $maximum_workers $family]
 
-        set record [dict create pool_key    $pool_key \
-                                descriptor  $descriptor \
-                                policy      $policy \
-                                worker_script $worker_script \
-                                lifecycle_state active \
-                                created_at [clock seconds] \
-                                thread_master $master]
+        set record [dict create pool_key        $pool_key   \
+                                descriptor      $descriptor \
+                                policy          $policy     \
+                                worker_script   $worker_script \
+                                lifecycle_state active      \
+                                created_at      [clock seconds] \
+                                thread_master   $master]
         dict set pools $pool_key $record
 
         if {[catch {
@@ -250,11 +311,13 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             set operation [my request_value $request operation]
             switch -exact -- $operation {
                 create_pool {
-                    set result [my create_pool \
-                        [my request_value $request pool_key] \
-                        [my request_value $request worker_script] \
-                        [my request_value $request policy {}] \
-                        [my request_value $request descriptor {}]]
+                    set result [my create_pool  [my request_value $request pool_key {}] \
+                                                [my request_value $request worker_script] \
+                                                [my request_value $request policy {}] \
+                                                [my request_value $request descriptor {}]]
+                }
+                pool_key {
+                    set result [my pool_key [my request_value $request descriptor]]
                 }
                 destroy_pool {
                     set result [my destroy_pool [my request_value $request pool_key]]
@@ -263,14 +326,12 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                     set result [my acquire_worker [my request_value $request pool_key]]
                 }
                 release_worker {
-                    set result [my release_worker \
-                        [my request_value $request pool_key] \
-                        [my request_value $request worker_id]]
+                    set result [my release_worker [my request_value $request pool_key] \
+                                                  [my request_value $request worker_id]]
                 }
                 resize_pool {
-                    set result [my resize_pool \
-                        [my request_value $request pool_key] \
-                        [my request_value $request limits]]
+                    set result [my resize_pool  [my request_value $request pool_key] \
+                                                [my request_value $request limits]]
                 }
                 pool_status {
                     set result [my pool_status [my request_value $request pool_key]]
@@ -290,17 +351,15 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                 }
             }
         } error options]} {
-            return [dict create \
-                ok 0 \
-                correlation_id $correlation_id \
-                error $error \
-                errorcode [dict get $options -errorcode]]
+            return [dict create ok              0 \
+                                correlation_id  $correlation_id \
+                                error           $error \
+                                errorcode       [dict get $options -errorcode]]
         }
 
-        return [dict create \
-            ok 1 \
-            correlation_id $correlation_id \
-            result $result]
+        return [dict create ok              1 \
+                            correlation_id  $correlation_id \
+                            result          $result]
     }
 
     unexport normalize_pool_key normalize_policy pool_family require_pool request_value

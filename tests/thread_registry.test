@@ -7,21 +7,28 @@ lappend auto_path $project_root
 package require tclwire::accounting 1.2
 package require tclwire::tpba 0.1
 
-test thread-registry-1.1 {loading accounting initializes shared storage} -body {
-    ::tclwire::accounting is_initialized
-} -result 1
+test thread-registry-1.1 {loading accounting initializes shared references} -body {
+    list \
+        [::tclwire::accounting is_initialized] \
+        [::tsv::get tclwire timestamp] \
+        [::tsv::get tclwire accounting] \
+        [::tsv::get tclwire tpba_thread_id] \
+        [::tsv::get tclwire logger_thread_id]
+} -result {1 {} {} {} {}}
 
-test thread-registry-1.2 {TPBA conditionally recreates missing shared storage} -body {
-    catch {::tsv::unset tclwire accounting}
-    catch {::tsv::unset tclwire timestamp}
+test thread-registry-1.2 {TPBA conditionally recreates missing catalog entries} -body {
+    catch {::tsv::unset tclwire logger_thread_id}
 
     set broker [::tclwire::TPBA new]
     try {
-        ::tclwire::accounting is_initialized
+        list \
+            [::tclwire::accounting is_initialized] \
+            [::tsv::exists tclwire logger_thread_id] \
+            [::tsv::get tclwire logger_thread_id]
     } finally {
         $broker destroy
     }
-} -result 1
+} -result {1 1 {}}
 
 test thread-registry-1.3 {registration is owned by the accounting API} -body {
     set thread_id registry-test-thread

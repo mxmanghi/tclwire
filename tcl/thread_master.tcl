@@ -54,7 +54,6 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     variable accounting
     variable thread_script
     variable thread_family
-    variable logger
     variable owned_threads
 
     # Boundary rule:
@@ -167,12 +166,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         $accounting initialize
         set thread_script $tscript
         set thread_family [string tolower [string trim $family]]
-        set logger [::tclwire::logger new]
         set owned_threads {}
-    }
-
-    destructor {
-        $logger destroy
     }
 
     # -- start_worker_thread <thread-script>
@@ -231,7 +225,8 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         set status [[self] thread_status $thread_id]
         switch -exact -- $status {
             allocated -
-            created {
+            created -
+            running {
                 $accounting change_thread_status $thread_id idle
                 return true
             }

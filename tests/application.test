@@ -1,0 +1,120 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+package require Thread
+package require tclwire::application::io 0.1
+package require tclwire::application_dispatcher 0.1
+package require tclwire::connection_agent 0.1
+package require tclwire::http::errors 0.1
+
+namespace eval ::tclwire::application_test {
+    variable events {}
+}
+
+oo::class create ::tclwire::application_test::OutputReceiver {
+    method application_output {transaction_id event} {
+        lappend ::tclwire::application_test::events \
+            [list $transaction_id $event]
+    }
+}
+
+set application_config [dict create \
+    default_application default \
+    applications [dict create \
+        default [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts {localhost 127.0.0.1}]]]
+
+test application-dispatcher-1.1 {missing Host selects the default application} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        $dispatcher select_application [dict create headers [dict create]]
+    } finally {
+        $dispatcher destroy
+    }
+} -result default
+
+test application-dispatcher-1.2 {configured hosts select the default application} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        list \
+            [$dispatcher select_application [dict create \
+                headers [dict create host localhost:8990]]] \
+            [$dispatcher select_application [dict create \
+                headers [dict create host 127.0.0.1]]]
+    } finally {
+        $dispatcher destroy
+    }
+} -result {default default}
+
+test application-dispatcher-1.3 {unknown hosts are rejected} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        catch {
+            $dispatcher select_application [dict create \
+                headers [dict create host unknown.example]]
+        } message
+        set message
+    } finally {
+        $dispatcher destroy
+    }
+} -result {no application is configured for Host 'unknown.example'}
+
+test application-io-1.1 {output commands send ordered transaction events} -body {
+    set ::tclwire::application_test::events {}
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 7
+        ::tclwire::io out alpha
+        ::tclwire::io flush
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set summary {}
+        foreach item $::tclwire::application_test::events {
+            lassign $item transaction_id event
+            lappend summary \
+                $transaction_id \
+                [dict get $event type] \
+                [dict get $event output_sequence]
+        }
+        set summary
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result {7 output 1 7 flush 2 7 complete 3}
+
+test http-errors-1.1 {HTTP errors are loaded from the root JSON catalog} -body {
+    set response [::tclwire::http::errors response 503]
+    list \
+        [dict get $response status] \
+        [dict get $response reason] \
+        [string match \
+            {*The service is temporarily unavailable. Try again later.*} \
+            [dict get $response body]]
+} -result {503 {Service Unavailable} 1}
+
+test http-errors-1.2 {error template values are HTML escaped} -body {
+    set response [::tclwire::http::errors response 404 \
+        [dict create path {/<missing>&}]]
+    list \
+        [dict get $response reason] \
+        [string match {*<code>/&lt;missing&gt;&amp;</code>*} \
+            [dict get $response body]]
+} -result {{Not Found} 1}
+
+test http-errors-1.3 {unknown statuses use the catalog fallback template} -body {
+    set response [::tclwire::http::errors response 599]
+    list \
+        [dict get $response status] \
+        [dict get $response reason] \
+        [string match {*<h1>599 Error</h1>*} [dict get $response body]]
+} -result {599 {Internal Server Error} 1}
+
+cleanupTests

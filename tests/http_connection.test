@@ -1,0 +1,188 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+package require tclwire::runtime 0.1
+package require tclwire::http::protocol 0.1
+package require tclwire::connection_agent 0.1
+package require tclwire::http::connection_agent 0.1
+
+namespace eval ::tclwire::http_connection_test {
+    variable logfile [file join [temporaryDirectory] tclwire-http-[pid].log]
+
+    proc cleanup {} {
+        variable logfile
+        catch {::tclwire::runtime stop}
+        catch {file delete -force $logfile}
+    }
+
+    proc request {request} {
+        set chan [socket 127.0.0.1 8990]
+        chan configure $chan -blocking 0 -buffering none -translation binary
+        puts -nonewline $chan $request
+        flush $chan
+
+        set response {}
+        set deadline [expr {[clock milliseconds] + 3000}]
+        while {[clock milliseconds] < $deadline} {
+            update
+            append response [read $chan]
+            if {[eof $chan]} {
+                close $chan
+                return $response
+            }
+            after 5
+        }
+        catch {close $chan}
+        error "timed out waiting for HTTP response"
+    }
+}
+
+::tclwire::http_connection_test::cleanup
+
+test http-protocol-1.1 {protocol session extracts path query and headers} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set request "GET /hello/world?name=TclWire&mode=test HTTP/1.1\r\nHost: localhost\r\nX-Test: yes\r\n\r\n"
+        set info [$protocol parse_request $request]
+        list \
+            [dict get $info method] \
+            [dict get $info path] \
+            [dict get $info query] \
+            [dict get $info version] \
+            [dict get $info headers host] \
+            [dict get $info headers x-test]
+    } finally {
+        $protocol destroy
+    }
+} -result {GET /hello/world name=TclWire&mode=test 1.1 localhost yes}
+
+test http-protocol-1.2 {request completion waits for the declared body} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set partial "POST /submit HTTP/1.1\r\nContent-Length: 4\r\n\r\nab"
+        set complete "${partial}cd"
+        list \
+            [$protocol complete_request $partial] \
+            [expr {[$protocol complete_request $complete] eq $complete}]
+    } finally {
+        $protocol destroy
+    }
+} -result {{} 1}
+
+test http-protocol-1.3 {uploaded data is retained in the request descriptor} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set request "POST /upload HTTP/1.1\r\nContent-Length: 7\r\n\r\npayload"
+        set descriptor [$protocol parse_request $request]
+        list \
+            [dict get $descriptor body_mode] \
+            [dict get $descriptor body_size] \
+            [dict get $descriptor body]
+    } finally {
+        $protocol destroy
+    }
+} -result {in_memory 7 payload}
+
+test http-connection-agent-1.1 {HTTP agent specializes the generic connection agent} -body {
+    list \
+        [info class superclasses ::tclwire::HttpConnectionAgent] \
+        [expr {"application_output" ni \
+            [info class methods ::tclwire::ConnectionAgent -all]}] \
+        [expr {"application_output" in \
+            [info class methods ::tclwire::HttpConnectionAgent -all]}] \
+        [expr {"handle_request" in \
+            [info class methods ::tclwire::HttpConnectionAgent -all]}] \
+        [expr {"build_request_descriptor" in \
+            [info class methods ::tclwire::HttpConnectionAgent -all]}]
+} -result {::tclwire::ConnectionAgent 1 1 1 1}
+
+test http-connection-1.3 {each accepted connection receives the dummy HTML response} -body {
+    ::tclwire::runtime start [list \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET /any/path?argument=value HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body [string range $response [expr {$separator + 4}] end]
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        [regexp -nocase {Content-Type: text/html; charset=utf-8} $headers] \
+        [regexp {Content-Length: 105} $headers] \
+        $body
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result [list \
+    1 1 1 \
+    {<html><head><title>Hello World</title></head><body><h2>Hello world from <b>TclWire</b></h2></body></html>}]
+
+test http-connection-1.4 {malformed request lines receive a protocol error} -body {
+    ::tclwire::runtime start [list \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "NOT AN HTTP REQUEST\r\nHost: localhost\r\n\r\n"]
+    list \
+        [string match "HTTP/1.1 400 Bad Request*" $response] \
+        [string match \
+            {*The request could not be understood by TclWire.*} \
+            $response]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result {1 1}
+
+test http-connection-1.5 {sequential connections reuse a TPBA pool worker} -body {
+    ::tclwire::runtime start [list \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set reactor [::tclwire::runtime transport_reactor]
+
+    ::tclwire::http_connection_test::request \
+        "GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    update
+    set first_status [::tclwire::tpba request [dict create \
+        operation pool_status \
+        pool_key [$reactor pool_key]]]
+    set first_idle [dict get $first_status result stats per_status_lists idle]
+
+    ::tclwire::http_connection_test::request \
+        "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    update
+    set second_status [::tclwire::tpba request [dict create \
+        operation pool_status \
+        pool_key [$reactor pool_key]]]
+    set second_idle [dict get $second_status result stats per_status_lists idle]
+
+    list \
+        [$reactor pool_key] \
+        [llength $first_idle] \
+        [expr {$first_idle eq $second_idle}]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result {connection:http 1 1}
+
+test http-connection-1.6 {a request without Host uses the default application} -body {
+    ::tclwire::runtime start [list \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET /without-host HTTP/1.0\r\nConnection: close\r\n\r\n"]
+    string match "HTTP/1.1 200 OK*" $response
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result 1
+
+test http-connection-1.7 {an unknown Host is not dispatched to the default application} -body {
+    ::tclwire::runtime start [list \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: unknown.example\r\nConnection: close\r\n\r\n"]
+    list \
+        [string match "HTTP/1.1 404 Not Found*" $response] \
+        [string match {*TclWire could not find <code>/</code>.*} $response]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result {1 1}
+
+::tclwire::http_connection_test::cleanup
+cleanupTests

@@ -183,4 +183,29 @@ test tpba-1.7 {stopped pools reject further allocation and resizing} -body {
     1 {thread pool is not active: app:stopped} \
     1 {thread pool is not active: app:stopped}]
 
+test tpba-1.8 {connection-agent descriptors produce canonical pool keys} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        list \
+            [$broker pool_key [dict create \
+                kind connection_agent protocol HTTP]] \
+            [$broker create_pool {} {worker script} {} [dict create \
+                kind connection_agent protocol ftp]]
+    } finally {
+        $broker destroy
+    }
+} -result {connection:http connection:ftp}
+
+test tpba-1.9 {request API derives a connection-agent pool key} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        set response [$broker handle_request [dict create \
+            operation pool_key \
+            descriptor [dict create kind connection_agent protocol http]]]
+        list [dict get $response ok] [dict get $response result]
+    } finally {
+        $broker destroy
+    }
+} -result {1 connection:http}
+
 cleanupTests

@@ -1,14 +1,21 @@
 # -- threads_accounting_db.tcl
 #
-# Shared thread accounting space. ThreadMaster owns pool policy; this namespace
-# provides the shared ledger used by ThreadMaster, workers and inspectors.
+# Shared TclWire state. ThreadMaster owns pool policy; this namespace provides
+# the shared catalog and thread ledger used by infrastructure components,
+# workers and inspectors.
 #
-# the accounting database is named `tclwire`
+# The shared array is named `tclwire`.
 #
-#  sections:
+# Top-level references:
 #
-#   - timestamp: timestamp stored when accounting space is instantiated
-#   - accounting <thread-id> <thread accounting>
+#   - timestamp: shared-state lifecycle timestamp, populated by its owner
+#   - accounting: keyed thread accounting records
+#   - tpba_thread_id: Thread-Pool Broker Agent endpoint identifier
+#   - logger_thread_id: Logging Agent endpoint identifier
+#
+# Every cataloged reference is created with an empty value. Component owners
+# replace that marker when the corresponding information becomes available and
+# restore it to empty when the information is no longer valid.
 #
 #  thread accounting:
 #
@@ -31,11 +38,28 @@ namespace eval ::tclwire::accounting {
 
     proc initialize {} {
         ::tsv::lock tclwire {
+            # Shared-state lifecycle timestamp. The runtime or accounting
+            # initialization code may populate it.
             if {![::tsv::exists tclwire timestamp]} {
-                ::tsv::set tclwire timestamp [clock format [clock seconds]]
+                ::tsv::set tclwire timestamp {}
             }
+
+            # Keyed thread identity and execution-state records. ThreadMaster,
+            # workers, and accounting helpers update this value.
             if {![::tsv::exists tclwire accounting]} {
                 ::tsv::set tclwire accounting {}
+            }
+
+            # Thread-Pool Broker Agent endpoint. The runtime or TPBA stores the
+            # broker thread::id here while the agent is available.
+            if {![::tsv::exists tclwire tpba_thread_id]} {
+                ::tsv::set tclwire tpba_thread_id {}
+            }
+
+            # Logging Agent endpoint. The logger lifecycle helpers store the
+            # logger thread::id here while the agent is available.
+            if {![::tsv::exists tclwire logger_thread_id]} {
+                ::tsv::set tclwire logger_thread_id {}
             }
         }
         return
@@ -45,15 +69,19 @@ namespace eval ::tclwire::accounting {
         ::tsv::lock tclwire {
             return [expr {
                 [::tsv::exists tclwire timestamp] &&
-                [::tsv::exists tclwire accounting]
+                [::tsv::exists tclwire accounting] &&
+                [::tsv::exists tclwire tpba_thread_id] &&
+                [::tsv::exists tclwire logger_thread_id]
             }]
         }
     }
 
     proc reset {} {
         ::tsv::lock tclwire {
-            ::tsv::set tclwire timestamp [clock format [clock seconds]]
+            ::tsv::set tclwire timestamp {}
             ::tsv::set tclwire accounting {}
+            ::tsv::set tclwire tpba_thread_id {}
+            ::tsv::set tclwire logger_thread_id {}
         }
         return
     }
