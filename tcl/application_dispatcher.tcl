@@ -15,10 +15,27 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {[catch {dict size $application_config}]} {
             error "application configuration must be a dictionary"
         }
-        set applications [dict get $application_config applications]
+        set applications        [dict get $application_config applications]
         set default_application [dict get $application_config default_application]
-        set project_root [file dirname [file dirname [file normalize [info script]]]]
-        set owned_pools {}
+        set project_root        [file normalize \
+                                    [file join [file dirname [info script]] ..]]
+        set owned_pools         {}
+        set default_docroot {}
+        if {[dict exists $application_config docroot]} {
+            set default_docroot [dict get $application_config docroot]
+        }
+
+        dict for {application_id descriptor} $applications {
+            if {![dict exists $descriptor docroot]} {
+                if {$default_docroot eq {}} {
+                    error "application '$application_id' is missing docroot"
+                }
+                dict set descriptor docroot $default_docroot
+            }
+            dict set descriptor docroot \
+                [file normalize [dict get $descriptor docroot]]
+            dict set applications $application_id $descriptor
+        }
         my validate
     }
 
@@ -31,7 +48,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             error "default application is not registered: $default_application"
         }
         dict for {application_id descriptor} $applications {
-            foreach field {class package hosts} {
+            foreach field {class package hosts docroot} {
                 if {![dict exists $descriptor $field]} {
                     error "application '$application_id' is missing $field"
                 }
@@ -112,16 +129,20 @@ oo::class create ::tclwire::ApplicationDispatcher {
             if {[dict exists $descriptor pool_policy]} {
                 set policy [dict merge $policy [dict get $descriptor pool_policy]]
             }
-            set response [::tclwire::tpba request [dict create \
-                operation create_pool \
-                pool_key $key \
-                worker_script [my worker_script $descriptor] \
-                policy $policy \
-                descriptor [dict create \
-                    kind application \
-                    application $application_id \
-                    family application \
-                    class [dict get $descriptor class]]]]
+
+            # asking the TPBA to create a worker pool associated to the application
+            # to run the script stored in the application descriptor
+
+            set response [::tclwire::tpba request \
+                        [dict create operation      create_pool  \
+                                     pool_key       $key         \
+                                     worker_script  [my worker_script $descriptor] \
+                                     policy         $policy \
+                                     descriptor     [dict create kind        application \
+                                                                 application $application_id \
+                                                                 family      application \
+                                                                 class       [dict get $descriptor class]]]]
+
             if {![dict get $response ok]} {
                 my stop
                 error [dict get $response error]
@@ -158,11 +179,13 @@ oo::class create ::tclwire::ApplicationDispatcher {
 
         dict set request_descriptor application_id $application_id
         dict set request_descriptor application_pool_key $key
+        dict set request_descriptor application_descriptor $descriptor
         if {[catch {
             ::thread::send -async $worker_id [list \
                 ::tclwire::cga::execute \
                 $key \
                 [dict get $descriptor class] \
+                $descriptor \
                 $request_descriptor]
         } message options]} {
             catch {::tclwire::tpba request [dict create \
@@ -171,10 +194,9 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 worker_id $worker_id]}
             return -options $options $message
         }
-        return [dict create \
-            application_id $application_id \
-            pool_key $key \
-            worker_id $worker_id]
+        return [dict create application_id  $application_id \
+                            pool_key        $key \
+                            worker_id       $worker_id]
     }
 }
 

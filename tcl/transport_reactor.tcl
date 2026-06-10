@@ -30,24 +30,22 @@ oo::class create ::tclwire::TransportReactor {
             set options($name) $value
         }
 
-        set listener {}
-        set host $options(-host)
-        set port $options(-port)
+        set listener        {}
+        set host            $options(-host)
+        set port            $options(-port)
         set next_connection_id 0
-        set agent_threads [dict create]
+        set agent_threads   [dict create]
         set last_accept_error {}
-        set project_root [file dirname [file dirname [file normalize [info script]]]]
-        set agent_class $options(-agentclass)
-        set agent_package $options(-agentpackage)
-        set agent_args $options(-agentargs)
-        set pool_descriptor [dict create \
-            kind connection_agent \
-            protocol $options(-protocol) \
-            family $options(-protocol) \
-            agent_class $agent_class]
-        set pool_policy [dict create \
-            minimum_workers 0 \
-            maximum_workers $options(-maxworkers)]
+        set project_root    [file dirname [file dirname [file normalize [info script]]]]
+        set agent_class     $options(-agentclass)
+        set agent_package   $options(-agentpackage)
+        set agent_args      $options(-agentargs)
+        set pool_descriptor [dict create kind           connection_agent \
+                                         protocol       $options(-protocol) \
+                                         family         $options(-protocol) \
+                                         agent_class    $agent_class]
+        set pool_policy [dict create minimum_workers 0 \
+                                     maximum_workers $options(-maxworkers)]
         set pool_key {}
         set pool_created 0
     }
@@ -61,20 +59,19 @@ oo::class create ::tclwire::TransportReactor {
             error "Transport Reactor is already listening"
         }
 
-        set key_response [::tclwire::tpba request [dict create \
-            operation pool_key \
-            descriptor $pool_descriptor]]
+        set key_response [::tclwire::tpba request [dict create operation    pool_key \
+                                                               descriptor   $pool_descriptor]]
+
         if {![dict get $key_response ok]} {
             error [dict get $key_response error]
         }
         set pool_key [dict get $key_response result]
 
-        set create_response [::tclwire::tpba request [dict create \
-            operation create_pool \
-            pool_key $pool_key \
-            worker_script [my worker_script] \
-            policy $pool_policy \
-            descriptor $pool_descriptor]]
+        set create_response [::tclwire::tpba request [dict create operation     create_pool         \
+                                                                  pool_key      $pool_key           \
+                                                                  worker_script [my worker_script]  \
+                                                                  policy        $pool_policy        \
+                                                                  descriptor    $pool_descriptor]]
         if {![dict get $create_response ok]} {
             error [dict get $create_response error]
         }
@@ -149,43 +146,43 @@ oo::class create ::tclwire::TransportReactor {
         return
     }
 
-    method accept {chan peer_host peer_port} {
-        after idle [list [self] dispatch_accept $chan $peer_host $peer_port]
+    method accept {channel peer_host peer_port} {
+        after idle [list [self] dispatch_accept $channel $peer_host $peer_port]
     }
 
-    method dispatch_accept {chan peer_host peer_port} {
+    method dispatch_accept {channel peer_host peer_port} {
         set connection_id [incr next_connection_id]
-        set acquire_response [::tclwire::tpba request [dict create \
-            operation acquire_worker \
-            pool_key $pool_key]]
+        set acquire_response [::tclwire::tpba request \
+                                        [dict create operation acquire_worker \
+                                                     pool_key  $pool_key]]
         if {![dict get $acquire_response ok]} {
             set last_accept_error [dict get $acquire_response error]
-            catch {close $chan}
+            catch {close $channel}
             return
         }
         set tid [dict get $acquire_response result]
         if {$tid eq {}} {
             set last_accept_error "connection-agent pool is exhausted: $pool_key"
-            catch {close $chan}
+            catch {close $channel}
             return
         }
         set detached 0
 
         if {[catch {
-            ::thread::detach $chan
+            ::thread::detach $channel
             set detached 1
-            ::thread::send $tid [list ::thread::attach $chan]
+            ::thread::send $tid [list ::thread::attach $channel]
             dict set agent_threads $tid $connection_id
             ::thread::send $tid [list ::tclwire::start_connection_agent \
-                $agent_class $chan $connection_id $peer_host $peer_port \
-                [::thread::id] [list [self] connection_finished $pool_key] \
-                $agent_args]
+                                        $agent_class $channel $connection_id $peer_host $peer_port \
+                                        [::thread::id] [list [self] connection_finished $pool_key] \
+                                        $agent_args]
         } error options]} {
             set last_accept_error $error
             if {$detached} {
-                catch {::thread::send $tid [list catch [list close $chan]]}
+                catch {::thread::send $tid [list catch [list close $channel]]}
             } else {
-                catch {close $chan}
+                catch {close $channel}
             }
             if {[dict exists $agent_threads $tid]} {
                 dict unset agent_threads $tid

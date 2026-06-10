@@ -13,10 +13,10 @@ namespace eval ::tclwire {}
 oo::class create ::tclwire::HttpConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
-    variable protocol_session application_dispatcher closed chan
+    variable protocol_session application_dispatcher closed channel
     variable next_transaction_id
 
-    constructor {channel id host port args} {
+    constructor {conn_channel id host port args} {
         array set options {
             -applicationconfig {}
         }
@@ -30,7 +30,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             error "HTTP connection agent requires application configuration"
         }
 
-        next $channel $id $host $port
+        next $conn_channel $id $host $port
         set protocol_session [::tclwire::HttpProtocolSession new]
         set application_dispatcher \
             [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
@@ -60,7 +60,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             return
         }
 
-        chan event $chan readable {}
+        chan event $channel readable {}
         my handle_request $request_data
     }
 
@@ -98,11 +98,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
         dict set descriptor connection_agent_id [self]
         dict set descriptor response_body {}
         dict set descriptor output_sequence 0
-        my track_transaction $transaction_id $descriptor
+        my begin_transaction $transaction_id $descriptor
         if {[catch {
             set dispatch_info [$application_dispatcher dispatch $descriptor]
         } message]} {
-            my complete_transaction $transaction_id
+            my finish_transaction $transaction_id
             if {[string match "no application is configured for Host *" $message]} {
                 my send_error 404 [dict create path [dict get $descriptor path]]
             } else {
@@ -114,19 +114,19 @@ oo::class create ::tclwire::HttpConnectionAgent {
             [dict get $dispatch_info application_id]
         dict set descriptor application_pool_key \
             [dict get $dispatch_info pool_key]
-        my track_transaction $transaction_id $descriptor
+        my update_transaction $transaction_id $descriptor
         return $descriptor
     }
 
     method application_output {transaction_id event} {
-        set descriptor [my transaction $transaction_id]
+        set descriptor [my transaction_for $transaction_id]
         if {$descriptor eq {}} {
             return
         }
 
         set expected [expr {[dict get $descriptor output_sequence] + 1}]
         if {[dict get $event output_sequence] != $expected} {
-            my complete_transaction $transaction_id
+            my finish_transaction $transaction_id
             my send_error 500
             return
         }
@@ -135,23 +135,23 @@ oo::class create ::tclwire::HttpConnectionAgent {
         switch -exact -- [dict get $event type] {
             output {
                 dict append descriptor response_body [dict get $event data]
-                my track_transaction $transaction_id $descriptor
+                my update_transaction $transaction_id $descriptor
             }
             flush {
-                my track_transaction $transaction_id $descriptor
+                my update_transaction $transaction_id $descriptor
             }
             complete {
                 set body [dict get $descriptor response_body]
-                my complete_transaction $transaction_id
+                my finish_transaction $transaction_id
                 set response [$protocol_session build_response 200 OK $body]
                 my write_and_close $response
             }
             error {
-                my complete_transaction $transaction_id
+                my finish_transaction $transaction_id
                 my send_error 500
             }
             default {
-                my complete_transaction $transaction_id
+                my finish_transaction $transaction_id
                 my send_error 500
             }
         }
@@ -168,8 +168,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         my write_and_close $response
     }
 
-    method request_info {{transaction_id 1}} {
-        return [my transaction $transaction_id]
+    method request_info {} {
+        return [my active_transaction]
     }
 }
 

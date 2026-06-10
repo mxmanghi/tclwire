@@ -10,7 +10,9 @@ package require tclwire::tpba::control 0.1
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::cga {
-    proc execute {pool_key application_class request_descriptor} {
+    proc execute {
+        pool_key application_class application_descriptor request_descriptor
+    } {
         set worker_id [::thread::id]
         ::tclwire::accounting change_thread_status \
             $worker_id running [list $application_class \
@@ -18,7 +20,7 @@ namespace eval ::tclwire::cga {
 
         set application {}
         try {
-            set application [$application_class new]
+            set application [$application_class new $application_descriptor]
             ::tclwire::io begin \
                 [dict get $request_descriptor connection_thread_id] \
                 [dict get $request_descriptor connection_agent_id] \

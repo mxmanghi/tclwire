@@ -96,8 +96,12 @@ test http-connection-agent-1.1 {HTTP agent specializes the generic connection ag
         [expr {"handle_request" in \
             [info class methods ::tclwire::HttpConnectionAgent -all]}] \
         [expr {"build_request_descriptor" in \
-            [info class methods ::tclwire::HttpConnectionAgent -all]}]
-} -result {::tclwire::ConnectionAgent 1 1 1 1}
+            [info class methods ::tclwire::HttpConnectionAgent -all]}] \
+        [expr {"active_transaction" in \
+            [info class methods ::tclwire::ConnectionAgent -all]}] \
+        [expr {"outstanding_transactions" ni \
+            [info class methods ::tclwire::ConnectionAgent -all]}]
+} -result {::tclwire::ConnectionAgent 1 1 1 1 1 1}
 
 test http-connection-1.3 {each accepted connection receives the dummy HTML response} -body {
     ::tclwire::runtime start [list \

@@ -138,14 +138,6 @@ namespace eval ::tclwire::runtime {
         set custom_services 0
         set ports $protocol_defaults
         set default_application default
-        set applications [dict create \
-            default [dict create \
-                class ::tclwire::CApplication \
-                package tclwire::application \
-                hosts {localhost 127.0.0.1} \
-                pool_policy [dict create \
-                    minimum_workers 0 \
-                    maximum_workers 20]]]
 
         for {set i 0} {$i < [llength $argv]} {incr i} {
             set option [lindex $argv $i]
@@ -160,14 +152,13 @@ namespace eval ::tclwire::runtime {
                     set startservers [parse_protocol_list \
                         [require_value $argv [incr i] $option]]
                 }
-                --httpport -
+                --httpport  -
                 --httpsport -
-                --ftpport -
-                --ftpsport -
+                --ftpport   -
+                --ftpsport  -
                 --proxyport {
                     set protocol [string range $option 2 end-4]
-                    dict set ports $protocol [parse_port_value $option \
-                        [require_value $argv [incr i] $option]]
+                    dict set ports $protocol [parse_port_value $option [require_value $argv [incr i] $option]]
                 }
                 --service {
                     if {!$custom_services} {
@@ -216,6 +207,13 @@ namespace eval ::tclwire::runtime {
             }
         }
 
+        set applications [dict create \
+            default [dict create class      ::tclwire::CApplication \
+                                 package    tclwire::application    \
+                                 hosts      {localhost 127.0.0.1}   \
+                                 docroot    $docroot                \
+                                 pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
+
         if {!$custom_services} {
             foreach protocol $startservers {
                 lappend services [dict create \
@@ -232,21 +230,20 @@ namespace eval ::tclwire::runtime {
             set services $selected
         }
 
-        return [dict create \
-            help $help \
-            host $host \
-            quiet $quiet \
-            debug $debug \
-            docroot $docroot \
-            ftproot $ftproot \
-            certfile $certfile \
-            keyfile $keyfile \
-            ftp_user_check $ftp_user_check \
-            logfile $logfile \
-            startservers $startservers \
-            services $services \
-            default_application $default_application \
-            applications $applications]
+        return [dict create help         $help \
+                            host         $host \
+                            quiet        $quiet \
+                            debug        $debug \
+                            docroot      $docroot \
+                            ftproot      $ftproot \
+                            certfile     $certfile \
+                            keyfile      $keyfile \
+                            ftp_user_check $ftp_user_check \
+                            logfile      $logfile \
+                            startservers $startservers \
+                            services     $services \
+                            default_application $default_application \
+                            applications $applications]
     }
 
     proc prepare_config {argv} {
@@ -275,16 +272,20 @@ namespace eval ::tclwire::runtime {
         set logger_started 0
         set tpba_started 0
         try {
+
             ::tclwire::logger start $config
             set logger_started 1
+
             ::tclwire::tpba start
             set tpba_started 1
-            set application_dispatcher \
-                [::tclwire::ApplicationDispatcher new $config]
+
+            set application_dispatcher [::tclwire::ApplicationDispatcher new $config]
             $application_dispatcher start
-            set transport_reactor [::tclwire::TransportReactor new \
-                -agentargs [list -applicationconfig $config]]
+
+            set transport_reactor \
+                [::tclwire::TransportReactor new -agentargs [list -applicationconfig $config]]
             $transport_reactor start
+
         } on error {message options} {
             if {$transport_reactor ne {}} {
                 catch {$transport_reactor destroy}
@@ -384,9 +385,9 @@ namespace eval ::tclwire::runtime {
         return $config
     }
 
-    namespace export usage parse_args prepare_config start stop is_running \
-        config transport_reactor request_shutdown run implemented_protocols \
-        default_protocols application_dispatcher
+    namespace export usage  parse_args prepare_config start stop is_running \
+                     config transport_reactor request_shutdown run implemented_protocols \
+                     default_protocols application_dispatcher
     namespace ensemble create
 }
 

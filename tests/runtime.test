@@ -26,6 +26,7 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config services] \
         [dict get $config default_application] \
         [dict get $config applications default hosts] \
+        [dict get $config applications default docroot] \
         [dict get $config logfile] \
         [dict get $config help]
 } -result [list \
@@ -34,6 +35,7 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     [list [dict create protocol http port 8990]] \
     default \
     {localhost 127.0.0.1} \
+    [::tclwire::support default_doc_root] \
     [file normalize /tmp/tclwire.log] \
     0]
 
@@ -51,6 +53,7 @@ test runtime-1.2 {legacy service options are normalized without starting service
         [dict get $config host] \
         [dict get $config services] \
         [dict get $config docroot] \
+        [dict get $config applications default docroot] \
         [dict get $config ftproot] \
         [dict get $config logfile] \
         [dict get $config quiet] \
@@ -60,6 +63,7 @@ test runtime-1.2 {legacy service options are normalized without starting service
     [list \
         [dict create protocol http port 8080] \
         [dict create protocol https port 8443]] \
+    [file normalize ./www] \
     [file normalize ./www] \
     [file normalize ./www] \
     [file normalize $::tclwire::runtime_test::logfile] \

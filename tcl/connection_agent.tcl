@@ -9,22 +9,22 @@ package require Thread
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ConnectionAgent {
-    variable chan connection_id peer_host peer_port input_buffer timeout_id
+    variable channel connection_id peer_host peer_port input_buffer timeout_id
     variable initial_read_id
-    variable outstanding_transactions closed
+    variable transaction_state closed
 
-    constructor {channel id host port} {
-        set chan $channel
+    constructor {conn_channel id host port} {
+        set channel $conn_channel
         set connection_id $id
         set peer_host $host
         set peer_port $port
         set input_buffer {}
         set timeout_id {}
         set initial_read_id {}
-        set outstanding_transactions [dict create]
+        set transaction_state {}
         set closed 0
 
-        chan configure $chan -blocking 0 -buffering none -translation binary
+        chan configure $channel -blocking 0 -buffering none -translation binary
     }
 
     destructor {
@@ -32,7 +32,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method start {} {
-        chan event $chan readable [list [self] readable]
+        chan event $channel readable [list [self] readable]
         my refresh_timeout
         set initial_read_id [after idle [namespace code {my initial_read}]]
         return
@@ -66,12 +66,12 @@ oo::class create ::tclwire::ConnectionAgent {
         if {$closed} {
             return {}
         }
-        if {[eof $chan]} {
+        if {[eof $channel]} {
             my close
             return {}
         }
 
-        set chunk [read $chan]
+        set chunk [read $channel]
         if {$chunk eq {}} {
             return {}
         }
@@ -90,23 +90,38 @@ oo::class create ::tclwire::ConnectionAgent {
         return
     }
 
-    method track_transaction {transaction_id transaction} {
-        dict set outstanding_transactions $transaction_id $transaction
+    method begin_transaction {transaction_id descriptor} {
+        if {$transaction_state ne {}} {
+            error "connection already has an active transaction"
+        }
+        dict set descriptor transaction_id $transaction_id
+        set transaction_state $descriptor
         return $transaction_id
     }
 
-    method transaction {transaction_id} {
-        if {[dict exists $outstanding_transactions $transaction_id]} {
-            return [dict get $outstanding_transactions $transaction_id]
+    method transaction_for {transaction_id} {
+        if {$transaction_state eq {} ||
+                [dict get $transaction_state transaction_id] != $transaction_id} {
+            return {}
         }
-        return {}
+        return $transaction_state
     }
 
-    method complete_transaction {transaction_id} {
-        if {[dict exists $outstanding_transactions $transaction_id]} {
-            dict unset outstanding_transactions $transaction_id
+    method update_transaction {transaction_id descriptor} {
+        if {[my transaction_for $transaction_id] eq {}} {
+            error "transaction is not active: $transaction_id"
         }
-        return
+        dict set descriptor transaction_id $transaction_id
+        set transaction_state $descriptor
+        return $transaction_id
+    }
+
+    method finish_transaction {transaction_id} {
+        set descriptor [my transaction_for $transaction_id]
+        if {$descriptor ne {}} {
+            set transaction_state {}
+        }
+        return $descriptor
     }
 
     method write_and_close {data} {
@@ -114,8 +129,8 @@ oo::class create ::tclwire::ConnectionAgent {
             return
         }
         catch {
-            puts -nonewline $chan $data
-            flush $chan
+            puts -nonewline $channel $data
+            flush $channel
         }
         my close
     }
@@ -133,9 +148,9 @@ oo::class create ::tclwire::ConnectionAgent {
             after cancel $initial_read_id
             set initial_read_id {}
         }
-        catch {chan event $chan readable {}}
-        catch {close $chan}
-        set outstanding_transactions [dict create]
+        catch {chan event $channel readable {}}
+        catch {close $channel}
+        set transaction_state {}
         after 0 [list ::tclwire::connection_agent_finished [self]]
     }
 
@@ -147,12 +162,13 @@ oo::class create ::tclwire::ConnectionAgent {
         return [dict create host $peer_host port $peer_port]
     }
 
-    method outstanding_transactions {} {
-        return $outstanding_transactions
+    method active_transaction {} {
+        return $transaction_state
     }
 
-    unexport clear_input_buffer complete_transaction initial_read read_available \
-        refresh_timeout track_transaction transaction write_and_close
+    unexport begin_transaction clear_input_buffer finish_transaction initial_read \
+        read_available refresh_timeout transaction_for update_transaction \
+        write_and_close
 }
 
 namespace eval ::tclwire {
@@ -161,7 +177,8 @@ namespace eval ::tclwire {
     variable connection_finished_command {}
 
     proc start_connection_agent {
-        agent_class chan connection_id host port finished_thread finished_command
+        agent_class conn_channel connection_id host port finished_thread
+        finished_command
         agent_args
     } {
         variable connection_agent
@@ -175,14 +192,13 @@ namespace eval ::tclwire {
             error "unknown connection agent class: $agent_class"
         }
 
-        set connection_finished_thread $finished_thread
+        set connection_finished_thread  $finished_thread
         set connection_finished_command $finished_command
         if {[info commands ::tclwire::accounting] ne {}} {
             ::tclwire::accounting change_thread_status \
                 [::thread::id] running [list $agent_class $connection_id]
         }
-        set connection_agent [$agent_class new \
-            $chan $connection_id $host $port {*}$agent_args]
+        set connection_agent [$agent_class new $conn_channel $connection_id $host $port {*}$agent_args]
         return $connection_agent
     }
 
@@ -207,12 +223,10 @@ namespace eval ::tclwire {
         }
 
         if {$connection_finished_thread ne {} && [::thread::exists $connection_finished_thread]} {
-            set callback [list {*}$connection_finished_command \
-                                    $connection_id \
-                                    [::thread::id]]
+            set callback [list {*}$connection_finished_command $connection_id [::thread::id]]
             ::thread::send -async $connection_finished_thread $callback
         }
-        set connection_finished_thread {}
+        set connection_finished_thread  {}
         set connection_finished_command {}
         return
     }

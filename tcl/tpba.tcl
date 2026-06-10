@@ -311,9 +311,9 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             set operation [my request_value $request operation]
             switch -exact -- $operation {
                 create_pool {
-                    set result [my create_pool  [my request_value $request pool_key {}] \
-                                                [my request_value $request worker_script] \
-                                                [my request_value $request policy {}] \
+                    set result [my create_pool  [my request_value $request pool_key {}]     \
+                                                [my request_value $request worker_script]   \
+                                                [my request_value $request policy {}]       \
                                                 [my request_value $request descriptor {}]]
                 }
                 pool_key {
@@ -330,8 +330,8 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                                                   [my request_value $request worker_id]]
                 }
                 resize_pool {
-                    set result [my resize_pool  [my request_value $request pool_key] \
-                                                [my request_value $request limits]]
+                    set result [my resize_pool [my request_value $request pool_key] \
+                                               [my request_value $request limits]]
                 }
                 pool_status {
                     set result [my pool_status [my request_value $request pool_key]]
