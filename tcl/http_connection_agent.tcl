@@ -88,42 +88,42 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     method handle_request {request_data} {
         if {[catch {
-            set descriptor [my build_request_descriptor $request_data]
+            set request_d [my build_request_descriptor $request_data]
         }]} {
             my send_error 400
             return {}
         }
 
         set transaction_id [incr next_transaction_id]
-        dict set descriptor transaction_id $transaction_id
-        dict set descriptor connection_thread_id [::thread::id]
-        dict set descriptor connection_agent_id [self]
-        dict set descriptor response_body {}
-        dict set descriptor response_status 200
-        dict set descriptor response_reason OK
-        dict set descriptor response_headers {}
-        dict set descriptor response_body_mode text
-        dict set descriptor output_sequence 0
-        my begin_transaction $transaction_id $descriptor
+        dict set request_d transaction_id $transaction_id
+        dict set request_d connection_thread_id [::thread::id]
+        dict set request_d connection_agent_id [self]
+        dict set request_d response_body {}
+        dict set request_d response_status 200
+        dict set request_d response_reason OK
+        dict set request_d response_headers {}
+        dict set request_d response_body_mode text
+        dict set request_d output_sequence 0
+        my begin_transaction $transaction_id $request_d
         if {[catch {
-            set dispatch_info [$application_dispatcher dispatch $descriptor]
+            set dispatch_info [$application_dispatcher dispatch $request_d]
         } message]} {
             my finish_transaction $transaction_id
             if {[string match "no application is configured for Host *" $message]} {
-                my send_error 404 [dict create path [dict get $descriptor path]]
+                my send_error 404 [dict create path [dict get $request_d path]]
             } else {
                 my send_error 503
             }
             return {}
         }
-        dict set descriptor application_id \
+        dict set request_d application_id \
             [dict get $dispatch_info application_id]
-        dict set descriptor application_pool_key \
+        dict set request_d application_pool_key \
             [dict get $dispatch_info pool_key]
-        dict set descriptor response_encoding \
+        dict set request_d response_encoding \
             [dict get $dispatch_info encoding]
-        my update_transaction $transaction_id $descriptor
-        return $descriptor
+        my update_transaction $transaction_id $request_d
+        return $request_d
     }
 
     method application_output {transaction_id event} {

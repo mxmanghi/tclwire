@@ -81,20 +81,18 @@ namespace eval ::tclwire::io {
                                 flags           $flags]
 
         ::thread::send -async $connection_thread_id \
-                [list ::tclwire::route_application_output \
-                      $connection_agent_id \
-                      $transaction_id \
-                      $event]
+                [list ::tclwire::route_application_output   $connection_agent_id \
+                                                            $transaction_id \
+                                                            $event]
         return $event
     }
 
     proc response {status reason headers {body_mode text} {encoding {}}} {
-        send_event response {} [dict create \
-            status $status \
-            reason $reason \
-            headers $headers \
-            body_mode $body_mode \
-            encoding $encoding]
+        send_event response {} [dict create status      $status     \
+                                            reason      $reason     \
+                                            headers     $headers    \
+                                            body_mode   $body_mode  \
+                                            encoding    $encoding]
         return
     }
 

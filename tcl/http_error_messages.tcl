@@ -13,15 +13,12 @@ namespace eval ::tclwire::http::errors {
 
     proc default_catalog {} {
         return [dict create \
-            000 [dict create \
-                reason "Internal Server Error" \
-                body "TclWire could not complete the request.\n"] \
-            400 [dict create \
-                reason "Bad Request" \
-                body "The request could not be understood by TclWire.\n"] \
-            403 [dict create \
-                reason "Forbidden" \
-                body "The requested resource is not available for this service.\n"] \
+            000 [dict create reason "Internal Server Error" \
+                             body "TclWire could not complete the request.\n"] \
+            400 [dict create reason "Bad Request" \
+                             body "The request could not be understood by TclWire.\n"] \
+            403 [dict create reason "Forbidden" \
+                             body "The requested resource is not available for this service.\n"] \
             404 [dict create \
                 reason "Not Found" \
                 body "TclWire could not find {{path}}.\n"] \

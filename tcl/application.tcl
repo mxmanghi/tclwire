@@ -127,13 +127,11 @@ oo::class create ::tclwire::CApplication {
     method send_error {status path} {
         set response [::tclwire::http::errors response \
             $status [dict create path $path]]
-        ::tclwire::io response \
-            [dict get $response status] \
-            [dict get $response reason] \
-            [dict get $response headers] \
-            text \
-            [my encoding]
-        ::tclwire::io out [dict get $response body]
+
+        dict with response {
+            ::tclwire::io response $status $reason $headers text [my encoding] 
+            ::tclwire::io out $body
+        }
         return
     }
 

@@ -179,9 +179,11 @@ oo::class create ::tclwire::ApplicationDispatcher {
         set application_id [my select_application $request_descriptor]
         set descriptor [my application $application_id]
         set key [my pool_key $application_id]
-        set response [::tclwire::tpba request [dict create \
-            operation acquire_worker \
-            pool_key $key]]
+
+        # getting a worker thread handle from the TPBA
+
+        set response [::tclwire::tpba request [dict create operation acquire_worker \
+                                                           pool_key  $key]]
         if {![dict get $response ok]} {
             error [dict get $response error]
         }
@@ -194,17 +196,15 @@ oo::class create ::tclwire::ApplicationDispatcher {
         dict set request_descriptor application_pool_key $key
         dict set request_descriptor application_descriptor $descriptor
         if {[catch {
-            ::thread::send -async $worker_id [list \
-                ::tclwire::cga::execute \
-                $key \
-                [dict get $descriptor class] \
-                $descriptor \
-                $request_descriptor]
+            ::thread::send -async $worker_id \
+                [list ::tclwire::cga::execute   $key \
+                                                [dict get $descriptor class] \
+                                                $descriptor \
+                                                $request_descriptor]
         } message options]} {
-            catch {::tclwire::tpba request [dict create \
-                operation release_worker \
-                pool_key $key \
-                worker_id $worker_id]}
+            catch {::tclwire::tpba request [dict create operation   release_worker \
+                                                        pool_key    $key \
+                                                        worker_id   $worker_id]}
             return -options $options $message
         }
         return [dict create application_id  $application_id \
