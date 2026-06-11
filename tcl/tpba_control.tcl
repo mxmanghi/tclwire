@@ -77,10 +77,10 @@ namespace eval ::tclwire::tpba {
         return [start]
     }
 
-    proc request {request} {
+    proc request {command} {
         set tid [require_thread]
         return [::thread::send $tid \
-            [list ::tclwire::tpba::agent_request $request]]
+            [list ::tclwire::tpba::agent_execute_command $command]]
     }
 
     proc require_thread {} {

@@ -14,9 +14,8 @@ namespace eval ::tclwire::cga {
         pool_key application_class application_descriptor request_descriptor
     } {
         set worker_id [::thread::id]
-        ::tclwire::accounting change_thread_status \
-            $worker_id running [list $application_class \
-                [dict get $request_descriptor transaction_id]]
+        ::tclwire::accounting change_thread_status $worker_id running \
+                [list $application_class [dict get $request_descriptor transaction_id]]
 
         set application {}
         try {

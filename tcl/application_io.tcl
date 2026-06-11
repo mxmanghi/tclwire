@@ -88,8 +88,18 @@ namespace eval ::tclwire::io {
         return $event
     }
 
-    proc out {data} {
-        send_event output $data
+    proc response {status reason headers {body_mode text} {encoding {}}} {
+        send_event response {} [dict create \
+            status $status \
+            reason $reason \
+            headers $headers \
+            body_mode $body_mode \
+            encoding $encoding]
+        return
+    }
+
+    proc out {data {body_mode text}} {
+        send_event output $data [dict create body_mode $body_mode]
         return
     }
 
@@ -128,7 +138,7 @@ namespace eval ::tclwire::io {
         return
     }
 
-    namespace export begin end context out puts flush complete fail
+    namespace export begin end context response out puts flush complete fail
     namespace ensemble create
 }
 

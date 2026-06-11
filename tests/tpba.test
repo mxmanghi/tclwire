@@ -132,15 +132,15 @@ test tpba-1.4 {resize updates both policy and ThreadMaster limit} -body {
     }
 } -result {5 5}
 
-test tpba-1.5 {dictionary request API preserves correlation identifiers} -body {
+test tpba-1.5 {dictionary command API preserves correlation identifiers} -body {
     set broker [::tclwire::tpba_test::new_broker]
     try {
-        set create_response [$broker handle_request [dict create \
+        set create_response [$broker execute_command [dict create \
             correlation_id request-1 \
             operation create_pool \
             pool_key app:docs \
             worker_script {worker script}]]
-        set list_response [$broker handle_request [dict create \
+        set list_response [$broker execute_command [dict create \
             correlation_id request-2 \
             operation list_pools]]
         list \
@@ -152,10 +152,10 @@ test tpba-1.5 {dictionary request API preserves correlation identifiers} -body {
     }
 } -result {1 request-1 app:docs}
 
-test tpba-1.6 {dictionary request API returns structured failures} -body {
+test tpba-1.6 {dictionary command API returns structured failures} -body {
     set broker [::tclwire::tpba_test::new_broker]
     try {
-        set response [$broker handle_request [dict create \
+        set response [$broker execute_command [dict create \
             correlation_id request-3 \
             operation acquire_worker \
             pool_key missing]]
@@ -196,10 +196,10 @@ test tpba-1.8 {connection-agent descriptors produce canonical pool keys} -body {
     }
 } -result {connection:http connection:ftp}
 
-test tpba-1.9 {request API derives a connection-agent pool key} -body {
+test tpba-1.9 {command API derives a connection-agent pool key} -body {
     set broker [::tclwire::tpba_test::new_broker]
     try {
-        set response [$broker handle_request [dict create \
+        set response [$broker execute_command [dict create \
             operation pool_key \
             descriptor [dict create kind connection_agent protocol http]]]
         list [dict get $response ok] [dict get $response result]

@@ -18,13 +18,13 @@ namespace eval ::tclwire::tpba {
         return [::thread::id]
     }
 
-    proc agent_request {request} {
+    proc agent_execute_command {command} {
         variable broker
 
         if {$broker eq {}} {
             error "TPBA agent is not initialized"
         }
-        return [$broker handle_request $request]
+        return [$broker execute_command $command]
     }
 
     proc agent_shutdown {} {

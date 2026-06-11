@@ -123,7 +123,7 @@ namespace eval ::tclwire::http::errors {
             status $status \
             reason [dict get $entry reason] \
             body [expand [dict get $entry body] $context] \
-            headers [list "Content-Type: text/html; charset=utf-8"]]
+            headers {}]
     }
 
     namespace export load messages message response

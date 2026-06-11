@@ -14,7 +14,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
     variable protocol_session application_dispatcher closed channel
-    variable next_transaction_id
+    variable next_transaction_id default_encoding
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -34,6 +34,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set protocol_session [::tclwire::HttpProtocolSession new]
         set application_dispatcher \
             [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
+        set default_application [dict get $options(-applicationconfig) default_application]
+        set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
         set next_transaction_id 0
         my start
     }
@@ -97,6 +99,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
         dict set descriptor connection_thread_id [::thread::id]
         dict set descriptor connection_agent_id [self]
         dict set descriptor response_body {}
+        dict set descriptor response_status 200
+        dict set descriptor response_reason OK
+        dict set descriptor response_headers {}
+        dict set descriptor response_body_mode text
         dict set descriptor output_sequence 0
         my begin_transaction $transaction_id $descriptor
         if {[catch {
@@ -114,6 +120,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
             [dict get $dispatch_info application_id]
         dict set descriptor application_pool_key \
             [dict get $dispatch_info pool_key]
+        dict set descriptor response_encoding \
+            [dict get $dispatch_info encoding]
         my update_transaction $transaction_id $descriptor
         return $descriptor
     }
@@ -133,7 +141,32 @@ oo::class create ::tclwire::HttpConnectionAgent {
         dict set descriptor output_sequence $expected
 
         switch -exact -- [dict get $event type] {
+            response {
+                if {[dict get $descriptor response_body] ne {}} {
+                    my finish_transaction $transaction_id
+                    my send_error 500
+                    return
+                }
+                set flags [dict get $event flags]
+                foreach field {status reason headers body_mode} {
+                    dict set descriptor response_$field [dict get $flags $field]
+                }
+                if {[dict get $flags encoding] ne {}} {
+                    dict set descriptor response_encoding \
+                        [dict get $flags encoding]
+                }
+                my update_transaction $transaction_id $descriptor
+            }
             output {
+                set body_mode [dict get $descriptor response_body_mode]
+                if {[dict exists $event flags body_mode]} {
+                    set body_mode [dict get $event flags body_mode]
+                }
+                if {$body_mode ne [dict get $descriptor response_body_mode]} {
+                    my finish_transaction $transaction_id
+                    my send_error 500
+                    return
+                }
                 dict append descriptor response_body [dict get $event data]
                 my update_transaction $transaction_id $descriptor
             }
@@ -142,8 +175,14 @@ oo::class create ::tclwire::HttpConnectionAgent {
             }
             complete {
                 set body [dict get $descriptor response_body]
+                set content_encoding [dict get $descriptor response_encoding]
+                set status [dict get $descriptor response_status]
+                set reason [dict get $descriptor response_reason]
+                set headers [dict get $descriptor response_headers]
+                set body_mode [dict get $descriptor response_body_mode]
                 my finish_transaction $transaction_id
-                set response [$protocol_session build_response 200 OK $body]
+                set response [$protocol_session build_response \
+                    $status $reason $body $content_encoding $headers $body_mode]
                 my write_and_close $response
             }
             error {
@@ -164,6 +203,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             [dict get $error_response status] \
             [dict get $error_response reason] \
             [dict get $error_response body] \
+            $default_encoding \
             [dict get $error_response headers]]
         my write_and_close $response
     }

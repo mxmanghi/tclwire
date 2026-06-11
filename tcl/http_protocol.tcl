@@ -78,16 +78,33 @@ oo::class create ::tclwire::HttpProtocolSession {
             body_size [string length $body]]
     }
 
-    method build_response {status reason body {headers {}}} {
+    method build_response {
+        status reason body content_encoding {headers {}} {body_mode text}
+    } {
+        if {$body_mode eq "binary"} {
+            set body_bytes $body
+        } elseif {$body_mode eq "text"} {
+            set body_bytes [encoding convertto $content_encoding $body]
+        } else {
+            error "unknown HTTP response body mode: $body_mode"
+        }
         set response_headers [list \
             "HTTP/1.1 $status $reason" \
             "Connection: close" \
-            "Content-Length: [string length $body]"]
+            "Content-Length: [string length $body_bytes]"]
         if {![regexp -nocase {^Content-Type:} [join $headers "\n"]]} {
-            lappend response_headers "Content-Type: text/html; charset=utf-8"
+            if {$body_mode eq "binary"} {
+                lappend response_headers "Content-Type: application/octet-stream"
+            } else {
+                lappend response_headers \
+                    "Content-Type: text/html; charset=$content_encoding"
+            }
         }
         set response_headers [concat $response_headers $headers]
-        return "[join $response_headers "\r\n"]\r\n\r\n$body"
+        set response [encoding convertto ascii \
+            "[join $response_headers "\r\n"]\r\n\r\n"]
+        append response $body_bytes
+        return $response
     }
 }
 

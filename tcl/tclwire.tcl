@@ -138,6 +138,7 @@ namespace eval ::tclwire::runtime {
         set custom_services 0
         set ports $protocol_defaults
         set default_application default
+        set default_encoding utf-8
 
         for {set i 0} {$i < [llength $argv]} {incr i} {
             set option [lindex $argv $i]
@@ -212,6 +213,7 @@ namespace eval ::tclwire::runtime {
                                  package    tclwire::application    \
                                  hosts      {localhost 127.0.0.1}   \
                                  docroot    $docroot                \
+                                 encoding   $default_encoding       \
                                  pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
 
         if {!$custom_services} {
@@ -234,6 +236,7 @@ namespace eval ::tclwire::runtime {
                             host         $host \
                             quiet        $quiet \
                             debug        $debug \
+                            encoding     $default_encoding \
                             docroot      $docroot \
                             ftproot      $ftproot \
                             certfile     $certfile \

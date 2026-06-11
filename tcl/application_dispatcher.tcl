@@ -24,6 +24,10 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {[dict exists $application_config docroot]} {
             set default_docroot [dict get $application_config docroot]
         }
+        set default_encoding {}
+        if {[dict exists $application_config encoding]} {
+            set default_encoding [dict get $application_config encoding]
+        }
 
         dict for {application_id descriptor} $applications {
             if {![dict exists $descriptor docroot]} {
@@ -34,6 +38,12 @@ oo::class create ::tclwire::ApplicationDispatcher {
             }
             dict set descriptor docroot \
                 [file normalize [dict get $descriptor docroot]]
+            if {![dict exists $descriptor encoding]} {
+                if {$default_encoding eq {}} {
+                    error "application '$application_id' is missing encoding"
+                }
+                dict set descriptor encoding $default_encoding
+            }
             dict set applications $application_id $descriptor
         }
         my validate
@@ -48,10 +58,13 @@ oo::class create ::tclwire::ApplicationDispatcher {
             error "default application is not registered: $default_application"
         }
         dict for {application_id descriptor} $applications {
-            foreach field {class package hosts docroot} {
+            foreach field {class package hosts docroot encoding} {
                 if {![dict exists $descriptor $field]} {
                     error "application '$application_id' is missing $field"
                 }
+            }
+            if {[dict get $descriptor encoding] ni [encoding names]} {
+                error "application '$application_id' has an unknown encoding: [dict get $descriptor encoding]"
             }
         }
         return
@@ -131,7 +144,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             }
 
             # asking the TPBA to create a worker pool associated to the application
-            # to run the script stored in the application descriptor
+            # which will have the script composed by [worker_script]
 
             set response [::tclwire::tpba request \
                         [dict create operation      create_pool  \
@@ -196,7 +209,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
         }
         return [dict create application_id  $application_id \
                             pool_key        $key \
-                            worker_id       $worker_id]
+                            worker_id       $worker_id \
+                            encoding        [dict get $descriptor encoding]]
     }
 }
 

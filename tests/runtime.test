@@ -25,8 +25,10 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config startservers] \
         [dict get $config services] \
         [dict get $config default_application] \
+        [dict get $config encoding] \
         [dict get $config applications default hosts] \
         [dict get $config applications default docroot] \
+        [dict get $config applications default encoding] \
         [dict get $config logfile] \
         [dict get $config help]
 } -result [list \
@@ -34,8 +36,10 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     http \
     [list [dict create protocol http port 8990]] \
     default \
+    utf-8 \
     {localhost 127.0.0.1} \
     [::tclwire::support default_doc_root] \
+    utf-8 \
     [file normalize /tmp/tclwire.log] \
     0]
 

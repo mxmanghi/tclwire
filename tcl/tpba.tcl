@@ -291,56 +291,56 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         return
     }
 
-    method request_value {request name {default_marker __TPBA_REQUIRED__}} {
-        if {[dict exists $request $name]} {
-            return [dict get $request $name]
+    method command_value {command name {default_marker __TPBA_REQUIRED__}} {
+        if {[dict exists $command $name]} {
+            return [dict get $command $name]
         }
         if {$default_marker ne "__TPBA_REQUIRED__"} {
             return $default_marker
         }
-        error "missing TPBA request field: $name"
+        error "missing TPBA command field: $name"
     }
 
-    method handle_request {request} {
-        if {[catch {dict size $request}]} {
-            error "TPBA request must be a dictionary"
+    method execute_command {command} {
+        if {[catch {dict size $command}]} {
+            error "TPBA command must be a dictionary"
         }
 
-        set correlation_id [my request_value $request correlation_id {}]
+        set correlation_id [my command_value $command correlation_id {}]
         if {[catch {
-            set operation [my request_value $request operation]
+            set operation [my command_value $command operation]
             switch -exact -- $operation {
                 create_pool {
-                    set result [my create_pool  [my request_value $request pool_key {}]     \
-                                                [my request_value $request worker_script]   \
-                                                [my request_value $request policy {}]       \
-                                                [my request_value $request descriptor {}]]
+                    set result [my create_pool  [my command_value $command pool_key {}]     \
+                                                [my command_value $command worker_script]   \
+                                                [my command_value $command policy {}]       \
+                                                [my command_value $command descriptor {}]]
                 }
                 pool_key {
-                    set result [my pool_key [my request_value $request descriptor]]
+                    set result [my pool_key [my command_value $command descriptor]]
                 }
                 destroy_pool {
-                    set result [my destroy_pool [my request_value $request pool_key]]
+                    set result [my destroy_pool [my command_value $command pool_key]]
                 }
                 acquire_worker {
-                    set result [my acquire_worker [my request_value $request pool_key]]
+                    set result [my acquire_worker [my command_value $command pool_key]]
                 }
                 release_worker {
-                    set result [my release_worker [my request_value $request pool_key] \
-                                                  [my request_value $request worker_id]]
+                    set result [my release_worker [my command_value $command pool_key] \
+                                                  [my command_value $command worker_id]]
                 }
                 resize_pool {
-                    set result [my resize_pool [my request_value $request pool_key] \
-                                               [my request_value $request limits]]
+                    set result [my resize_pool [my command_value $command pool_key] \
+                                               [my command_value $command limits]]
                 }
                 pool_status {
-                    set result [my pool_status [my request_value $request pool_key]]
+                    set result [my pool_status [my command_value $command pool_key]]
                 }
                 list_pools {
                     set result [my list_pools]
                 }
                 shutdown_pool {
-                    set result [my shutdown_pool [my request_value $request pool_key]]
+                    set result [my shutdown_pool [my command_value $command pool_key]]
                 }
                 shutdown_all {
                     my shutdown_all
@@ -362,7 +362,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                             result          $result]
     }
 
-    unexport normalize_pool_key normalize_policy pool_family require_pool request_value
+    unexport command_value normalize_pool_key normalize_policy pool_family require_pool
 }
 
 if {[info commands ::tclwire::TPBA] eq {}} {

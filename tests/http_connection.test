@@ -1,5 +1,6 @@
 package require tcltest
 namespace import ::tcltest::*
+package require fileutil
 
 set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
@@ -86,6 +87,38 @@ test http-protocol-1.3 {uploaded data is retained in the request descriptor} -bo
     }
 } -result {in_memory 7 payload}
 
+test http-protocol-1.4 {UTF-8 response lengths count encoded bytes} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set response [$protocol build_response 200 OK {caffè} utf-8]
+        set separator [string first "\r\n\r\n" $response]
+        set headers [string range $response 0 [expr {$separator - 1}]]
+        set body_bytes [string range $response [expr {$separator + 4}] end]
+        list \
+            [regexp {Content-Length: 6} $headers] \
+            [encoding convertfrom utf-8 $body_bytes]
+    } finally {
+        $protocol destroy
+    }
+} -result {1 caffè}
+
+test http-protocol-1.5 {response framing uses the configured encoding} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set response [$protocol build_response 200 OK {caffè} iso8859-1]
+        set separator [string first "\r\n\r\n" $response]
+        set headers [string range $response 0 [expr {$separator - 1}]]
+        set body_bytes [string range $response [expr {$separator + 4}] end]
+        list \
+            [regexp {Content-Length: 5} $headers] \
+            [regexp -nocase \
+                {Content-Type: text/html; charset=iso8859-1} $headers] \
+            [encoding convertfrom iso8859-1 $body_bytes]
+    } finally {
+        $protocol destroy
+    }
+} -result {1 1 caffè}
+
 test http-connection-agent-1.1 {HTTP agent specializes the generic connection agent} -body {
     list \
         [info class superclasses ::tclwire::HttpConnectionAgent] \
@@ -103,28 +136,31 @@ test http-connection-agent-1.1 {HTTP agent specializes the generic connection ag
             [info class methods ::tclwire::ConnectionAgent -all]}]
 } -result {::tclwire::ConnectionAgent 1 1 1 1 1 1}
 
-test http-connection-1.3 {each accepted connection receives the dummy HTML response} -body {
+test http-connection-1.3 {each accepted connection receives the document root index} -body {
     ::tclwire::runtime start [list \
+        --docroot $project_root \
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
-        "GET /any/path?argument=value HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+        "GET /?argument=value HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
 
     set separator [string first "\r\n\r\n" $response]
     set headers [string range $response 0 [expr {$separator - 1}]]
-    set body [string range $response [expr {$separator + 4}] end]
+    set body_bytes [string range $response [expr {$separator + 4}] end]
+    set expected [::fileutil::cat -encoding utf-8 \
+        [file join $project_root index.html]]
     list \
         [string match "HTTP/1.1 200 OK*" $headers] \
         [regexp -nocase {Content-Type: text/html; charset=utf-8} $headers] \
-        [regexp {Content-Length: 105} $headers] \
-        $body
+        [regexp "Content-Length: [string length \
+            [encoding convertto utf-8 $expected]]" $headers] \
+        [expr {[encoding convertfrom utf-8 $body_bytes] eq $expected}]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
-} -result [list \
-    1 1 1 \
-    {<html><head><title>Hello World</title></head><body><h2>Hello world from <b>TclWire</b></h2></body></html>}]
+} -result {1 1 1 1}
 
 test http-connection-1.4 {malformed request lines receive a protocol error} -body {
     ::tclwire::runtime start [list \
+        --docroot $project_root \
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
         "NOT AN HTTP REQUEST\r\nHost: localhost\r\n\r\n"]
@@ -139,6 +175,7 @@ test http-connection-1.4 {malformed request lines receive a protocol error} -bod
 
 test http-connection-1.5 {sequential connections reuse a TPBA pool worker} -body {
     ::tclwire::runtime start [list \
+        --docroot $project_root \
         --logfile $::tclwire::http_connection_test::logfile]
     set reactor [::tclwire::runtime transport_reactor]
 
@@ -168,9 +205,10 @@ test http-connection-1.5 {sequential connections reuse a TPBA pool worker} -body
 
 test http-connection-1.6 {a request without Host uses the default application} -body {
     ::tclwire::runtime start [list \
+        --docroot $project_root \
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
-        "GET /without-host HTTP/1.0\r\nConnection: close\r\n\r\n"]
+        "GET / HTTP/1.0\r\nConnection: close\r\n\r\n"]
     string match "HTTP/1.1 200 OK*" $response
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
@@ -178,6 +216,7 @@ test http-connection-1.6 {a request without Host uses the default application} -
 
 test http-connection-1.7 {an unknown Host is not dispatched to the default application} -body {
     ::tclwire::runtime start [list \
+        --docroot $project_root \
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
         "GET / HTTP/1.1\r\nHost: unknown.example\r\nConnection: close\r\n\r\n"]
@@ -187,6 +226,56 @@ test http-connection-1.7 {an unknown Host is not dispatched to the default appli
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
 } -result {1 1}
+
+test http-connection-1.8 {custom document roots preserve UTF-8 content} -body {
+    set docroot [file join [temporaryDirectory] tclwire-docroot-[pid]]
+    set expected "Caff\u00e8 \u2014 \u6771\u4eac"
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot index.html] $expected
+
+    ::tclwire::runtime start [list \
+        --docroot $docroot \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body_bytes [string range $response [expr {$separator + 4}] end]
+    list \
+        [regexp {Content-Length: 17} $headers] \
+        [expr {[encoding convertfrom utf-8 $body_bytes] eq $expected}]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $docroot}
+} -result {1 1}
+
+test http-connection-1.9 {static binary files are preserved byte for byte} -body {
+    set docroot [file join [temporaryDirectory] tclwire-docroot-[pid]]
+    file mkdir [file join $docroot assets]
+    set expected [binary format H* 0001027f80feff89504e470d0a]
+    ::fileutil::writeFile -translation binary \
+        [file join $docroot assets sample.bin] $expected
+
+    ::tclwire::runtime start [list \
+        --docroot $docroot \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET /assets/sample.bin HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body_bytes [string range $response [expr {$separator + 4}] end]
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        [regexp -nocase \
+            {Content-Type: application/octet-stream} $headers] \
+        [regexp "Content-Length: [string length $expected]" $headers] \
+        [expr {$body_bytes eq $expected}]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $docroot}
+} -result {1 1 1 1}
 
 ::tclwire::http_connection_test::cleanup
 cleanupTests
