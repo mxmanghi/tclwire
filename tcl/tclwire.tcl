@@ -317,6 +317,15 @@ namespace eval ::tclwire::runtime {
                             -agentpackage tclwire::ftp::connection_agent \
                             -agentargs [list -config $config]]
                     }
+                    proxy {
+                        set reactor [::tclwire::TransportReactor new \
+                            -host [dict get $config host] \
+                            -port [dict get $service port] \
+                            -protocol proxy \
+                            -agentclass ::tclwire::ProxyConnectionAgent \
+                            -agentpackage tclwire::proxy::connection_agent \
+                            -agentargs [list -config $config]]
+                    }
                     default {
                         error "configured protocol is not implemented: $protocol"
                     }

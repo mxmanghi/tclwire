@@ -148,10 +148,10 @@ test runtime-1.7 {runtime stop clears endpoints and terminates both agents} -bod
     ::tclwire::runtime_test::cleanup
 } -result {0 {} {} 0 0}
 
-test runtime-1.8 {HTTP and FTP listeners use distinct reactor pools} -body {
+test runtime-1.8 {configured services use distinct reactor pools} -body {
     set ftp_root [file join [temporaryDirectory] tclwire-runtime-ftp-[pid]]
     ::tclwire::runtime start [list \
-        --startservers http,ftp \
+        --startservers http,ftp,proxy \
         --ftproot $ftp_root \
         --noftp-user-check \
         --logfile $::tclwire::runtime_test::logfile]
@@ -160,6 +160,7 @@ test runtime-1.8 {HTTP and FTP listeners use distinct reactor pools} -body {
         [lsort [dict keys [::tclwire::runtime transport_reactors]]] \
         [[::tclwire::runtime transport_reactor http] pool_key] \
         [[::tclwire::runtime transport_reactor ftp] pool_key] \
+        [[::tclwire::runtime transport_reactor proxy] pool_key] \
         [dict get $pools result] \
         [file isfile [file join $ftp_root index.html]] \
         [file isfile [file join $ftp_root tcl9.png]]
@@ -167,10 +168,11 @@ test runtime-1.8 {HTTP and FTP listeners use distinct reactor pools} -body {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $ftp_root}
 } -result [list \
-    {ftp http} \
+    {ftp http proxy} \
     connection:http \
     connection:ftp \
-    {app:default connection:ftp connection:http} \
+    connection:proxy \
+    {app:default connection:ftp connection:http connection:proxy} \
     1 1]
 
 ::tclwire::runtime_test::cleanup

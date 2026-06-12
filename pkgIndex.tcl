@@ -10,6 +10,11 @@ package ifneeded tclwire::http::protocol 0.1 \
 package ifneeded tclwire::ftp::protocol 0.1 \
     [list source [file join $dir tcl ftp_protocol.tcl]]
 
+package ifneeded tclwire::proxy::protocol 0.1 [subst {
+    package require tclwire::http::protocol 0.1
+    source [list [file join $dir tcl proxy_protocol.tcl]]
+}]
+
 package ifneeded tclwire::http::errors 0.1 \
     [list source [file join $dir tcl http_error_messages.tcl]]
 
@@ -49,6 +54,13 @@ package ifneeded tclwire::ftp::connection_agent 0.1 [subst {
     package require tclwire::ftp::protocol 0.1
     package require tclwire::logger::client 0.1
     source [list [file join $dir tcl ftp_connection_agent.tcl]]
+}]
+
+package ifneeded tclwire::proxy::connection_agent 0.1 [subst {
+    package require tclwire::connection_agent 0.1
+    package require tclwire::proxy::protocol 0.1
+    package require tclwire::logger::client 0.1
+    source [list [file join $dir tcl proxy_connection_agent.tcl]]
 }]
 
 package ifneeded tclwire::transport_reactor 0.1 \
