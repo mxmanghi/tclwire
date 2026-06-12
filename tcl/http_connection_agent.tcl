@@ -7,6 +7,7 @@ package require tclwire::connection_agent 0.1
 package require tclwire::http::protocol 0.1
 package require tclwire::http::errors 0.1
 package require tclwire::application_dispatcher 0.1
+package require tclwire::logger::client 0.1
 
 namespace eval ::tclwire {}
 
@@ -90,6 +91,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {[catch {
             set request_d [my build_request_descriptor $request_data]
         }]} {
+            my log_request {} 400 0
             my send_error 400
             return {}
         }
@@ -110,8 +112,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
         } message]} {
             my finish_transaction $transaction_id
             if {[string match "no application is configured for Host *" $message]} {
+                my log_request $request_d 404 0
                 my send_error 404 [dict create path [dict get $request_d path]]
             } else {
+                my log_request $request_d 503 0
                 my send_error 503
             }
             return {}
@@ -183,6 +187,13 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 my finish_transaction $transaction_id
                 set response [$protocol_session build_response \
                     $status $reason $body $content_encoding $headers $body_mode]
+                if {$body_mode eq "binary"} {
+                    set body_bytes [string length $body]
+                } else {
+                    set body_bytes [string length \
+                        [encoding convertto $content_encoding $body]]
+                }
+                my log_request $descriptor $status $body_bytes
                 my write_and_close $response
             }
             error {
@@ -208,9 +219,29 @@ oo::class create ::tclwire::HttpConnectionAgent {
         my write_and_close $response
     }
 
+    method log_request {descriptor status bytes} {
+        set method ?
+        set path ?
+        set remote_host [dict get [my peer] host]
+        if {$descriptor ne {}} {
+            foreach field {method path remote_host} {
+                if {[dict exists $descriptor $field]} {
+                    set $field [dict get $descriptor $field]
+                }
+            }
+        }
+        catch {
+            ::tclwire::logger log http \
+                "method=[::tclwire::logger log_value $method] path=[::tclwire::logger log_value $path] status=$status bytes=$bytes remote=[::tclwire::logger log_value $remote_host]"
+        }
+        return
+    }
+
     method request_info {} {
         return [my active_transaction]
     }
+
+    unexport log_request
 }
 
 package provide tclwire::http::connection_agent 0.1

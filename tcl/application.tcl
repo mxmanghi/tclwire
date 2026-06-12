@@ -148,8 +148,7 @@ oo::class create ::tclwire::CApplication {
 
         ::tclwire::io response 200 OK \
             [list "Content-Type: [my content_type $local_path]"] binary
-        ::tclwire::io out \
-            [::fileutil::cat -translation binary $local_path] binary
+        ::tclwire::io out [::fileutil::cat -translation binary $local_path] binary
         return
     }
 

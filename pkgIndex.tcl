@@ -7,38 +7,49 @@ package ifneeded tclwire::support 0.1 \
 package ifneeded tclwire::http::protocol 0.1 \
     [list source [file join $dir tcl http_protocol.tcl]]
 
+package ifneeded tclwire::ftp::protocol 0.1 \
+    [list source [file join $dir tcl ftp_protocol.tcl]]
+
 package ifneeded tclwire::http::errors 0.1 \
     [list source [file join $dir tcl http_error_messages.tcl]]
 
 package ifneeded tclwire::application::io 0.1 \
     [list source [file join $dir tcl application_io.tcl]]
 
-package ifneeded tclwire::application 0.1 "
+package ifneeded tclwire::application 0.1 [subst {
     package require tclwire::application::io 0.1
     source [list [file join $dir tcl application.tcl]]
-"
+}]
 
-package ifneeded tclwire::content_generator_agent 0.1 "
+package ifneeded tclwire::content_generator_agent 0.1 [subst {
     package require tclwire::application::io 0.1
     package require tclwire::tpba::control 0.1
     source [list [file join $dir tcl content_generator_agent.tcl]]
-"
+}]
 
-package ifneeded tclwire::application_dispatcher 0.1 "
+package ifneeded tclwire::application_dispatcher 0.1 [subst {
     package require tclwire::tpba::control 0.1
     source [list [file join $dir tcl application_dispatcher.tcl]]
-"
+}]
 
 package ifneeded tclwire::connection_agent 0.1 \
     [list source [file join $dir tcl connection_agent.tcl]]
 
-package ifneeded tclwire::http::connection_agent 0.1 "
+package ifneeded tclwire::http::connection_agent 0.1 [subst {
     package require tclwire::connection_agent 0.1
     package require tclwire::http::protocol 0.1
     package require tclwire::http::errors 0.1
     package require tclwire::application_dispatcher 0.1
+    package require tclwire::logger::client 0.1
     source [list [file join $dir tcl http_connection_agent.tcl]]
-"
+}]
+
+package ifneeded tclwire::ftp::connection_agent 0.1 [subst {
+    package require tclwire::connection_agent 0.1
+    package require tclwire::ftp::protocol 0.1
+    package require tclwire::logger::client 0.1
+    source [list [file join $dir tcl ftp_connection_agent.tcl]]
+}]
 
 package ifneeded tclwire::transport_reactor 0.1 \
     [list source [file join $dir tcl transport_reactor.tcl]]
@@ -46,33 +57,33 @@ package ifneeded tclwire::transport_reactor 0.1 \
 package ifneeded tclwire::logger::client 0.1 \
     [list source [file join $dir tcl logger_client.tcl]]
 
-package ifneeded tclwire::logger::control 0.1 "
+package ifneeded tclwire::logger::control 0.1 [subst {
     package require tclwire::accounting 1.2
     package require tclwire::logger::client 0.1
     source [list [file join $dir tcl logger_control.tcl]]
-"
+}]
 
-package ifneeded tclwire::logger 0.1 "
+package ifneeded tclwire::logger 0.1 [subst {
     package require tclwire::logger::control 0.1
     package provide tclwire::logger 0.1
-"
+}]
 
-package ifneeded tclwire::threadpool 2.0 "
+package ifneeded tclwire::threadpool 2.0 [subst {
     package require tclwire::accounting 1.2
     source [list [file join $dir tcl thread_master.tcl]]
-"
+}]
 
-package ifneeded tclwire::tpba 0.1 "
+package ifneeded tclwire::tpba 0.1 [subst {
     package require tclwire::threadpool 2.0
     source [list [file join $dir tcl tpba.tcl]]
-"
+}]
 
-package ifneeded tclwire::tpba::control 0.1 "
+package ifneeded tclwire::tpba::control 0.1 [subst {
     package require tclwire::accounting 1.2
     source [list [file join $dir tcl tpba_control.tcl]]
-"
+}]
 
-package ifneeded tclwire::runtime 0.1 "
+package ifneeded tclwire::runtime 0.1 [subst {
     package require tclwire::support 0.1
     package require tclwire::accounting 1.2
     package require tclwire::tpba::control 0.1
@@ -80,4 +91,4 @@ package ifneeded tclwire::runtime 0.1 "
     package require tclwire::application_dispatcher 0.1
     package require tclwire::transport_reactor 0.1
     source [list [file join $dir tcl tclwire.tcl]]
-"
+}]

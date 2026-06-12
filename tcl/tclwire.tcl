@@ -2,7 +2,7 @@
 #
 # tclwire.tcl --
 #
-# TclWire runtime bootstrap with the initial hardcoded HTTP Transport Reactor.
+# TclWire runtime bootstrap and configured protocol Transport Reactors.
 
 set ::tclwire_runtime_root [file dirname [file dirname [file normalize [info script]]]]
 if {$::tclwire_runtime_root ni $::auto_path} {
@@ -22,7 +22,7 @@ namespace eval ::tclwire::runtime {
     variable active 0
     variable active_config {}
     variable shutdown_requested 0
-    variable transport_reactor {}
+    variable transport_reactors [dict create]
     variable application_dispatcher {}
     variable protocol_defaults [dict create \
         http 8990 \
@@ -259,7 +259,7 @@ namespace eval ::tclwire::runtime {
         variable active
         variable active_config
         variable shutdown_requested
-        variable transport_reactor
+        variable transport_reactors
         variable application_dispatcher
 
         if {$active} {
@@ -272,6 +272,7 @@ namespace eval ::tclwire::runtime {
         }
 
         ::tclwire::accounting initialize
+        set transport_reactors [dict create]
         set logger_started 0
         set tpba_started 0
         try {
@@ -282,18 +283,53 @@ namespace eval ::tclwire::runtime {
             ::tclwire::tpba start
             set tpba_started 1
 
-            set application_dispatcher [::tclwire::ApplicationDispatcher new $config]
-            $application_dispatcher start
+            set configured_protocols {}
+            foreach service [dict get $config services] {
+                set protocol [dict get $service protocol]
+                if {$protocol in $configured_protocols} {
+                    error "multiple listeners for protocol '$protocol' are not supported"
+                }
+                lappend configured_protocols $protocol
 
-            set transport_reactor \
-                [::tclwire::TransportReactor new -agentargs [list -applicationconfig $config]]
-            $transport_reactor start
+                switch -exact -- $protocol {
+                    http {
+                        if {$application_dispatcher eq {}} {
+                            set application_dispatcher \
+                                [::tclwire::ApplicationDispatcher new $config]
+                            $application_dispatcher start
+                        }
+                        set reactor [::tclwire::TransportReactor new \
+                            -host [dict get $config host] \
+                            -port [dict get $service port] \
+                            -protocol http \
+                            -agentclass ::tclwire::HttpConnectionAgent \
+                            -agentpackage tclwire::http::connection_agent \
+                            -agentargs [list -applicationconfig $config]]
+                    }
+                    ftp {
+                        ::tclwire::support prepare_ftp_root \
+                            [dict get $config ftproot]
+                        set reactor [::tclwire::TransportReactor new \
+                            -host [dict get $config host] \
+                            -port [dict get $service port] \
+                            -protocol ftp \
+                            -agentclass ::tclwire::FtpConnectionAgent \
+                            -agentpackage tclwire::ftp::connection_agent \
+                            -agentargs [list -config $config]]
+                    }
+                    default {
+                        error "configured protocol is not implemented: $protocol"
+                    }
+                }
+                dict set transport_reactors $protocol $reactor
+                $reactor start
+            }
 
         } on error {message options} {
-            if {$transport_reactor ne {}} {
-                catch {$transport_reactor destroy}
-                set transport_reactor {}
+            dict for {protocol reactor} $transport_reactors {
+                catch {$reactor destroy}
             }
+            set transport_reactors [dict create]
             if {$application_dispatcher ne {}} {
                 catch {$application_dispatcher destroy}
                 set application_dispatcher {}
@@ -317,13 +353,13 @@ namespace eval ::tclwire::runtime {
         variable active
         variable active_config
         variable shutdown_requested
-        variable transport_reactor
+        variable transport_reactors
         variable application_dispatcher
 
-        if {$transport_reactor ne {}} {
-            catch {$transport_reactor destroy}
-            set transport_reactor {}
+        dict for {protocol reactor} $transport_reactors {
+            catch {$reactor destroy}
         }
+        set transport_reactors [dict create]
         if {$application_dispatcher ne {}} {
             catch {$application_dispatcher destroy}
             set application_dispatcher {}
@@ -355,9 +391,17 @@ namespace eval ::tclwire::runtime {
         return $active_config
     }
 
-    proc transport_reactor {} {
-        variable transport_reactor
-        return $transport_reactor
+    proc transport_reactor {{protocol http}} {
+        variable transport_reactors
+        if {![dict exists $transport_reactors $protocol]} {
+            return {}
+        }
+        return [dict get $transport_reactors $protocol]
+    }
+
+    proc transport_reactors {} {
+        variable transport_reactors
+        return $transport_reactors
     }
 
     proc application_dispatcher {} {
@@ -389,7 +433,7 @@ namespace eval ::tclwire::runtime {
     }
 
     namespace export usage  parse_args prepare_config start stop is_running \
-                     config transport_reactor request_shutdown run implemented_protocols \
+                     config transport_reactor transport_reactors request_shutdown run implemented_protocols \
                      default_protocols application_dispatcher
     namespace ensemble create
 }

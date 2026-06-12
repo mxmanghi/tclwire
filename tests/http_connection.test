@@ -19,6 +19,16 @@ namespace eval ::tclwire::http_connection_test {
         catch {file delete -force $logfile}
     }
 
+    proc log_contents {} {
+        variable logfile
+        set channel [open $logfile r]
+        try {
+            return [read $channel]
+        } finally {
+            close $channel
+        }
+    }
+
     proc request {request} {
         set chan [socket 127.0.0.1 8990]
         chan configure $chan -blocking 0 -buffering none -translation binary
@@ -148,15 +158,18 @@ test http-connection-1.3 {each accepted connection receives the document root in
     set body_bytes [string range $response [expr {$separator + 4}] end]
     set expected [::fileutil::cat -encoding utf-8 \
         [file join $project_root index.html]]
+    ::tclwire::runtime stop
+    set log [::tclwire::http_connection_test::log_contents]
     list \
         [string match "HTTP/1.1 200 OK*" $headers] \
         [regexp -nocase {Content-Type: text/html; charset=utf-8} $headers] \
         [regexp "Content-Length: [string length \
             [encoding convertto utf-8 $expected]]" $headers] \
-        [expr {[encoding convertfrom utf-8 $body_bytes] eq $expected}]
+        [expr {[encoding convertfrom utf-8 $body_bytes] eq $expected}] \
+        [regexp {http method=GET path=/ status=200 bytes=[0-9]+ remote=127\.0\.0\.1} $log]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
-} -result {1 1 1 1}
+} -result {1 1 1 1 1}
 
 test http-connection-1.4 {malformed request lines receive a protocol error} -body {
     ::tclwire::runtime start [list \

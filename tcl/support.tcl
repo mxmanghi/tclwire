@@ -28,6 +28,28 @@ namespace eval ::tclwire::support {
         return [file normalize [env_or_default TCLWIRE_FTP_ROOT [default_doc_root]]]
     }
 
+    proc prepare_ftp_root {ftp_root} {
+        variable project_root
+
+        set ftp_root [file normalize $ftp_root]
+        if {[file exists $ftp_root] && ![file isdirectory $ftp_root]} {
+            error "FTP root exists but is not a directory: $ftp_root"
+        }
+        if {![file exists $ftp_root]} {
+            file mkdir $ftp_root
+        }
+
+        foreach {source target_name} [list \
+                [file join $project_root index.html] index.html \
+                [file join $project_root tests tcl9.png] tcl9.png] {
+            set target [file join $ftp_root $target_name]
+            if {[file isfile $source] && ![file exists $target]} {
+                file copy $source $target
+            }
+        }
+        return $ftp_root
+    }
+
     proc configure_debug {{enabled 0}} {
         variable debug
         set debug [expr {$enabled ? 1 : 0}]
@@ -47,7 +69,7 @@ namespace eval ::tclwire::support {
     }
 
     namespace export project_root env_or_default default_doc_root \
-        default_ftp_root configure_debug debug_enabled debug
+        default_ftp_root prepare_ftp_root configure_debug debug_enabled debug
     namespace ensemble create
 }
 

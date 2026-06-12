@@ -55,17 +55,21 @@ test logger-1.2 {the logger thread owns and writes the configured logfile} -body
     ::tclwire::logger_test::cleanup
 } -result {2 1 1}
 
-test logger-1.3 {reset replaces the agent while retaining configuration} -body {
+test logger-1.3 {reset restarts the agent while retaining configuration} -body {
     set first [::tclwire::logger start \
         [dict create logfile $::tclwire::logger_test::logfile]]
     ::tclwire::logger write before-reset
     set second [::tclwire::logger reset]
+    set reset_is_live [expr {
+        $second eq [::tsv::get tclwire logger_thread_id] &&
+        [::thread::exists $second]
+    }]
     ::tclwire::logger write after-reset
     ::tclwire::logger stop
 
     set content [::tclwire::logger_test::contents]
     list \
-        [expr {$first ne $second}] \
+        $reset_is_live \
         [string match {*before-reset*} $content] \
         [string match {*after-reset*} $content]
 } -cleanup {
