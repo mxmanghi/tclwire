@@ -129,6 +129,119 @@ test http-protocol-1.5 {response framing uses the configured encoding} -body {
     }
 } -result {1 1 caffè}
 
+test http-protocol-1.6 {chunked request completion waits for the terminator} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set headers \
+            "POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n"
+        set partial "${headers}4\r\nWiki\r\n5\r\npedia\r\n"
+        set complete "${partial}0\r\n\r\n"
+        set trailing "${complete}NEXT"
+        list \
+            [$protocol complete_request $partial] \
+            [expr {[$protocol complete_request $trailing] eq $complete}]
+    } finally {
+        $protocol destroy
+    }
+} -result {{} 1}
+
+test http-protocol-1.7 {
+    chunk extensions and trailers produce a decoded binary request body
+} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set binary_tail [binary format H* 0080ff]
+        set request \
+            "POST /upload HTTP/1.1\r\nTransfer-Encoding: Chunked\r\n\r\n"
+        append request "5;name=value\r\nhello\r\n"
+        append request "3\r\n$binary_tail\r\n"
+        append request "0\r\nX-Checksum: accepted\r\n\r\n"
+        set descriptor [$protocol parse_request $request]
+        list \
+            [dict get $descriptor body_framing] \
+            [dict get $descriptor body_size] \
+            [binary encode hex [dict get $descriptor body]] \
+            [dict get $descriptor trailers x-checksum]
+    } finally {
+        $protocol destroy
+    }
+} -result {chunked 8 68656c6c6f0080ff accepted}
+
+test http-protocol-1.8 {ambiguous and unsupported request framing is rejected} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set ambiguous \
+            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\n"
+        set unsupported \
+            "POST / HTTP/1.1\r\nTransfer-Encoding: deflate, chunked\r\n\r\n0\r\n\r\n"
+        set duplicate_length \
+            "POST / HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\nbody!"
+        list \
+            [catch {$protocol complete_request $ambiguous} ambiguous_error] \
+            $ambiguous_error \
+            [catch {$protocol complete_request $unsupported} unsupported_error] \
+            $unsupported_error \
+            [catch {$protocol complete_request $duplicate_length} length_error] \
+            $length_error
+    } finally {
+        $protocol destroy
+    }
+} -result [list \
+    1 "request contains both Transfer-Encoding and Content-Length" \
+    1 "unsupported Transfer-Encoding" \
+    1 "invalid Content-Length"]
+
+test http-protocol-1.9 {malformed chunk framing is rejected} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set bad_size \
+            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\nbody\r\n0\r\n\r\n"
+        set bad_ending \
+            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nbodyXX0\r\n\r\n"
+        list \
+            [catch {$protocol complete_request $bad_size} size_error] \
+            $size_error \
+            [catch {$protocol complete_request $bad_ending} ending_error] \
+            $ending_error
+    } finally {
+        $protocol destroy
+    }
+} -result [list \
+    1 "invalid chunk size" \
+    1 "chunk data is not terminated by CRLF"]
+
+test http-protocol-1.10 {gzip is decoded after chunk framing} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set expected [binary format H* 0001027f80feff]
+        set compressed [zlib gzip $expected]
+        set request \
+            "POST /upload HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"
+        append request [format "%X\r\n" [string length $compressed]]
+        append request $compressed "\r\n0\r\n\r\n"
+        set descriptor [$protocol parse_request $request]
+        list \
+            [dict get $descriptor transfer_codings] \
+            [dict get $descriptor body_size] \
+            [binary encode hex [dict get $descriptor body]]
+    } finally {
+        $protocol destroy
+    }
+} -result {{gzip chunked} 7 0001027f80feff}
+
+test http-protocol-1.11 {invalid gzip transfer data is rejected} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set request \
+            "POST /upload HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"
+        append request "4\r\nnope\r\n0\r\n\r\n"
+        catch {$protocol parse_request $request} message
+        set message
+    } finally {
+        $protocol destroy
+    }
+} -result {invalid gzip transfer coding}
+
 test http-connection-agent-1.1 {HTTP agent specializes the generic connection agent} -body {
     list \
         [info class superclasses ::tclwire::HttpConnectionAgent] \
@@ -289,6 +402,33 @@ test http-connection-1.9 {static binary files are preserved byte for byte} -body
     ::tclwire::http_connection_test::cleanup
     catch {file delete -force $docroot}
 } -result {1 1 1 1}
+
+test http-connection-1.10 {malformed chunked requests receive a protocol error} -body {
+    ::tclwire::runtime start [list \
+        --docroot $project_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\ninvalid\r\n"]
+    string match "HTTP/1.1 400 Bad Request*" $response
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result 1
+
+test http-connection-1.11 {gzip chunked requests reach the application} -body {
+    set compressed [zlib gzip "request body"]
+    set request \
+        "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"
+    append request [format "%X\r\n" [string length $compressed]]
+    append request $compressed "\r\n0\r\n\r\n"
+
+    ::tclwire::runtime start [list \
+        --docroot $project_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request $request]
+    string match "HTTP/1.1 200 OK*" $response
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result 1
 
 ::tclwire::http_connection_test::cleanup
 cleanupTests

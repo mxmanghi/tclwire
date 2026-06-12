@@ -109,6 +109,25 @@ test proxy-protocol-1.2 {forwarding removes proxy credentials and connection pol
     }
 } -result "GET /resource HTTP/1.1\r\nHost: example.test\r\nX-Test: yes\r\nConnection: close\r\n\r\n"
 
+test proxy-protocol-1.3 {decoded chunked bodies use content length upstream} -body {
+    set protocol [::tclwire::ProxyProtocolSession new]
+    try {
+        set request [dict create \
+            method POST \
+            version 1.1 \
+            headers [dict create \
+                host example.test \
+                transfer-encoding chunked \
+                trailer x-checksum] \
+            body_framing chunked \
+            body payload]
+        $protocol build_upstream_request $request \
+            [dict create host example.test port 80 path /upload]
+    } finally {
+        $protocol destroy
+    }
+} -result "POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 7\r\nConnection: close\r\n\r\npayload"
+
 test proxy-connection-1.1 {
     proxy forwards HTTP requests through its TPBA connection pool
 } -body {

@@ -8,7 +8,8 @@ meaningfully implemented by the legacy server.
 
 ## HTTP Protocol
 
-- [ ] Decode request bodies using `Transfer-Encoding: chunked`.
+- [x] Decode request bodies using `Transfer-Encoding: chunked`.
+- [x] Decode the `gzip, chunked` request transfer-coding chain.
 - [ ] Generate chunked HTTP responses.
 - [ ] Support incremental and delayed response output without buffering the
       complete result in the Connection Agent.

@@ -79,16 +79,25 @@ oo::class create ::tclwire::ProxyProtocolSession {
         dict for {name value} [dict get $request_descriptor headers] {
             if {$name in {
                 proxy-authorization proxy-connection connection
+                content-length transfer-encoding trailer
             }} {
                 continue
             }
             lappend headers "[my forwarded_header_name $name]: $value"
         }
+        set body [dict get $request_descriptor body]
+        set body_framing none
+        if {[dict exists $request_descriptor body_framing]} {
+            set body_framing [dict get $request_descriptor body_framing]
+        }
+        if {$body ne {} || $body_framing ne "none"} {
+            lappend headers "Content-Length: [string length $body]"
+        }
         lappend headers "Connection: close"
 
         set request "[dict get $request_descriptor method] [dict get $target_info path] HTTP/[dict get $request_descriptor version]\r\n"
         append request "[join $headers "\r\n"]\r\n\r\n"
-        append request [dict get $request_descriptor body]
+        append request $body
         return $request
     }
 
