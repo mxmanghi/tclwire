@@ -176,10 +176,48 @@ namespace eval ::tclwire {
     variable connection_finished_thread {}
     variable connection_finished_command {}
 
+    proc prepare_connection_channel {channel transport_config} {
+        if {$transport_config eq {} ||
+                ![dict exists $transport_config secure] ||
+                ![dict get $transport_config secure]} {
+            return $channel
+        }
+        foreach field {certfile keyfile} {
+            if {![dict exists $transport_config $field] ||
+                    [dict get $transport_config $field] eq {}} {
+                error "secure transport is missing $field"
+            }
+            if {![file isfile [dict get $transport_config $field]]} {
+                error "secure transport $field does not exist: [dict get $transport_config $field]"
+            }
+        }
+        package require tls
+        chan configure $channel -blocking 0 -translation binary
+        set channel [::tls::import $channel \
+            -server 1 \
+            -request 0 \
+            -require 0 \
+            -certfile [dict get $transport_config certfile] \
+            -keyfile [dict get $transport_config keyfile] \
+            -ssl2 0 \
+            -ssl3 0]
+        set deadline [expr {[clock milliseconds] + 30000}]
+        while 1 {
+            if {[::tls::handshake $channel]} {
+                break
+            }
+            if {[clock milliseconds] >= $deadline} {
+                error "TLS handshake timed out"
+            }
+            after 10
+        }
+        return $channel
+    }
+
     proc start_connection_agent {
         agent_class conn_channel connection_id host port finished_thread
         finished_command
-        agent_args
+        agent_args transport_config
     } {
         variable connection_agent
         variable connection_finished_thread
@@ -198,7 +236,23 @@ namespace eval ::tclwire {
             ::tclwire::accounting change_thread_status \
                 [::thread::id] running [list $agent_class $connection_id]
         }
-        set connection_agent [$agent_class new $conn_channel $connection_id $host $port {*}$agent_args]
+        if {[catch {
+            set conn_channel [prepare_connection_channel \
+                $conn_channel $transport_config]
+            set connection_agent [$agent_class new \
+                $conn_channel $connection_id $host $port {*}$agent_args]
+        } message options]} {
+            catch {close $conn_channel}
+            if {$connection_finished_thread ne {} &&
+                    [::thread::exists $connection_finished_thread]} {
+                set callback [list {*}$connection_finished_command \
+                    $connection_id [::thread::id]]
+                ::thread::send -async $connection_finished_thread $callback
+            }
+            set connection_finished_thread {}
+            set connection_finished_command {}
+            return {}
+        }
         return $connection_agent
     }
 

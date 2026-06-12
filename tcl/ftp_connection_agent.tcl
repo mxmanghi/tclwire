@@ -14,7 +14,8 @@ oo::class create ::tclwire::FtpConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
     variable channel closed protocol_session command_buffer ftp_root
-    variable ftp_user_check bind_host session
+    variable ftp_user_check bind_host session secure_transport
+    variable tls_certfile tls_keyfile log_protocol
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -43,6 +44,16 @@ oo::class create ::tclwire::FtpConnectionAgent {
         set ftp_root [::fileutil::fullnormalize [dict get $config ftproot]]
         set ftp_user_check [expr {[dict get $config ftp_user_check] ? 1 : 0}]
         set bind_host [dict get $config host]
+        set log_protocol [dict get $config protocol]
+        set secure_transport [expr {
+            [dict exists $config secure] && [dict get $config secure]
+        }]
+        set tls_certfile {}
+        set tls_keyfile {}
+        if {$secure_transport} {
+            set tls_certfile [dict get $config certfile]
+            set tls_keyfile [dict get $config keyfile]
+        }
         set session [dict create \
             cwd / \
             type A \
@@ -52,7 +63,8 @@ oo::class create ::tclwire::FtpConnectionAgent {
             restart_offset 0 \
             rename_from {} \
             username {} \
-            authenticated 0]
+            authenticated 0 \
+            data_protection [expr {$secure_transport ? "P" : "C"}]]
 
         my send_reply 220 "TclWire FTP server ready"
         my start
@@ -124,7 +136,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
     }
 
     method command_requires_login {command} {
-        return [expr {$command ni {USER PASS QUIT SYST FEAT NOOP}}]
+        return [expr {$command ni {USER PASS QUIT SYST FEAT NOOP PBSZ PROT}}]
     }
 
     method execute_command {command argument} {
@@ -173,6 +185,26 @@ oo::class create ::tclwire::FtpConnectionAgent {
                 }
                 dict set session type $type
                 my send_reply 200 "Type set to $type"
+            }
+            PBSZ {
+                if {!$secure_transport} {
+                    my send_reply 503 "PBSZ requires a secure control channel"
+                } elseif {$argument ne "0"} {
+                    my send_reply 501 "PBSZ must be zero"
+                } else {
+                    my send_reply 200 "PBSZ=0"
+                }
+            }
+            PROT {
+                set protection [string toupper $argument]
+                if {!$secure_transport} {
+                    my send_reply 503 "PROT requires a secure control channel"
+                } elseif {$protection ni {C P}} {
+                    my send_reply 536 "Unsupported protection level"
+                } else {
+                    dict set session data_protection $protection
+                    my send_reply 200 "Data protection set to $protection"
+                }
             }
             CWD {
                 set virtual_path [my normalize_virtual_path \
@@ -383,6 +415,21 @@ oo::class create ::tclwire::FtpConnectionAgent {
     }
 
     method accept_data {data_channel host port} {
+        if {$secure_transport &&
+                [dict get $session data_protection] eq "P"} {
+            if {[catch {
+                set data_channel [::tclwire::prepare_connection_channel \
+                    $data_channel [dict create \
+                        secure 1 \
+                        certfile $tls_certfile \
+                        keyfile $tls_keyfile]]
+            }]} {
+                catch {close $data_channel}
+                my reset_passive_state
+                my send_reply 425 "Cannot secure data connection"
+                return
+            }
+        }
         chan configure $data_channel \
             -blocking 1 -buffering none -translation binary
         set listener [dict get $session passive_listener]
@@ -498,7 +545,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
         }
         set remote_host [dict get [my peer] host]
         catch {
-            ::tclwire::logger log ftp \
+            ::tclwire::logger log $log_protocol \
                 "command=$command argument=[::tclwire::logger log_value $argument] status=$status remote=[::tclwire::logger log_value $remote_host]"
         }
         return
@@ -507,7 +554,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
     method log_transfer {action path status bytes} {
         set remote_host [dict get [my peer] host]
         catch {
-            ::tclwire::logger log ftp \
+            ::tclwire::logger log $log_protocol \
                 "transfer=$action path=[::tclwire::logger log_value $path] status=$status bytes=$bytes remote=[::tclwire::logger log_value $remote_host]"
         }
         return

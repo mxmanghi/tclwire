@@ -188,7 +188,7 @@ test ftp-connection-1.1 {
     ::tclwire::ftp_connection_test::cleanup
     catch {file delete -force $ftp_root}
     catch {file delete -force $outside_root}
-} -result {1 1 1 1 1 1 1 1 1 1 1 ftp connection:ftp 1 1 1}
+} -result {1 1 1 1 1 1 1 1 1 1 1 ftp:8991 connection:ftp:8991 1 1 1}
 
 ::tclwire::ftp_connection_test::cleanup
 cleanupTests

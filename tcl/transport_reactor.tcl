@@ -11,7 +11,7 @@ namespace eval ::tclwire {}
 oo::class create ::tclwire::TransportReactor {
     variable listener host port next_connection_id agent_threads project_root
     variable last_accept_error pool_key pool_descriptor pool_policy pool_created
-    variable agent_class agent_package agent_args
+    variable agent_class agent_package agent_args transport_config service_id
 
     constructor args {
         array set options {
@@ -21,6 +21,8 @@ oo::class create ::tclwire::TransportReactor {
             -agentclass ::tclwire::HttpConnectionAgent
             -agentpackage tclwire::http::connection_agent
             -agentargs {}
+            -transportconfig {}
+            -serviceid {}
             -maxworkers 100
         }
         foreach {name value} $args {
@@ -40,9 +42,13 @@ oo::class create ::tclwire::TransportReactor {
         set agent_class     $options(-agentclass)
         set agent_package   $options(-agentpackage)
         set agent_args      $options(-agentargs)
+        set transport_config $options(-transportconfig)
+        set service_id [expr {$options(-serviceid) eq {} \
+            ? "$options(-protocol):$port" : $options(-serviceid)}]
         set pool_descriptor [dict create kind           connection_agent \
                                          protocol       $options(-protocol) \
                                          family         $options(-protocol) \
+                                         name           $service_id \
                                          agent_class    $agent_class]
         set pool_policy [dict create minimum_workers 0 \
                                      maximum_workers $options(-maxworkers)]
@@ -58,14 +64,9 @@ oo::class create ::tclwire::TransportReactor {
         if {$listener ne {}} {
             error "Transport Reactor is already listening"
         }
+        my validate_transport_config
 
-        set key_response [::tclwire::tpba request [dict create operation    pool_key \
-                                                               descriptor   $pool_descriptor]]
-
-        if {![dict get $key_response ok]} {
-            error [dict get $key_response error]
-        }
-        set pool_key [dict get $key_response result]
+        set pool_key "connection:$service_id"
 
         set create_response [::tclwire::tpba request [dict create operation     create_pool         \
                                                                   pool_key      $pool_key           \
@@ -84,6 +85,27 @@ oo::class create ::tclwire::TransportReactor {
             return -options $options $message
         }
         return $listener
+    }
+
+    method validate_transport_config {} {
+        if {$transport_config eq {} ||
+                ![dict exists $transport_config secure] ||
+                ![dict get $transport_config secure]} {
+            return
+        }
+        foreach field {certfile keyfile} {
+            if {![dict exists $transport_config $field] ||
+                    [dict get $transport_config $field] eq {}} {
+                error "secure service '$service_id' is missing $field"
+            }
+            if {![file isfile [dict get $transport_config $field]]} {
+                error "secure service '$service_id' $field does not exist: [dict get $transport_config $field]"
+            }
+        }
+        if {[catch {package require tls} message]} {
+            error "secure service '$service_id' requires TclTLS: $message"
+        }
+        return
     }
 
     method stop {} {
@@ -173,10 +195,10 @@ oo::class create ::tclwire::TransportReactor {
             set detached 1
             ::thread::send $tid [list ::thread::attach $channel]
             dict set agent_threads $tid $connection_id
-            ::thread::send $tid [list ::tclwire::start_connection_agent \
-                                        $agent_class $channel $connection_id $peer_host $peer_port \
-                                        [::thread::id] [list [self] connection_finished $pool_key] \
-                                        $agent_args]
+            ::thread::send -async $tid [list ::tclwire::start_connection_agent \
+                $agent_class $channel $connection_id $peer_host $peer_port \
+                [::thread::id] [list [self] connection_finished $pool_key] \
+                $agent_args $transport_config]
         } error options]} {
             set last_accept_error $error
             if {$detached} {
@@ -238,6 +260,8 @@ oo::class create ::tclwire::TransportReactor {
     method pool_key {} {
         return $pool_key
     }
+
+    unexport validate_transport_config
 }
 
 package provide tclwire::transport_reactor 0.1

@@ -134,7 +134,7 @@ test proxy-connection-1.1 {
         [regexp {proxy method=GET target=/ status=200 bytes=[0-9]+ remote=127\.0\.0\.1} $log]
 } -cleanup {
     ::tclwire::proxy_connection_test::cleanup
-} -result {1 1 connection:proxy 1}
+} -result {1 1 connection:proxy:8992 1}
 
 test proxy-connection-1.2 {protected proxy targets require Basic credentials} -body {
     ::tclwire::runtime start [list \

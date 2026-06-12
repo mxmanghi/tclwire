@@ -214,7 +214,7 @@ test http-connection-1.5 {sequential connections reuse a TPBA pool worker} -body
         [expr {$first_idle eq $second_idle}]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
-} -result {connection:http 1 1}
+} -result {connection:http:8990 1 1}
 
 test http-connection-1.6 {a request without Host uses the default application} -body {
     ::tclwire::runtime start [list \

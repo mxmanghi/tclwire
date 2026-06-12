@@ -34,7 +34,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
 } -result [list \
     127.0.0.1 \
     http \
-    [list [dict create protocol http port 8990]] \
+    [list [dict create \
+        protocol http port 8990 id http:8990 secure 0]] \
     default \
     utf-8 \
     {localhost 127.0.0.1} \
@@ -65,8 +66,10 @@ test runtime-1.2 {legacy service options are normalized without starting service
 } -result [list \
     0.0.0.0 \
     [list \
-        [dict create protocol http port 8080] \
-        [dict create protocol https port 8443]] \
+        [dict create protocol http port 8080 id http:8080 secure 0] \
+        [dict create \
+            protocol https port 8443 id https:8443 secure 1 \
+            certfile {} keyfile {}]] \
     [file normalize ./www] \
     [file normalize ./www] \
     [file normalize ./www] \
@@ -115,7 +118,8 @@ test runtime-1.5 {runtime starts internal agents and the hardcoded HTTP listener
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result [list \
-    [list [dict create protocol http port 8990]] \
+    [list [dict create \
+        protocol http port 8990 id http:8990 secure 0]] \
     1 1 1 1 127.0.0.1 8990 1]
 
 test runtime-1.6 {the runtime TPBA accepts broker requests} -body {
@@ -130,7 +134,7 @@ test runtime-1.6 {the runtime TPBA accepts broker requests} -body {
         [dict get $response result]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
-} -result {1 runtime-test {app:default connection:http}}
+} -result {1 runtime-test {app:default connection:http:8990}}
 
 test runtime-1.7 {runtime stop clears endpoints and terminates both agents} -body {
     ::tclwire::runtime start [list \
@@ -168,12 +172,68 @@ test runtime-1.8 {configured services use distinct reactor pools} -body {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $ftp_root}
 } -result [list \
-    {ftp http proxy} \
-    connection:http \
-    connection:ftp \
-    connection:proxy \
-    {app:default connection:ftp connection:http connection:proxy} \
+    {ftp:8991 http:8990 proxy:8992} \
+    connection:http:8990 \
+    connection:ftp:8991 \
+    connection:proxy:8992 \
+    {app:default connection:ftp:8991 connection:http:8990 connection:proxy:8992} \
     1 1]
+
+test runtime-1.9 {service TLS credentials override global defaults} -body {
+    set config [::tclwire::runtime parse_args [list \
+        --startservers https,ftps \
+        --certfile ./default-cert.pem \
+        --keyfile ./default-key.pem \
+        --service "https:9443;certfile=./https-cert.pem;keyfile=./https-key.pem" \
+        --service ftps:990]]
+    set https_service [lindex [dict get $config services] 0]
+    set ftps_service [lindex [dict get $config services] 1]
+    list \
+        [dict get $config certfile] \
+        [dict get $config keyfile] \
+        [dict get $https_service certfile] \
+        [dict get $https_service keyfile] \
+        [dict get $ftps_service certfile] \
+        [dict get $ftps_service keyfile]
+} -result [list \
+    [file normalize ./default-cert.pem] \
+    [file normalize ./default-key.pem] \
+    [file normalize ./https-cert.pem] \
+    [file normalize ./https-key.pem] \
+    [file normalize ./default-cert.pem] \
+    [file normalize ./default-key.pem]]
+
+test runtime-1.10 {same protocol ports retain independent TLS credentials} -body {
+    set config [::tclwire::runtime parse_args [list \
+        --startservers https \
+        --service "https:9443;certfile=./first.pem;keyfile=./first.key" \
+        --service "https:9444;certfile=./second.pem;keyfile=./second.key"]]
+    set first [lindex [dict get $config services] 0]
+    set second [lindex [dict get $config services] 1]
+    list \
+        [dict get $first id] \
+        [dict get $first certfile] \
+        [dict get $second id] \
+        [dict get $second certfile]
+} -result [list \
+    https:9443 [file normalize ./first.pem] \
+    https:9444 [file normalize ./second.pem]]
+
+test runtime-1.11 {secure services reject missing default credentials} -body {
+    set status [catch {
+        ::tclwire::runtime start [list \
+            --startservers https \
+            --logfile $::tclwire::runtime_test::logfile]
+    } message]
+    list \
+        $status \
+        $message \
+        [::tclwire::runtime is_running] \
+        [::tsv::get tclwire tpba_thread_id] \
+        [::tsv::get tclwire logger_thread_id]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {1 {secure service 'https:9443' is missing certfile} 0 {} {}}
 
 ::tclwire::runtime_test::cleanup
 cleanupTests

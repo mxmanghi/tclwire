@@ -15,11 +15,12 @@ oo::class create ::tclwire::HttpConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
     variable protocol_session application_dispatcher closed channel
-    variable next_transaction_id default_encoding
+    variable next_transaction_id default_encoding log_protocol
 
     constructor {conn_channel id host port args} {
         array set options {
             -applicationconfig {}
+            -protocol http
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -37,6 +38,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
+        set log_protocol $options(-protocol)
         set next_transaction_id 0
         my start
     }
@@ -231,7 +233,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             }
         }
         catch {
-            ::tclwire::logger log http \
+            ::tclwire::logger log $log_protocol \
                 "method=[::tclwire::logger log_value $method] path=[::tclwire::logger log_value $path] status=$status bytes=$bytes remote=[::tclwire::logger log_value $remote_host]"
         }
         return

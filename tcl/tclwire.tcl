@@ -56,7 +56,8 @@ namespace eval ::tclwire::runtime {
         puts $channel "  --ftpsport <port>   Default: 990"
         puts $channel "  --proxyport <port>  Default: 8992"
         puts $channel "  --service <protocol:port>"
-        puts $channel "      Add an explicit future service specification."
+        puts $channel "      Add a service. TLS overrides may follow as"
+        puts $channel "      ';certfile=<path>;keyfile=<path>'."
         puts $channel "  --docroot <path>"
         puts $channel "  --ftproot <path>"
         puts $channel "  --certfile <path>"
@@ -83,15 +84,46 @@ namespace eval ::tclwire::runtime {
     }
 
     proc parse_service_spec {spec} {
-        if {![regexp {^([a-z0-9_+-]+):([0-9]+)$} $spec -> protocol port]} {
+        set fields [split $spec \;]
+        set endpoint [lindex $fields 0]
+        if {![regexp {^([a-z0-9_+-]+):([0-9]+)$} \
+                $endpoint -> protocol port]} {
             error "invalid service spec: $spec"
         }
         if {$protocol ni [implemented_protocols]} {
             error "unsupported protocol in service spec: $protocol"
         }
-        return [dict create \
+        set service [dict create \
             protocol $protocol \
             port [parse_port_value --service $port]]
+        foreach field [lrange $fields 1 end] {
+            if {![regexp {^(certfile|keyfile)=(.+)$} \
+                    $field -> name value]} {
+                error "invalid service option: $field"
+            }
+            dict set service $name [file normalize $value]
+        }
+        return $service
+    }
+
+    proc secure_protocol {protocol} {
+        return [expr {$protocol in {https ftps}}]
+    }
+
+    proc normalize_service {service default_certfile default_keyfile} {
+        set protocol [dict get $service protocol]
+        set port [dict get $service port]
+        dict set service id "$protocol:$port"
+        dict set service secure [secure_protocol $protocol]
+        if {[dict get $service secure]} {
+            if {![dict exists $service certfile]} {
+                dict set service certfile $default_certfile
+            }
+            if {![dict exists $service keyfile]} {
+                dict set service keyfile $default_keyfile
+            }
+        }
+        return $service
     }
 
     proc parse_protocol_list {value} {
@@ -231,6 +263,12 @@ namespace eval ::tclwire::runtime {
             }
             set services $selected
         }
+        set normalized_services {}
+        foreach service $services {
+            lappend normalized_services [normalize_service \
+                $service $certfile $keyfile]
+        }
+        set services $normalized_services
 
         return [dict create help         $help \
                             host         $host \
@@ -283,16 +321,26 @@ namespace eval ::tclwire::runtime {
             ::tclwire::tpba start
             set tpba_started 1
 
-            set configured_protocols {}
+            set configured_services {}
             foreach service [dict get $config services] {
                 set protocol [dict get $service protocol]
-                if {$protocol in $configured_protocols} {
-                    error "multiple listeners for protocol '$protocol' are not supported"
+                set service_id [dict get $service id]
+                if {$service_id in $configured_services} {
+                    error "duplicate service endpoint: $service_id"
                 }
-                lappend configured_protocols $protocol
+                lappend configured_services $service_id
+                set transport_config [dict create \
+                    secure [dict get $service secure]]
+                if {[dict get $service secure]} {
+                    dict set transport_config certfile \
+                        [dict get $service certfile]
+                    dict set transport_config keyfile \
+                        [dict get $service keyfile]
+                }
 
                 switch -exact -- $protocol {
-                    http {
+                    http -
+                    https {
                         if {$application_dispatcher eq {}} {
                             set application_dispatcher \
                                 [::tclwire::ApplicationDispatcher new $config]
@@ -301,27 +349,37 @@ namespace eval ::tclwire::runtime {
                         set reactor [::tclwire::TransportReactor new \
                             -host [dict get $config host] \
                             -port [dict get $service port] \
-                            -protocol http \
+                            -protocol $protocol \
+                            -serviceid $service_id \
+                            -transportconfig $transport_config \
                             -agentclass ::tclwire::HttpConnectionAgent \
                             -agentpackage tclwire::http::connection_agent \
-                            -agentargs [list -applicationconfig $config]]
+                            -agentargs [list \
+                                -applicationconfig $config \
+                                -protocol $protocol]]
                     }
-                    ftp {
+                    ftp -
+                    ftps {
                         ::tclwire::support prepare_ftp_root \
                             [dict get $config ftproot]
+                        set service_config [dict merge $config $service]
                         set reactor [::tclwire::TransportReactor new \
                             -host [dict get $config host] \
                             -port [dict get $service port] \
-                            -protocol ftp \
+                            -protocol $protocol \
+                            -serviceid $service_id \
+                            -transportconfig $transport_config \
                             -agentclass ::tclwire::FtpConnectionAgent \
                             -agentpackage tclwire::ftp::connection_agent \
-                            -agentargs [list -config $config]]
+                            -agentargs [list -config $service_config]]
                     }
                     proxy {
                         set reactor [::tclwire::TransportReactor new \
                             -host [dict get $config host] \
                             -port [dict get $service port] \
                             -protocol proxy \
+                            -serviceid $service_id \
+                            -transportconfig $transport_config \
                             -agentclass ::tclwire::ProxyConnectionAgent \
                             -agentpackage tclwire::proxy::connection_agent \
                             -agentargs [list -config $config]]
@@ -330,7 +388,7 @@ namespace eval ::tclwire::runtime {
                         error "configured protocol is not implemented: $protocol"
                     }
                 }
-                dict set transport_reactors $protocol $reactor
+                dict set transport_reactors $service_id $reactor
                 $reactor start
             }
 
@@ -400,12 +458,29 @@ namespace eval ::tclwire::runtime {
         return $active_config
     }
 
-    proc transport_reactor {{protocol http}} {
+    proc transport_reactor {{protocol http} {port {}}} {
         variable transport_reactors
-        if {![dict exists $transport_reactors $protocol]} {
+        if {$port ne {}} {
+            set service_id "$protocol:$port"
+            if {![dict exists $transport_reactors $service_id]} {
+                return {}
+            }
+            return [dict get $transport_reactors $service_id]
+        }
+
+        set matches {}
+        dict for {service_id reactor} $transport_reactors {
+            if {[string match "${protocol}:*" $service_id]} {
+                lappend matches $reactor
+            }
+        }
+        if {[llength $matches] == 0} {
             return {}
         }
-        return [dict get $transport_reactors $protocol]
+        if {[llength $matches] > 1} {
+            error "multiple '$protocol' services are active; specify a port"
+        }
+        return [lindex $matches 0]
     }
 
     proc transport_reactors {} {
