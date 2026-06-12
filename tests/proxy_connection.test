@@ -1,0 +1,193 @@
+package require tcltest
+namespace import ::tcltest::*
+package require fileutil
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+package require tclwire::runtime 0.1
+package require tclwire::proxy::protocol 0.1
+package require tclwire::proxy::connection_agent 0.1
+
+namespace eval ::tclwire::proxy_connection_test {
+    variable logfile [file join [temporaryDirectory] tclwire-proxy-[pid].log]
+
+    proc cleanup {} {
+        variable logfile
+        catch {::tclwire::runtime stop}
+        catch {file delete -force $logfile}
+    }
+
+    proc read_http_response {channel {timeout_ms 3000}} {
+        set response {}
+        set expected_length {}
+        set deadline [expr {[clock milliseconds] + $timeout_ms}]
+        chan configure $channel \
+            -blocking 0 -buffering none -translation binary
+        while {[clock milliseconds] < $deadline} {
+            update
+            append response [read $channel]
+            set separator [string first "\r\n\r\n" $response]
+            if {$separator >= 0 && $expected_length eq {}} {
+                set headers [string range $response 0 [expr {$separator - 1}]]
+                if {[regexp -nocase \
+                        {\r\nContent-Length:\s*([0-9]+)} \
+                        "\r\n$headers" -> length]} {
+                    set expected_length [expr {$separator + 4 + $length}]
+                }
+            }
+            if {$expected_length ne {} &&
+                    [string length $response] >= $expected_length} {
+                return [string range $response 0 \
+                    [expr {$expected_length - 1}]]
+            }
+            if {[eof $channel]} {
+                return $response
+            }
+            after 5
+        }
+        error "timed out waiting for proxy HTTP response"
+    }
+
+    proc request {request} {
+        set channel [socket 127.0.0.1 8992]
+        chan configure $channel \
+            -blocking 0 -buffering none -translation binary
+        puts -nonewline $channel $request
+        flush $channel
+        set response [read_http_response $channel]
+        catch {close $channel}
+        return $response
+    }
+
+    proc log_contents {} {
+        variable logfile
+        set channel [open $logfile r]
+        try {
+            return [read $channel]
+        } finally {
+            close $channel
+        }
+    }
+}
+
+::tclwire::proxy_connection_test::cleanup
+
+test proxy-protocol-1.1 {proxy protocol resolves absolute and origin targets} -body {
+    set protocol [::tclwire::ProxyProtocolSession new]
+    try {
+        set absolute [$protocol parse_target \
+            http://example.test:8080/path?q=1 {}]
+        set origin [$protocol parse_target /local \
+            [dict create host example.test]]
+        set tunnel [$protocol parse_connect_target example.test:443]
+        list $absolute $origin $tunnel
+    } finally {
+        $protocol destroy
+    }
+} -result [list \
+    [dict create host example.test port 8080 path /path?q=1] \
+    [dict create host example.test port 80 path /local] \
+    [dict create host example.test port 443 path {}]]
+
+test proxy-protocol-1.2 {forwarding removes proxy credentials and connection policy} -body {
+    set protocol [::tclwire::ProxyProtocolSession new]
+    try {
+        set request [dict create \
+            method GET \
+            version 1.1 \
+            headers [dict create \
+                host example.test \
+                proxy-authorization secret \
+                proxy-connection keep-alive \
+                x-test yes] \
+            body {}]
+        $protocol build_upstream_request $request \
+            [dict create host example.test port 80 path /resource]
+    } finally {
+        $protocol destroy
+    }
+} -result "GET /resource HTTP/1.1\r\nHost: example.test\r\nX-Test: yes\r\nConnection: close\r\n\r\n"
+
+test proxy-connection-1.1 {
+    proxy forwards HTTP requests through its TPBA connection pool
+} -body {
+    ::tclwire::runtime start [list \
+        --startservers http,proxy \
+        --docroot $project_root \
+        --proxyport 8992 \
+        --logfile $::tclwire::proxy_connection_test::logfile]
+    set response [::tclwire::proxy_connection_test::request \
+        "GET http://127.0.0.1:8990/ HTTP/1.1\r\nHost: 127.0.0.1:8990\r\nConnection: close\r\n\r\n"]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body [string range $response [expr {$separator + 4}] end]
+    set expected [::fileutil::cat -translation binary \
+        [file join $project_root index.html]]
+    set proxy_pool [[::tclwire::runtime transport_reactor proxy] pool_key]
+    ::tclwire::runtime stop
+    set log [::tclwire::proxy_connection_test::log_contents]
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        [expr {$body eq $expected}] \
+        $proxy_pool \
+        [regexp {proxy method=GET target=/ status=200 bytes=[0-9]+ remote=127\.0\.0\.1} $log]
+} -cleanup {
+    ::tclwire::proxy_connection_test::cleanup
+} -result {1 1 connection:proxy 1}
+
+test proxy-connection-1.2 {protected proxy targets require Basic credentials} -body {
+    ::tclwire::runtime start [list \
+        --startservers proxy \
+        --proxyport 8992 \
+        --logfile $::tclwire::proxy_connection_test::logfile]
+    set response [::tclwire::proxy_connection_test::request \
+        "GET http://127.0.0.1:8990/proxy-auth-target HTTP/1.1\r\nHost: 127.0.0.1:8990\r\nConnection: close\r\n\r\n"]
+    list \
+        [string match \
+            "HTTP/1.1 407 Proxy Authentication Required*" $response] \
+        [string match {*Proxy-Authenticate: Basic realm="TclWire Proxy"*} \
+            $response] \
+        [string match {*proxy-auth=missing*} $response]
+} -cleanup {
+    ::tclwire::proxy_connection_test::cleanup
+} -result {1 1 1}
+
+test proxy-connection-1.3 {CONNECT tunnels bytes to an HTTP endpoint} -body {
+    ::tclwire::runtime start [list \
+        --startservers http,proxy \
+        --docroot $project_root \
+        --proxyport 8992 \
+        --logfile $::tclwire::proxy_connection_test::logfile]
+
+    set channel [socket 127.0.0.1 8992]
+    chan configure $channel \
+        -blocking 0 -buffering none -translation binary
+    puts -nonewline $channel \
+        "CONNECT 127.0.0.1:8990 HTTP/1.1\r\nHost: 127.0.0.1:8990\r\n\r\n"
+    flush $channel
+
+    set established {}
+    set deadline [expr {[clock milliseconds] + 3000}]
+    while {[string first "\r\n\r\n" $established] < 0 &&
+            [clock milliseconds] < $deadline} {
+        update
+        append established [read $channel]
+        after 5
+    }
+    puts -nonewline $channel \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $channel
+    set tunneled [::tclwire::proxy_connection_test::read_http_response $channel]
+    catch {close $channel}
+
+    list \
+        [string match "HTTP/1.1 200 Connection Established*" $established] \
+        [string match "HTTP/1.1 200 OK*" $tunneled] \
+        [string match {*TclWire*} $tunneled]
+} -cleanup {
+    ::tclwire::proxy_connection_test::cleanup
+} -result {1 1 1}
+
+::tclwire::proxy_connection_test::cleanup
+cleanupTests
