@@ -95,9 +95,9 @@ namespace eval ::tclwire::runtime {
         if {$protocol ni [implemented_protocols]} {
             error "unsupported protocol in service spec: $protocol"
         }
-        set service [dict create \
-            protocol $protocol \
-            port [parse_port_value --service $port]]
+        set service [dict create protocol $protocol \
+                                 port     [parse_port_value --service $port]]
+
         foreach field [lrange $fields 1 end] {
             if {![regexp {^(certfile|keyfile)=(.+)$} \
                     $field -> name value]} {
@@ -266,8 +266,8 @@ namespace eval ::tclwire::runtime {
             # These fields need no conversion. Filtering before merging keeps
             # unrelated TOML keys out while letting file values replace the
             # built-in defaults in one dictionary operation.
-            set config [dict merge $config [dict filter $global key \
-                host encoding default_application]]
+            set config [dict merge $config \
+                [dict filter $global key host encoding default_application]]
 
             # dict filter selects the supported source fields; dict map
             # validates and replaces their values. The later merge applies
@@ -420,13 +420,13 @@ namespace eval ::tclwire::runtime {
                 --ftpsport  -
                 --proxyport {
                     set protocol [string range $option 2 end-4]
-                    dict set port_overrides $protocol [parse_port_value \
-                        $option [require_value $argv [incr i] $option]]
+                    dict set port_overrides $protocol \
+                            [parse_port_value $option [require_value $argv [incr i] $option]]
                 }
                 --service {
                     set custom_services 1
-                    lappend cli_services [parse_service_spec \
-                        [require_value $argv [incr i] $option]]
+                    lappend cli_services \
+                        [parse_service_spec [require_value $argv [incr i] $option]]
                 }
                 --docroot {
                     set docroot [file normalize [require_value \

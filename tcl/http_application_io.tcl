@@ -44,6 +44,80 @@ namespace eval ::tclwire::http::io {
         return [string equal -nocase $left $right]
     }
 
+    proc validate_cookie_name {name} {
+        if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $name]} {
+            error "invalid HTTP cookie name"
+        }
+        return
+    }
+
+    proc validate_cookie_value {value} {
+        if {![regexp {^[\x21-\x7e]*$} $value] ||
+                [regexp {[";,\\]} $value]} {
+            error "invalid HTTP cookie value"
+        }
+        return
+    }
+
+    proc validate_cookie_path {path} {
+        if {![string match /* $path] ||
+                [regexp {[\x00-\x20\x7f;]} $path]} {
+            error "invalid HTTP cookie path"
+        }
+        return
+    }
+
+    proc cookie_expiration {expiration} {
+        if {[string is entier -strict $expiration]} {
+            set seconds $expiration
+        } elseif {[catch {clock scan $expiration} seconds]} {
+            error "invalid HTTP cookie expiration"
+        }
+        if {[catch {
+            clock format $seconds -gmt 1 -locale C \
+                -format {%a, %d %b %Y %H:%M:%S GMT}
+        } formatted]} {
+            error "invalid HTTP cookie expiration"
+        }
+        return $formatted
+    }
+
+    proc cookie {name value args} {
+        reset_if_needed
+        validate_cookie_name $name
+        validate_cookie_value $value
+
+        set path {}
+        set expiration {}
+        if {[llength $args] % 2 != 0} {
+            error {wrong # args: should be "::tclwire::http::io cookie name value ?-path uriPath? ?-expires expiration?"}
+        }
+        foreach {option option_value} $args {
+            switch -exact -- $option {
+                -path {
+                    validate_cookie_path $option_value
+                    set path $option_value
+                }
+                -expires {
+                    set expiration [cookie_expiration $option_value]
+                }
+                default {
+                    error "unknown HTTP cookie option: $option"
+                }
+            }
+        }
+
+        set cookie "$name=$value"
+        if {$path ne {}} {
+            append cookie "; Path=$path"
+        }
+        if {$expiration ne {}} {
+            append cookie "; Expires=$expiration"
+        }
+        header_add Set-Cookie $cookie
+        return $cookie
+    }
+
     proc header_set {name value} {
         variable headers
         reset_if_needed
@@ -136,7 +210,7 @@ namespace eval ::tclwire::http::io {
         }
     }
 
-    namespace export header
+    namespace export cookie header
     namespace ensemble create
 }
 

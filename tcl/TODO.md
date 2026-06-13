@@ -24,6 +24,8 @@ meaningfully implemented by the legacy server.
 - [ ] Provide reusable redirect-response construction.
 - [ ] Provide reusable request-header access.
 - [ ] Provide reusable byte-range parsing.
+- [x] Provide reusable response-cookie construction with URI path and
+      expiration support.
 - [ ] Define application result semantics for delayed responses and deliberate
       connection closure without a response.
 

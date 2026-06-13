@@ -308,6 +308,79 @@ test http-application-io-1.2 {HTTP response headers reject line injection} -body
     }
 } -result {invalid HTTP response header value}
 
+test http-application-io-1.3 {HTTP cookies support paths and expiration} -body {
+    set ::tclwire::application_test::events {}
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 11
+        set first [::tclwire::http::io cookie session abc123 \
+            -path /account -expires 1893456000]
+        set second [::tclwire::http::io cookie preference compact]
+        set cookies [::tclwire::http::io header get Set-Cookie]
+        ::tclwire::io end
+        update
+
+        set emitted {}
+        foreach item $::tclwire::application_test::events {
+            set event [lindex $item 1]
+            lappend emitted \
+                [dict get $event flags action] \
+                [dict get $event flags value]
+        }
+        list $first $second $cookies $emitted
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result [list \
+    {session=abc123; Path=/account; Expires=Tue, 01 Jan 2030 00:00:00 GMT} \
+    {preference=compact} \
+    [list \
+        {session=abc123; Path=/account; Expires=Tue, 01 Jan 2030 00:00:00 GMT} \
+        {preference=compact}] \
+    [list \
+        add \
+        {session=abc123; Path=/account; Expires=Tue, 01 Jan 2030 00:00:00 GMT} \
+        add \
+        {preference=compact}]]
+
+test http-application-io-1.4 {HTTP cookie expiration accepts dates} -body {
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 12
+        ::tclwire::http::io cookie session abc123 \
+            -expires {2030-01-01 00:00:00 UTC}
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result {session=abc123; Expires=Tue, 01 Jan 2030 00:00:00 GMT}
+
+test http-application-io-1.5 {HTTP cookies reject invalid attributes} -body {
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 13
+        set messages {}
+        foreach command {
+            {::tclwire::http::io cookie {bad name} value}
+            {::tclwire::http::io cookie name {bad;value}}
+            {::tclwire::http::io cookie name value -path relative}
+            {::tclwire::http::io cookie name value -expires never-ever}
+        } {
+            catch $command message
+            lappend messages $message
+        }
+        set messages
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result [list \
+    {invalid HTTP cookie name} \
+    {invalid HTTP cookie value} \
+    {invalid HTTP cookie path} \
+    {invalid HTTP cookie expiration}]
+
 test http-errors-1.1 {HTTP errors are loaded from the root JSON catalog} -body {
     set response [::tclwire::http::errors response 503]
     list \
