@@ -242,6 +242,32 @@ test http-protocol-1.11 {invalid gzip transfer data is rejected} -body {
     }
 } -result {invalid gzip transfer coding}
 
+test http-protocol-1.12 {protocol session frames chunked response bytes} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set head [$protocol build_chunked_response_head \
+            200 OK utf-8 [list "Content-Type: text/plain"] text]
+        set first [$protocol chunk_frame \
+            [$protocol encode_response_body alpha utf-8 text]]
+        set binary [binary format H* 0080ff]
+        set second [$protocol chunk_frame \
+            [$protocol encode_response_body $binary utf-8 binary]]
+        list \
+            [string match "HTTP/1.1 200 OK*" $head] \
+            [regexp -nocase {Transfer-Encoding: chunked} $head] \
+            [expr {![regexp -nocase {Content-Length:} $head]}] \
+            [binary encode hex $first] \
+            [binary encode hex $second] \
+            [$protocol chunk_terminator]
+    } finally {
+        $protocol destroy
+    }
+} -result [list \
+    1 1 1 \
+    350d0a616c7068610d0a \
+    330d0a0080ff0d0a \
+    "0\r\n\r\n"]
+
 test http-connection-agent-1.1 {HTTP agent specializes the generic connection agent} -body {
     list \
         [info class superclasses ::tclwire::HttpConnectionAgent] \
@@ -429,6 +455,60 @@ test http-connection-1.11 {gzip chunked requests reach the application} -body {
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
 } -result 1
+
+test http-connection-1.12 {applications can stream chunked responses} -setup {
+    set streaming_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::StreamingApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request_descriptor} {
+        ::tclwire::io response 200 OK \
+            [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+        ::tclwire::http::io header set Transfer-Encoding chunked
+        ::tclwire::io out alpha
+        ::tclwire::io flush
+        ::tclwire::io out beta
+    }
+}
+} streaming-application.tcl]
+    set streaming_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::StreamingApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $streaming_application \
+   $project_root] streaming-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $streaming_config]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body [string range $response [expr {$separator + 4}] end]
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        [regexp -nocase {Transfer-Encoding: chunked} $headers] \
+        [expr {![regexp -nocase {Content-Length:} $headers]}] \
+        [binary encode hex $body]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $streaming_config
+    removeFile $streaming_application
+} -result {1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a}
 
 ::tclwire::http_connection_test::cleanup
 cleanupTests

@@ -107,6 +107,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         dict set request_d response_reason OK
         dict set request_d response_headers {}
         dict set request_d response_body_mode text
+        dict set request_d response_state preparing
+        dict set request_d response_bytes 0
         dict set request_d output_sequence 0
         my begin_transaction $transaction_id $request_d
         if {[catch {
@@ -132,6 +134,119 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return $request_d
     }
 
+    method header_name {header} {
+        if {![regexp {^([^:]+):} $header -> name]} {
+            error "invalid HTTP response header"
+        }
+        return [string trim $name]
+    }
+
+    method header_value {header} {
+        if {![regexp {^[^:]+:\s*(.*)$} $header -> value]} {
+            error "invalid HTTP response header"
+        }
+        return $value
+    }
+
+    method response_header_values {descriptor name} {
+        set values {}
+        foreach header [dict get $descriptor response_headers] {
+            if {[string equal -nocase [my header_name $header] $name]} {
+                lappend values [my header_value $header]
+            }
+        }
+        return $values
+    }
+
+    method chunked_response {descriptor} {
+        set values [my response_header_values $descriptor Transfer-Encoding]
+        if {[llength $values] == 0} {
+            return 0
+        }
+        if {[llength $values] != 1 ||
+                ![string equal -nocase [string trim [lindex $values 0]] chunked]} {
+            error "unsupported response Transfer-Encoding"
+        }
+        if {[llength [my response_header_values \
+                $descriptor Content-Length]] > 0} {
+            error "response contains both Transfer-Encoding and Content-Length"
+        }
+        if {[dict get $descriptor version] ne "1.1"} {
+            error "chunked responses require HTTP/1.1"
+        }
+        return 1
+    }
+
+    method apply_header_event {descriptor flags} {
+        if {[dict get $descriptor response_state] ne "preparing"} {
+            error "HTTP response headers have already been sent"
+        }
+
+        set action [dict get $flags action]
+        set name [dict get $flags name]
+        set value {}
+        if {[dict exists $flags value]} {
+            set value [dict get $flags value]
+        }
+        if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $name] ||
+                [string first "\r" $value] >= 0 ||
+                [string first "\n" $value] >= 0} {
+            error "invalid HTTP response header"
+        }
+
+        set headers {}
+        foreach header [dict get $descriptor response_headers] {
+            if {$action in {set remove} &&
+                    [string equal -nocase [my header_name $header] $name]} {
+                continue
+            }
+            lappend headers $header
+        }
+        switch -exact -- $action {
+            set -
+            add {
+                lappend headers "$name: $value"
+            }
+            remove {}
+            default {
+                error "unknown HTTP header operation: $action"
+            }
+        }
+        dict set descriptor response_headers $headers
+        my chunked_response $descriptor
+        return $descriptor
+    }
+
+    method commit_chunked_response {descriptor} {
+        if {[dict get $descriptor response_state] eq "committed"} {
+            return $descriptor
+        }
+        if {![my chunked_response $descriptor]} {
+            error "response is not configured for chunked transfer"
+        }
+        set response_head [$protocol_session build_chunked_response_head \
+            [dict get $descriptor response_status] \
+            [dict get $descriptor response_reason] \
+            [dict get $descriptor response_encoding] \
+            [dict get $descriptor response_headers] \
+            [dict get $descriptor response_body_mode]]
+        if {![my write_output $response_head]} {
+            error "failed to write HTTP response headers"
+        }
+        dict set descriptor response_state committed
+        return $descriptor
+    }
+
+    method abort_application_response {transaction_id descriptor} {
+        my finish_transaction $transaction_id
+        if {[dict get $descriptor response_state] eq "preparing"} {
+            my send_error 500
+        } else {
+            my close
+        }
+        return
+    }
+
     method application_output {transaction_id event} {
         set descriptor [my transaction_for $transaction_id]
         if {$descriptor eq {}} {
@@ -148,9 +263,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
         switch -exact -- [dict get $event type] {
             response {
-                if {[dict get $descriptor response_body] ne {}} {
-                    my finish_transaction $transaction_id
-                    my send_error 500
+                if {[dict get $descriptor response_state] ne "preparing" ||
+                        [dict get $descriptor response_body] ne {}} {
+                    my abort_application_response $transaction_id $descriptor
                     return
                 }
                 set flags [dict get $event flags]
@@ -161,6 +276,20 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     dict set descriptor response_encoding \
                         [dict get $flags encoding]
                 }
+                if {[catch {my chunked_response $descriptor}]} {
+                    my abort_application_response $transaction_id $descriptor
+                    return
+                }
+                my update_transaction $transaction_id $descriptor
+            }
+            http_header {
+                if {[catch {
+                    set descriptor [my apply_header_event \
+                        $descriptor [dict get $event flags]]
+                }]} {
+                    my abort_application_response $transaction_id $descriptor
+                    return
+                }
                 my update_transaction $transaction_id $descriptor
             }
             output {
@@ -169,17 +298,77 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     set body_mode [dict get $event flags body_mode]
                 }
                 if {$body_mode ne [dict get $descriptor response_body_mode]} {
-                    my finish_transaction $transaction_id
-                    my send_error 500
+                    my abort_application_response $transaction_id $descriptor
                     return
                 }
-                dict append descriptor response_body [dict get $event data]
+                if {[catch {set chunked [my chunked_response $descriptor]}]} {
+                    my abort_application_response $transaction_id $descriptor
+                    return
+                }
+                if {$chunked} {
+                    if {[catch {
+                        set descriptor [my commit_chunked_response $descriptor]
+                        set body_bytes [$protocol_session encode_response_body \
+                            [dict get $event data] \
+                            [dict get $descriptor response_encoding] \
+                            $body_mode]
+                        set frame [$protocol_session chunk_frame $body_bytes]
+                        if {$frame ne {} && ![my write_output $frame]} {
+                            error "failed to write HTTP response chunk"
+                        }
+                    }]} {
+                        my abort_application_response $transaction_id $descriptor
+                        return
+                    }
+                    dict incr descriptor response_bytes \
+                        [string length $body_bytes]
+                } else {
+                    dict append descriptor response_body [dict get $event data]
+                }
                 my update_transaction $transaction_id $descriptor
             }
             flush {
+                if {[catch {set chunked [my chunked_response $descriptor]}]} {
+                    my abort_application_response $transaction_id $descriptor
+                    return
+                }
+                if {$chunked} {
+                    if {[catch {
+                        set descriptor [my commit_chunked_response $descriptor]
+                        if {![my write_output {} 1]} {
+                            error "failed to flush HTTP response"
+                        }
+                    }]} {
+                        my abort_application_response $transaction_id $descriptor
+                        return
+                    }
+                }
                 my update_transaction $transaction_id $descriptor
             }
             complete {
+                if {[catch {set chunked [my chunked_response $descriptor]}]} {
+                    my abort_application_response $transaction_id $descriptor
+                    return
+                }
+                if {$chunked} {
+                    if {[catch {
+                        set descriptor [my commit_chunked_response $descriptor]
+                        if {![my write_output \
+                                [$protocol_session chunk_terminator] 1]} {
+                            error "failed to terminate HTTP chunks"
+                        }
+                    }]} {
+                        my abort_application_response $transaction_id $descriptor
+                        return
+                    }
+                    dict set descriptor response_state complete
+                    my finish_transaction $transaction_id
+                    my log_request $descriptor \
+                        [dict get $descriptor response_status] \
+                        [dict get $descriptor response_bytes]
+                    my close
+                    return
+                }
                 set body [dict get $descriptor response_body]
                 set content_encoding [dict get $descriptor response_encoding]
                 set status [dict get $descriptor response_status]
@@ -199,12 +388,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 my write_and_close $response
             }
             error {
-                my finish_transaction $transaction_id
-                my send_error 500
+                my abort_application_response $transaction_id $descriptor
             }
             default {
-                my finish_transaction $transaction_id
-                my send_error 500
+                my abort_application_response $transaction_id $descriptor
             }
         }
         return
@@ -247,7 +434,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return [my active_transaction]
     }
 
-    unexport log_request
+    unexport abort_application_response apply_header_event \
+        chunked_response commit_chunked_response header_name header_value \
+        log_request response_header_values
 }
 
 package provide tclwire::http::connection_agent 0.1

@@ -128,11 +128,25 @@ oo::class create ::tclwire::ConnectionAgent {
         if {$closed} {
             return
         }
-        catch {
-            puts -nonewline $channel $data
-            flush $channel
-        }
+        my write_output $data 1
         my close
+    }
+
+    method write_output {data {flush_output 0}} {
+        if {$closed} {
+            return 0
+        }
+        if {[catch {
+            puts -nonewline $channel $data
+            if {$flush_output} {
+                flush $channel
+            }
+        }]} {
+            my close
+            return 0
+        }
+        my refresh_timeout
+        return 1
     }
 
     method close {} {
@@ -168,7 +182,7 @@ oo::class create ::tclwire::ConnectionAgent {
 
     unexport begin_transaction clear_input_buffer finish_transaction initial_read \
         read_available refresh_timeout transaction_for update_transaction \
-        write_and_close
+        write_and_close write_output
 }
 
 namespace eval ::tclwire {

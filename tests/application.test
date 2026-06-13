@@ -6,6 +6,7 @@ lappend auto_path $project_root
 
 package require Thread
 package require tclwire::application::io 0.1
+package require tclwire::http::application::io 0.1
 package require tclwire::application 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::connection_agent 0.1
@@ -258,6 +259,54 @@ test application-io-1.1 {output commands send ordered transaction events} -body 
         $receiver destroy
     }
 } -result {7 output 1 7 flush 2 7 complete 3}
+
+test http-application-io-1.1 {HTTP header commands maintain and emit metadata} -body {
+    set ::tclwire::application_test::events {}
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 9
+        ::tclwire::http::io header set Transfer-Encoding chunked
+        ::tclwire::http::io header add Set-Cookie first=1
+        ::tclwire::http::io header add Set-Cookie second=2
+        set transfer_encoding \
+            [::tclwire::http::io header get transfer-encoding]
+        set cookies [::tclwire::http::io header get set-cookie]
+        ::tclwire::http::io header remove Set-Cookie
+        set removed [::tclwire::http::io header get Set-Cookie]
+        ::tclwire::io end
+        update
+
+        set operations {}
+        foreach item $::tclwire::application_test::events {
+            set event [lindex $item 1]
+            lappend operations \
+                [dict get $event type] \
+                [dict get $event flags action]
+        }
+        list $transfer_encoding $cookies $removed $operations
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result [list \
+    chunked \
+    {first=1 second=2} \
+    {} \
+    {http_header set http_header add http_header add http_header remove}]
+
+test http-application-io-1.2 {HTTP response headers reject line injection} -body {
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 10
+        catch {
+            ::tclwire::http::io header set X-Test "valid\r\nInjected: yes"
+        } message
+        set message
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result {invalid HTTP response header value}
 
 test http-errors-1.1 {HTTP errors are loaded from the root JSON catalog} -body {
     set response [::tclwire::http::errors response 503]

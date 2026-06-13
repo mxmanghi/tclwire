@@ -1,0 +1,143 @@
+# http_application_io.tcl --
+#
+# HTTP-specific response controls for Content Generator Agents.
+
+package require tclwire::application::io 0.1
+
+namespace eval ::tclwire::http {}
+
+namespace eval ::tclwire::http::io {
+    variable context_key {}
+    variable headers {}
+
+    proc reset_if_needed {} {
+        variable context_key
+        variable headers
+
+        set context [::tclwire::io context]
+        if {![dict get $context active]} {
+            error "no application output transaction is active"
+        }
+        set current_key [list \
+            [dict get $context connection_thread_id] \
+            [dict get $context connection_agent_id] \
+            [dict get $context transaction_id]]
+        if {$context_key ne $current_key} {
+            set context_key $current_key
+            set headers {}
+        }
+        return
+    }
+
+    proc validate_header {name {value {}}} {
+        if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $name]} {
+            error "invalid HTTP response header name"
+        }
+        if {[string first "\r" $value] >= 0 ||
+                [string first "\n" $value] >= 0} {
+            error "invalid HTTP response header value"
+        }
+        return
+    }
+
+    proc matching_header {left right} {
+        return [string equal -nocase $left $right]
+    }
+
+    proc header_set {name value} {
+        variable headers
+        reset_if_needed
+        validate_header $name $value
+
+        set updated {}
+        foreach header $headers {
+            if {![matching_header [lindex $header 0] $name]} {
+                lappend updated $header
+            }
+        }
+        lappend updated [list $name $value]
+        set headers $updated
+        ::tclwire::io::send_event http_header {} \
+            [dict create action set name $name value $value]
+        return $value
+    }
+
+    proc header_add {name value} {
+        variable headers
+        reset_if_needed
+        validate_header $name $value
+
+        lappend headers [list $name $value]
+        ::tclwire::io::send_event http_header {} \
+            [dict create action add name $name value $value]
+        return $value
+    }
+
+    proc header_remove {name} {
+        variable headers
+        reset_if_needed
+        validate_header $name
+
+        set updated {}
+        foreach header $headers {
+            if {![matching_header [lindex $header 0] $name]} {
+                lappend updated $header
+            }
+        }
+        set headers $updated
+        ::tclwire::io::send_event http_header {} \
+            [dict create action remove name $name]
+        return
+    }
+
+    proc header_get {name} {
+        variable headers
+        reset_if_needed
+        validate_header $name
+
+        set values {}
+        foreach header $headers {
+            if {[matching_header [lindex $header 0] $name]} {
+                lappend values [lindex $header 1]
+            }
+        }
+        return $values
+    }
+
+    proc header {operation args} {
+        switch -exact -- $operation {
+            set {
+                if {[llength $args] != 2} {
+                    error {wrong # args: should be "::tclwire::http::io header set name value"}
+                }
+                return [header_set {*}$args]
+            }
+            add {
+                if {[llength $args] != 2} {
+                    error {wrong # args: should be "::tclwire::http::io header add name value"}
+                }
+                return [header_add {*}$args]
+            }
+            remove {
+                if {[llength $args] != 1} {
+                    error {wrong # args: should be "::tclwire::http::io header remove name"}
+                }
+                return [header_remove {*}$args]
+            }
+            get {
+                if {[llength $args] != 1} {
+                    error {wrong # args: should be "::tclwire::http::io header get name"}
+                }
+                return [header_get {*}$args]
+            }
+            default {
+                error "unknown HTTP header operation: $operation"
+            }
+        }
+    }
+
+    namespace export header
+    namespace ensemble create
+}
+
+package provide tclwire::http::application::io 0.1

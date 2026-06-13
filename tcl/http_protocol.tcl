@@ -253,13 +253,8 @@ oo::class create ::tclwire::HttpProtocolSession {
     method build_response {
         status reason body content_encoding {headers {}} {body_mode text}
     } {
-        if {$body_mode eq "binary"} {
-            set body_bytes $body
-        } elseif {$body_mode eq "text"} {
-            set body_bytes [encoding convertto $content_encoding $body]
-        } else {
-            error "unknown HTTP response body mode: $body_mode"
-        }
+        set body_bytes [my encode_response_body \
+            $body $content_encoding $body_mode]
         set response_headers [list \
             "HTTP/1.1 $status $reason" \
             "Connection: close" \
@@ -277,6 +272,59 @@ oo::class create ::tclwire::HttpProtocolSession {
             "[join $response_headers "\r\n"]\r\n\r\n"]
         append response $body_bytes
         return $response
+    }
+
+    method encode_response_body {body content_encoding body_mode} {
+        switch -exact -- $body_mode {
+            binary {
+                return $body
+            }
+            text {
+                return [encoding convertto $content_encoding $body]
+            }
+            default {
+                error "unknown HTTP response body mode: $body_mode"
+            }
+        }
+    }
+
+    method build_chunked_response_head {
+        status reason content_encoding headers body_mode
+    } {
+        set response_headers [list \
+            "HTTP/1.1 $status $reason" \
+            "Connection: close" \
+            "Transfer-Encoding: chunked"]
+        if {![regexp -nocase {^Content-Type:} [join $headers "\n"]]} {
+            if {$body_mode eq "binary"} {
+                lappend response_headers "Content-Type: application/octet-stream"
+            } else {
+                lappend response_headers \
+                    "Content-Type: text/html; charset=$content_encoding"
+            }
+        }
+        foreach header $headers {
+            if {[regexp -nocase {^(Content-Length|Transfer-Encoding):} $header]} {
+                continue
+            }
+            lappend response_headers $header
+        }
+        return [encoding convertto ascii \
+            "[join $response_headers "\r\n"]\r\n\r\n"]
+    }
+
+    method chunk_frame {body_bytes} {
+        if {$body_bytes eq {}} {
+            return {}
+        }
+        set frame [encoding convertto ascii \
+            "[format %X [string length $body_bytes]]\r\n"]
+        append frame $body_bytes "\r\n"
+        return $frame
+    }
+
+    method chunk_terminator {} {
+        return [encoding convertto ascii "0\r\n\r\n"]
     }
 
     unexport decode_transfer_codings parse_chunked_body parse_trailers \

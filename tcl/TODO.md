@@ -10,8 +10,8 @@ meaningfully implemented by the legacy server.
 
 - [x] Decode request bodies using `Transfer-Encoding: chunked`.
 - [x] Decode the `gzip, chunked` request transfer-coding chain.
-- [ ] Generate chunked HTTP responses.
-- [ ] Support incremental and delayed response output without buffering the
+- [x] Generate chunked HTTP responses.
+- [x] Support incremental and delayed response output without buffering the
       complete result in the Connection Agent.
 - [ ] Implement correct `HEAD` handling: generate the same headers as `GET`,
       including the appropriate content length, but omit the response body.
@@ -32,7 +32,7 @@ methods placed directly in the default `::tclwire::CApplication`.
 
 ## Application Output Bridge
 
-- [ ] Make `::tclwire::io::flush` forward buffered output to the Connection
+- [x] Make `::tclwire::io::flush` forward buffered output to the Connection
       Agent and ultimately to the socket channel.
 - [ ] Allow application output to be streamed instead of always accumulated in
       `::tclwire::HttpConnectionAgent`.

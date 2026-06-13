@@ -4,6 +4,7 @@
 
 package require TclOO
 package require tclwire::application::io 0.1
+package require tclwire::http::application::io 0.1
 package require tclwire::http::errors 0.1
 package require fileutil
 
