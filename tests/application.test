@@ -109,6 +109,48 @@ test application-dispatcher-1.7 {an explicit application root needs no global fa
     }
 } -result [file normalize /tmp/tclwire-explicit-docroot]
 
+test application-dispatcher-1.8 {file-backed applications use source in workers} -setup {
+    set application_file [makeFile {
+oo::class create ::example::Application {
+    constructor {descriptor} {}
+    method handle_request {descriptor} {}
+}
+} file-backed-application.tcl]
+} -body {
+    set config $application_config
+    dict set config applications default [dict create \
+        class ::example::Application \
+        file $application_file \
+        hosts example.test \
+        docroot /tmp \
+        encoding utf-8]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set script [$dispatcher worker_script \
+            [dict get $config applications default]]
+        list \
+            [expr {[string first [list source $application_file] $script] >= 0}] \
+            [expr {[string first {package require tclwire::application 0.1} \
+                $script] < 0}]
+    } finally {
+        $dispatcher destroy
+    }
+} -cleanup {
+    removeFile $application_file
+} -result {1 1}
+
+test application-dispatcher-1.9 {package-backed applications remain supported} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        set descriptor [dict get $application_config applications default]
+        expr {[string first \
+            {package require tclwire::application 0.1} \
+            [$dispatcher worker_script $descriptor]] >= 0}
+    } finally {
+        $dispatcher destroy
+    }
+} -result 1
+
 test application-1.1 {CApplication receives its effective document root} -body {
     set descriptor [dict create \
         class ::tclwire::CApplication \

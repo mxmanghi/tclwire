@@ -15,6 +15,7 @@ package require tclwire::tpba::control 0.1
 package require tclwire::logger::control 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::transport_reactor 0.1
+package require tomlfile 0.1
 
 namespace eval ::tclwire {}
 
@@ -46,6 +47,7 @@ namespace eval ::tclwire::runtime {
         puts $channel "Options:"
         puts $channel "  --help"
         puts $channel "      Show this help message."
+        puts $channel "  --config <path>     Default: . (no configuration file)"
         puts $channel "  --host <address>"
         puts $channel "      Bind address prepared for future services. Default: 127.0.0.1"
         puts $channel "  --startservers <list>"
@@ -151,7 +153,31 @@ namespace eval ::tclwire::runtime {
         return $protocols
     }
 
-    proc parse_args {argv} {
+    proc parse_boolean {name value} {
+        switch -exact -- [string tolower [string trim $value]] {
+            true - 1 - yes - on {
+                return 1
+            }
+            false - 0 - no - off {
+                return 0
+            }
+            default {
+                error "invalid boolean for $name: $value"
+            }
+        }
+    }
+
+    proc resolve_config_path {config_dir value} {
+        if {$value eq {}} {
+            return {}
+        }
+        if {[file pathtype $value] eq "absolute"} {
+            return [file normalize $value]
+        }
+        return [file normalize [file join $config_dir $value]]
+    }
+
+    proc default_config {} {
         variable protocol_defaults
 
         set host 127.0.0.1
@@ -166,80 +192,13 @@ namespace eval ::tclwire::runtime {
         set ftp_user_check 1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
         set startservers [default_protocols]
-        set services {}
+        set services [list [dict create \
+            protocol http \
+            port [dict get $protocol_defaults http]]]
         set custom_services 0
         set ports $protocol_defaults
         set default_application default
         set default_encoding utf-8
-
-        for {set i 0} {$i < [llength $argv]} {incr i} {
-            set option [lindex $argv $i]
-            switch -exact -- $option {
-                --help {
-                    set help 1
-                }
-                --host {
-                    set host [require_value $argv [incr i] $option]
-                }
-                --startservers {
-                    set startservers [parse_protocol_list \
-                        [require_value $argv [incr i] $option]]
-                }
-                --httpport  -
-                --httpsport -
-                --ftpport   -
-                --ftpsport  -
-                --proxyport {
-                    set protocol [string range $option 2 end-4]
-                    dict set ports $protocol [parse_port_value $option [require_value $argv [incr i] $option]]
-                }
-                --service {
-                    if {!$custom_services} {
-                        set services {}
-                        set custom_services 1
-                    }
-                    lappend services [parse_service_spec \
-                        [require_value $argv [incr i] $option]]
-                }
-                --docroot {
-                    set docroot [file normalize \
-                        [require_value $argv [incr i] $option]]
-                    if {$ftproot_follows_docroot} {
-                        set ftproot $docroot
-                    }
-                }
-                --ftproot {
-                    set ftproot [file normalize \
-                        [require_value $argv [incr i] $option]]
-                    set ftproot_follows_docroot 0
-                }
-                --certfile {
-                    set certfile [file normalize \
-                        [require_value $argv [incr i] $option]]
-                }
-                --keyfile {
-                    set keyfile [file normalize \
-                        [require_value $argv [incr i] $option]]
-                }
-                --noftp-user-check {
-                    set ftp_user_check 0
-                }
-                --logfile {
-                    set logfile [file normalize \
-                        [require_value $argv [incr i] $option]]
-                }
-                --quiet {
-                    set quiet 1
-                }
-                --debug {
-                    set debug 1
-                }
-                default {
-                    error "unknown argument: $option"
-                }
-            }
-        }
-
         set applications [dict create \
             default [dict create class      ::tclwire::CApplication \
                                  package    tclwire::application    \
@@ -248,29 +207,8 @@ namespace eval ::tclwire::runtime {
                                  encoding   $default_encoding       \
                                  pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
 
-        if {!$custom_services} {
-            foreach protocol $startservers {
-                lappend services [dict create \
-                    protocol $protocol \
-                    port [dict get $ports $protocol]]
-            }
-        } else {
-            set selected {}
-            foreach service $services {
-                if {[dict get $service protocol] in $startservers} {
-                    lappend selected $service
-                }
-            }
-            set services $selected
-        }
-        set normalized_services {}
-        foreach service $services {
-            lappend normalized_services [normalize_service \
-                $service $certfile $keyfile]
-        }
-        set services $normalized_services
-
         return [dict create help         $help \
+                            config_file  . \
                             host         $host \
                             quiet        $quiet \
                             debug        $debug \
@@ -283,8 +221,328 @@ namespace eval ::tclwire::runtime {
                             logfile      $logfile \
                             startservers $startservers \
                             services     $services \
+                            custom_services $custom_services \
+                            ports        $ports \
+                            ftproot_follows_docroot $ftproot_follows_docroot \
                             default_application $default_application \
                             applications $applications]
+    }
+
+    proc find_config_option {argv} {
+        set config_file .
+        for {set i 0} {$i < [llength $argv]} {incr i} {
+            set option [lindex $argv $i]
+            if {$option eq "--config"} {
+                set config_file [require_value $argv [incr i] $option]
+            }
+        }
+        return $config_file
+    }
+
+    proc load_config_file {path} {
+        if {$path eq "."} {
+            return [dict create]
+        }
+        set path [file normalize $path]
+        if {![file isfile $path]} {
+            error "configuration file does not exist: $path"
+        }
+        return [::toml::tomlParse $path]
+    }
+
+    proc apply_file_config {config path toml_config} {
+        variable protocol_defaults
+
+        if {$path eq "."} {
+            return $config
+        }
+        set config_file [file normalize $path]
+        set config_dir [file dirname $config_file]
+        dict set config config_file $config_file
+
+        if {[dict exists $toml_config tclwire]} {
+            set global [dict get $toml_config tclwire]
+
+            # These fields need no conversion. Filtering before merging keeps
+            # unrelated TOML keys out while letting file values replace the
+            # built-in defaults in one dictionary operation.
+            set config [dict merge $config [dict filter $global key \
+                host encoding default_application]]
+
+            # dict filter selects the supported source fields; dict map
+            # validates and replaces their values. The later merge applies
+            # the transformed values without exposing unrelated TOML keys.
+            set booleans [dict map {field value} \
+                    [dict filter $global key quiet debug ftp_user_check] {
+                parse_boolean "tclwire.$field" $value
+            }]
+            set paths [dict map {field value} \
+                    [dict filter $global key \
+                        docroot ftproot certfile keyfile logfile] {
+                resolve_config_path $config_dir $value
+            }]
+            set config [dict merge $config $booleans $paths]
+
+            if {[dict exists $global docroot] &&
+                    ![dict exists $global ftproot]} {
+                dict set config ftproot [dict get $config docroot]
+            }
+        }
+
+        set startservers {}
+        set services {}
+        foreach protocol [implemented_protocols] {
+            if {![dict exists $toml_config $protocol]} {
+                continue
+            }
+            set protocol_config [dict get $toml_config $protocol]
+            set port [dict get $protocol_defaults $protocol]
+            if {[dict exists $protocol_config port]} {
+                set port [parse_port_value "$protocol.port" \
+                    [dict get $protocol_config port]]
+            }
+            dict set config ports $protocol $port
+
+            set enabled 1
+            if {[dict exists $protocol_config enabled]} {
+                set enabled [parse_boolean "$protocol.enabled" \
+                    [dict get $protocol_config enabled]]
+            }
+            if {!$enabled} {
+                continue
+            }
+
+            set service [dict create protocol $protocol port $port]
+
+            # The script form is useful here because inclusion depends on
+            # both the key and its value. It still preserves original values;
+            # dict map performs the subsequent path transformation.
+            set tls_paths [dict filter $protocol_config script {field value} {
+                expr {$field in {certfile keyfile} && $value ne {}}
+            }]
+            set tls_paths [dict map {field value} $tls_paths {
+                resolve_config_path $config_dir $value
+            }]
+            set service [dict merge $service $tls_paths]
+
+            lappend startservers $protocol
+            lappend services $service
+
+            if {$protocol in {ftp ftps}} {
+                if {[dict exists $protocol_config root]} {
+                    dict set config ftproot [resolve_config_path \
+                        $config_dir [dict get $protocol_config root]]
+                }
+                if {[dict exists $protocol_config user_check]} {
+                    dict set config ftp_user_check \
+                        [parse_boolean "$protocol.user_check" \
+                            [dict get $protocol_config user_check]]
+                }
+            }
+        }
+        dict set config startservers $startservers
+        dict set config services $services
+        dict set config custom_services 1
+
+        set applications [dict create]
+        foreach protocol {http https} {
+            if {![dict exists $toml_config $protocol]} {
+                continue
+            }
+            set protocol_config [dict get $toml_config $protocol]
+            dict for {application_id descriptor} $protocol_config {
+                if {$application_id in {enabled port certfile keyfile}} {
+                    continue
+                }
+                if {[catch {dict size $descriptor}]} {
+                    error "application '$protocol.$application_id' must be a table"
+                }
+
+                # Copy only descriptor values that already have the runtime's
+                # representation. Paths and worker limits are normalized
+                # separately below.
+                set application [dict filter $descriptor key \
+                    class package hosts encoding]
+                if {![dict exists $application hosts]} {
+                    dict set application hosts [list $application_id]
+                }
+                set application_paths [dict map {field value} \
+                        [dict filter $descriptor key file docroot] {
+                    resolve_config_path $config_dir $value
+                }]
+                set application [dict merge $application $application_paths]
+
+                set pool_policy [dict filter $descriptor key \
+                    minimum_workers maximum_workers]
+                if {[dict size $pool_policy]} {
+                    dict set application pool_policy $pool_policy
+                }
+                if {[dict exists $applications $application_id] &&
+                        [dict get $applications $application_id] ne $application} {
+                    error "application '$application_id' differs between HTTP and HTTPS"
+                }
+                dict set applications $application_id $application
+            }
+        }
+        if {[dict size $applications]} {
+            dict set config applications $applications
+        }
+        return $config
+    }
+
+    proc apply_cli_config {config argv} {
+        set custom_services 0
+        set cli_services {}
+        set startservers_set 0
+        set port_overrides [dict create]
+        set ftproot_set 0
+
+        for {set i 0} {$i < [llength $argv]} {incr i} {
+            set option [lindex $argv $i]
+            switch -exact -- $option {
+                --help {
+                    dict set config help 1
+                }
+                --config {
+                    incr i
+                }
+                --host {
+                    dict set config host [require_value $argv [incr i] $option]
+                }
+                --startservers {
+                    dict set config startservers [parse_protocol_list \
+                        [require_value $argv [incr i] $option]]
+                    set startservers_set 1
+                }
+                --httpport  -
+                --httpsport -
+                --ftpport   -
+                --ftpsport  -
+                --proxyport {
+                    set protocol [string range $option 2 end-4]
+                    dict set port_overrides $protocol [parse_port_value \
+                        $option [require_value $argv [incr i] $option]]
+                }
+                --service {
+                    set custom_services 1
+                    lappend cli_services [parse_service_spec \
+                        [require_value $argv [incr i] $option]]
+                }
+                --docroot {
+                    set docroot [file normalize [require_value \
+                        $argv [incr i] $option]]
+                    dict set config docroot $docroot
+                    set applications [dict get $config applications]
+                    dict for {application_id descriptor} $applications {
+                        dict set descriptor docroot $docroot
+                        dict set applications $application_id $descriptor
+                    }
+                    dict set config applications $applications
+                    if {!$ftproot_set} {
+                        dict set config ftproot $docroot
+                    }
+                }
+                --ftproot {
+                    dict set config ftproot [file normalize \
+                        [require_value $argv [incr i] $option]]
+                    set ftproot_set 1
+                }
+                --certfile {
+                    dict set config certfile [file normalize \
+                        [require_value $argv [incr i] $option]]
+                }
+                --keyfile {
+                    dict set config keyfile [file normalize \
+                        [require_value $argv [incr i] $option]]
+                }
+                --noftp-user-check {
+                    dict set config ftp_user_check 0
+                }
+                --logfile {
+                    dict set config logfile [file normalize \
+                        [require_value $argv [incr i] $option]]
+                }
+                --quiet {
+                    dict set config quiet 1
+                }
+                --debug {
+                    dict set config debug 1
+                }
+                default {
+                    error "unknown argument: $option"
+                }
+            }
+        }
+
+        if {$custom_services} {
+            dict set config services $cli_services
+        } else {
+            set services [dict get $config services]
+            if {$startservers_set} {
+                set selected {}
+                foreach protocol [dict get $config startservers] {
+                    set found 0
+                    foreach service $services {
+                        if {[dict get $service protocol] eq $protocol} {
+                            lappend selected $service
+                            set found 1
+                        }
+                    }
+                    if {!$found} {
+                        lappend selected [dict create protocol $protocol \
+                            port [dict get [dict get $config ports] $protocol]]
+                    }
+                }
+                set services $selected
+            }
+            set updated {}
+            foreach service $services {
+                set protocol [dict get $service protocol]
+                if {[dict exists $port_overrides $protocol]} {
+                    dict set service port [dict get $port_overrides $protocol]
+                }
+                lappend updated $service
+            }
+            dict set config services $updated
+        }
+        return $config
+    }
+
+    proc finalize_config {config} {
+        set applications [dict get $config applications]
+        dict for {application_id descriptor} $applications {
+            # Merge defaults first so application-specific values retain
+            # precedence without separate existence checks.
+            set descriptor [dict merge [dict create \
+                docroot [dict get $config docroot] \
+                encoding [dict get $config encoding]] $descriptor]
+            dict set applications $application_id $descriptor
+        }
+        dict set config applications $applications
+
+        set services [dict get $config services]
+        set normalized_services {}
+        foreach service $services {
+            lappend normalized_services [normalize_service \
+                $service [dict get $config certfile] [dict get $config keyfile]]
+        }
+        dict set config services $normalized_services
+        dict set config startservers [lmap service $normalized_services {
+            dict get $service protocol
+        }]
+        foreach internal {custom_services ports ftproot_follows_docroot} {
+            dict unset config $internal
+        }
+        return $config
+    }
+
+    proc parse_args {argv} {
+        set config_file [find_config_option $argv]
+        set config [default_config]
+        set config [apply_file_config $config $config_file \
+            [load_config_file $config_file]]
+        set config [apply_cli_config $config $argv]
+        return [finalize_config $config]
     }
 
     proc prepare_config {argv} {

@@ -8,11 +8,29 @@ package require tclwire::runtime 0.1
 
 namespace eval ::tclwire::runtime_test {
     variable logfile [file join [temporaryDirectory] tclwire-runtime-[pid].log]
+    variable config_files {}
 
     proc cleanup {} {
         variable logfile
+        variable config_files
         catch {::tclwire::runtime stop}
         catch {file delete -force $logfile}
+        foreach path $config_files {
+            catch {file delete -force $path}
+        }
+        set config_files {}
+    }
+
+    proc make_config {contents} {
+        variable config_files
+        set directory [file join [temporaryDirectory] tclwire-config-[pid]]
+        file mkdir $directory
+        set path [file join $directory tclwire.toml]
+        set channel [open $path w]
+        puts -nonewline $channel $contents
+        close $channel
+        lappend config_files $directory
+        return $path
     }
 }
 
@@ -234,6 +252,144 @@ test runtime-1.11 {secure services reject missing default credentials} -body {
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result {1 {secure service 'https:9443' is missing certfile} 0 {} {}}
+
+test runtime-1.12 {TOML controls global and protocol configuration} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+host = "0.0.0.0"
+debug = true
+quiet = true
+encoding = "iso8859-1"
+docroot = "www"
+ftproot = "ftp"
+logfile = "logs/runtime.log"
+certfile = "tls/default.crt"
+keyfile = "tls/default.key"
+ftp_user_check = false
+default_application = "site.example.test"
+
+[http]
+enabled = false
+port = 8080
+
+[https]
+enabled = true
+port = 8443
+
+[https."site.example.test"]
+class = "::example::Application"
+file = "apps/example.tcl"
+encoding = "utf-8"
+minimum_workers = 2
+maximum_workers = 7
+
+[ftp]
+enabled = true
+port = 2121
+root = "ftp-public"
+user_check = true
+
+[proxy]
+enabled = false
+port = 8081
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set directory [file dirname $config_file]
+    list \
+        [dict get $config host] \
+        [dict get $config debug] \
+        [dict get $config quiet] \
+        [dict get $config encoding] \
+        [dict get $config docroot] \
+        [dict get $config ftproot] \
+        [dict get $config logfile] \
+        [dict get $config certfile] \
+        [dict get $config keyfile] \
+        [dict get $config ftp_user_check] \
+        [dict get $config startservers] \
+        [dict get $config services] \
+        [dict get $config default_application] \
+        [dict get $config applications site.example.test]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    0.0.0.0 1 1 iso8859-1 \
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] ftp-public]] \
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] logs runtime.log]] \
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.crt]] \
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.key]] \
+    1 \
+    {https ftp} \
+    [list \
+        [dict create protocol https port 8443 id https:8443 secure 1 \
+            certfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.crt]] \
+            keyfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.key]]] \
+        [dict create protocol ftp port 2121 id ftp:2121 secure 0]] \
+    site.example.test \
+    [dict create \
+        docroot [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
+        encoding utf-8 \
+        class ::example::Application \
+        hosts site.example.test \
+        file [file normalize [file join [temporaryDirectory] tclwire-config-[pid] apps example.tcl]] \
+        pool_policy [dict create minimum_workers 2 maximum_workers 7]]]
+
+test runtime-1.13 {CLI values supersede TOML configuration} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+host = "0.0.0.0"
+docroot = "configured-www"
+logfile = "configured.log"
+
+[http]
+enabled = true
+port = 8080
+
+[ftp]
+enabled = true
+port = 2121
+
+[proxy]
+enabled = false
+port = 8180
+}]
+    set config [::tclwire::runtime parse_args [list \
+        --config $config_file \
+        --host 127.0.0.2 \
+        --startservers http,proxy \
+        --httpport 8181 \
+        --docroot ./cli-www \
+        --logfile ./cli.log \
+        --debug]]
+    list \
+        [dict get $config host] \
+        [dict get $config debug] \
+        [dict get $config docroot] \
+        [dict get $config logfile] \
+        [dict get $config startservers] \
+        [dict get $config services]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    127.0.0.2 1 \
+    [file normalize ./cli-www] \
+    [file normalize ./cli.log] \
+    {http proxy} \
+    [list \
+        [dict create protocol http port 8181 id http:8181 secure 0] \
+        [dict create protocol proxy port 8180 id proxy:8180 secure 0]]]
+
+test runtime-1.14 {missing protocol tables disable all external services} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+logfile = "runtime.log"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    list [dict get $config startservers] [dict get $config services]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {{} {}}
 
 ::tclwire::runtime_test::cleanup
 cleanupTests

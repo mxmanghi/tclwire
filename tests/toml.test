@@ -1,0 +1,61 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+source [file join $project_root tcl toml.tcl]
+
+test toml-1.1 {quoted empty strings are retained as empty values} -body {
+    list \
+        [::toml::keyValuePair {double = ""}] \
+        [::toml::keyValuePair {single = ''}]
+} -result [list [list double ""] [list single ""]]
+
+test toml-1.2 {an absent value remains a syntax error} -body {
+    catch {::toml::keyValuePair {missing =}} message
+    set message
+} -result {Syntax error in key/value: value is empty - missing =}
+
+test toml-1.3 {quotes in comments do not affect comment stripping} -body {
+    list \
+        [string trimright [::toml::stripComment {value = 1 # say "hello"}]] \
+        [string trimright [::toml::stripComment {value = 1 # it's valid}]]
+} -result [list {value = 1} {value = 1}]
+
+test toml-1.4 {hash characters inside strings are retained} -body {
+    list \
+        [string trimright [::toml::stripComment {value = "a # value" # comment}]] \
+        [string trimright [::toml::stripComment {value = 'a # value' # comment}]]
+} -result [list {value = "a # value"} {value = 'a # value'}]
+
+test toml-1.5 {empty values and quoted comments parse from a file} -setup {
+    set config_file [makeFile {
+[service]
+certfile = ""
+keyfile = '' # an "empty" key path
+label = "value # retained" # a "quoted" comment
+} toml-empty-values.toml]
+} -body {
+    set config [::toml::tomlParse $config_file]
+    list \
+        [dict get $config service certfile] \
+        [dict get $config service keyfile] \
+        [dict get $config service label]
+} -cleanup {
+    removeFile $config_file
+} -result [list "" "" {value # retained}]
+
+test toml-1.6 {quoted dotted table components remain one key} -setup {
+    set config_file [makeFile {
+[http."www.example.test"]
+class = "::example::Application"
+} toml-dotted-table.toml]
+} -body {
+    set config [::toml::tomlParse $config_file]
+    list \
+        [dict keys [dict get $config http]] \
+        [dict get $config http www.example.test class]
+} -cleanup {
+    removeFile $config_file
+} -result [list www.example.test ::example::Application]
+
+cleanupTests

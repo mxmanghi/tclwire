@@ -4,6 +4,9 @@ package ifneeded tclwire::accounting 1.2 \
 package ifneeded tclwire::support 0.1 \
     [list source [file join $dir tcl support.tcl]]
 
+package ifneeded tomlfile 0.1 \
+    [list source [file join $dir tcl toml.tcl]]
+
 package ifneeded tclwire::http::protocol 0.1 \
     [list source [file join $dir tcl http_protocol.tcl]]
 
@@ -102,5 +105,6 @@ package ifneeded tclwire::runtime 0.1 [subst {
     package require tclwire::logger::control 0.1
     package require tclwire::application_dispatcher 0.1
     package require tclwire::transport_reactor 0.1
+    package require tomlfile 0.1
     source [list [file join $dir tcl tclwire.tcl]]
 }]

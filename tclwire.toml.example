@@ -1,0 +1,112 @@
+# TclWire configuration draft
+#
+# Proposed precedence, from highest to lowest:
+#   1. command-line options
+#   2. values in this file
+#   3. runtime defaults
+#
+# A protocol is enabled when its table exists, unless enabled is false.
+# A missing protocol table disables that protocol.  The CLI --startservers
+# option overrides protocol selection, while the protocol-specific CLI port
+# option overrides the port below.
+#
+# Paths should be resolved relative to the directory containing this file.
+
+[tclwire]
+host = "127.0.0.1"
+quiet = false
+debug = false
+encoding = "utf-8"
+docroot = "/tmp/tclwire"
+ftproot = "/tmp/tclwire"
+ftp_user_check = true
+logfile = "/tmp/tclwire.log"
+
+# Empty values preserve the runtime's current TLS defaults. Set these when
+# secure protocols should share one certificate and private key.
+certfile = ""
+keyfile = ""
+
+# This is the application selected when an HTTP request has no Host header.
+# It must name one of the application tables under [http] or [https].
+default_application = "default"
+
+[http]
+enabled = true
+port = 8990
+
+# The final table component is the application ID and, when "hosts" is
+# omitted, its hostname. Quote DNS names containing dots, for example:
+# [http."www.example.test"]
+[http.default]
+# The bundled parser currently mishandles TOML arrays.  Until it is repaired,
+# encode host aliases as a Tcl list in one string.
+hosts = "localhost 127.0.0.1"
+class = "::tclwire::CApplication"
+
+# "file" is the proposed application entry point. Loading it should define
+# the TclOO class named by "class". It is relative to this configuration file
+# unless absolute.
+file = "tcl/application.tcl"
+
+# "package" preserves compatibility with the current dispatcher, which uses
+# package require rather than sourcing "file". A future loader may make this
+# optional when "file" is present.
+package = "tclwire::application"
+
+docroot = "/tmp/tclwire"
+encoding = "utf-8"
+minimum_workers = 0
+maximum_workers = 20
+
+# Example virtual host/application:
+#
+# [http."example.test"]
+# hosts: example.test and www.example.test
+# class: ::example::Application
+# file: applications/example/application.tcl
+# package: example::application
+# docroot: applications/example/public
+# encoding: utf-8
+# minimum_workers = 1
+# maximum_workers = 20
+
+[https]
+enabled = false
+port = 9443
+
+# These override the global TLS defaults in [tclwire].
+certfile = ""
+keyfile = ""
+
+# HTTPS applications have the same schema as HTTP applications.  Defining
+# them separately permits HTTPS-only virtual hosts.  If no application tables
+# are present here, the proposed behavior is to reuse the [http] applications.
+#
+# [https.secure_example]
+# hosts: secure.example.test
+# class: ::example::SecureApplication
+# file: applications/example/secure_application.tcl
+# package: example::secure_application
+# docroot: applications/example/private
+# encoding: utf-8
+# minimum_workers = 1
+# maximum_workers = 20
+
+[ftp]
+enabled = false
+port = 8991
+root = "/tmp/tclwire"
+user_check = true
+
+[ftps]
+enabled = false
+port = 990
+root = "/tmp/tclwire"
+user_check = true
+certfile = ""
+keyfile = ""
+
+[proxy]
+enabled = false
+port = 8992

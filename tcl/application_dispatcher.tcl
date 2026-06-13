@@ -58,10 +58,18 @@ oo::class create ::tclwire::ApplicationDispatcher {
             error "default application is not registered: $default_application"
         }
         dict for {application_id descriptor} $applications {
-            foreach field {class package hosts docroot encoding} {
+            foreach field {class hosts docroot encoding} {
                 if {![dict exists $descriptor $field]} {
                     error "application '$application_id' is missing $field"
                 }
+            }
+            if {![dict exists $descriptor package] &&
+                    ![dict exists $descriptor file]} {
+                error "application '$application_id' must define package or file"
+            }
+            if {[dict exists $descriptor file] &&
+                    ![file isfile [dict get $descriptor file]]} {
+                error "application '$application_id' file does not exist: [dict get $descriptor file]"
             }
             if {[dict get $descriptor encoding] ni [encoding names]} {
                 error "application '$application_id' has an unknown encoding: [dict get $descriptor encoding]"
@@ -119,12 +127,19 @@ oo::class create ::tclwire::ApplicationDispatcher {
     }
 
     method worker_script {application_descriptor} {
+        set loader {}
+        if {[dict exists $application_descriptor file]} {
+            set loader [list source [dict get $application_descriptor file]]
+        } else {
+            set loader [list package require \
+                [dict get $application_descriptor package] 0.1]
+        }
         return [format {
             lappend auto_path %s
             package require Thread
             package require tclwire::accounting 1.2
             package require tclwire::content_generator_agent 0.1
-            package require %s 0.1
+            %s
 
             proc demand_thread_exit {} {
                 ::thread::release [::thread::id]
@@ -132,7 +147,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
 
             ::thread::wait
             catch {::tclwire::accounting remove_thread [::thread::id]}
-        } [list $project_root] [list [dict get $application_descriptor package]]]
+        } [list $project_root] $loader]
     }
 
     method start {} {
