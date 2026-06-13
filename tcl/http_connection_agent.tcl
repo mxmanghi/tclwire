@@ -233,8 +233,12 @@ oo::class create ::tclwire::HttpConnectionAgent {
             }
         }
         catch {
-            ::tclwire::logger log $log_protocol \
-                "method=[::tclwire::logger log_value $method] path=[::tclwire::logger log_value $path] status=$status bytes=$bytes remote=[::tclwire::logger log_value $remote_host]"
+            ::tclwire::logger log $log_protocol [join \
+                [list "method=[::tclwire::logger log_value $method]"  \
+                      "path=[::tclwire::logger log_value $path]"      \
+                      "status=$status" \
+                      "bytes=$bytes"   \
+                      "remote=[::tclwire::logger log_value $remote_host]"] " "]
         }
         return
     }

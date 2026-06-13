@@ -144,6 +144,12 @@ test ftp-connection-1.1 {
         $control "USER anonymous"]
     set pass_reply [::tclwire::ftp_connection_test::send_command \
         $control "PASS test@example.invalid"]
+    set chmod_probe_reply [::tclwire::ftp_connection_test::send_command \
+        $control "SITE CHMOD"]
+    set chmod_reply [::tclwire::ftp_connection_test::send_command \
+        $control "SITE CHMOD 600 index.html"]
+    set chmod_permissions [file attributes \
+        [file join $ftp_root index.html] -permissions]
     set escape_reply [::tclwire::ftp_connection_test::send_command \
         $control "CWD outside"]
     set size_reply [::tclwire::ftp_connection_test::send_command \
@@ -167,6 +173,9 @@ test ftp-connection-1.1 {
         [string match "220 *" $greeting] \
         [string match "331 *" $user_reply] \
         [string match "230 *" $pass_reply] \
+        [string match "501 *" $chmod_probe_reply] \
+        [string match "200 *" $chmod_reply] \
+        [expr {$chmod_permissions eq "00600"}] \
         [string match "550 *" $escape_reply] \
         [expr {$size_reply eq "213 [string length $expected]"}] \
         [string match "150 *" $transfer_start] \
@@ -188,7 +197,7 @@ test ftp-connection-1.1 {
     ::tclwire::ftp_connection_test::cleanup
     catch {file delete -force $ftp_root}
     catch {file delete -force $outside_root}
-} -result {1 1 1 1 1 1 1 1 1 1 1 ftp:8991 connection:ftp:8991 1 1 1}
+} -result {1 1 1 1 1 1 1 1 1 1 1 1 1 1 ftp:8991 connection:ftp:8991 1 1 1}
 
 ::tclwire::ftp_connection_test::cleanup
 cleanupTests

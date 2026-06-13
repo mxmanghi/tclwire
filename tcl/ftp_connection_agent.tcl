@@ -591,19 +591,40 @@ oo::class create ::tclwire::FtpConnectionAgent {
     }
 
     method execute_site_command {argument} {
-        set tokens [split $argument]
-        set subcommand [string toupper [lindex $tokens 0]]
-        if {$subcommand ne "CHMOD" || [llength $tokens] < 3} {
+        # Parse SITE arguments in two stages while preserving spaces in the
+        # target path. The first expression captures the first non-whitespace
+        # word as the subcommand and, when present, everything after its
+        # separating whitespace as the operands.
+        #
+        # For CHMOD, the second expression requires a three- or four-digit
+        # octal mode, followed by whitespace and a non-empty target. Capturing
+        # the target as the complete remainder allows paths containing spaces.
+        if {![regexp {^([^[:space:]]+)(?:[[:space:]]+(.*))?$} \
+                $argument -> subcommand operands]} {
             my send_reply 502 "SITE command not implemented"
             return
         }
-        set mode [lindex $tokens 1]
-        set fs_path [my resolve_path [lindex $tokens 2]]
+        if {[string toupper $subcommand] ne "CHMOD"} {
+            my send_reply 502 "SITE command not implemented"
+            return
+        }
+        if {![info exists operands] ||
+                ![regexp {^([0-7]{3,4})[[:space:]]+(.+)$} \
+                    $operands -> mode target]} {
+            my send_reply 501 "Missing or invalid SITE CHMOD arguments"
+            return
+        }
+        set fs_path [my resolve_path [string trim $target]]
         if {![file exists $fs_path]} {
             my send_reply 550 "SITE CHMOD target does not exist"
             return
         }
-        catch {file attributes $fs_path -permissions $mode}
+        if {[catch {
+            file attributes $fs_path -permissions "0$mode"
+        }]} {
+            my send_reply 550 "SITE CHMOD failed"
+            return
+        }
         my send_reply 200 "SITE CHMOD command successful"
     }
 
