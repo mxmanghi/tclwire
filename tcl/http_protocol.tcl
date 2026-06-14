@@ -3,6 +3,7 @@
 # Minimal HTTP protocol session used by the connection-agent prototype.
 
 package require TclOO
+package require tclwire::http::query 0.1
 
 namespace eval ::tclwire {}
 
@@ -240,6 +241,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                                 target $target \
                                 path   $path \
                                 query  $query \
+                                query_dict [::tclwire::http::query decode $query] \
                                 version $version \
                                 headers $headers \
                                 body_framing $framing \

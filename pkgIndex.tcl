@@ -7,8 +7,10 @@ package ifneeded tclwire::support 0.1 \
 package ifneeded tomlfile 0.1 \
     [list source [file join $dir tcl toml.tcl]]
 
-package ifneeded tclwire::http::protocol 0.1 \
-    [list source [file join $dir tcl http_protocol.tcl]]
+package ifneeded tclwire::http::protocol 0.1 [subst {
+    package require tclwire::http::query 0.1
+    source [list [file join $dir tcl http_protocol.tcl]]
+}]
 
 package ifneeded tclwire::ftp::protocol 0.1 \
     [list source [file join $dir tcl ftp_protocol.tcl]]
@@ -32,15 +34,26 @@ package ifneeded tclwire::http::application::io 0.1 [subst {
 package ifneeded tclwire::http::range 0.1 \
     [list source [file join $dir tcl http_range.tcl]]
 
+package ifneeded tclwire::http::query 0.1 \
+    [list source [file join $dir tcl http_query.tcl]]
+
+package ifneeded tclwire::http::request 0.1 \
+    [list source [file join $dir tcl http_request.tcl]]
+
+package ifneeded tclwire::transaction_descriptor 0.1 \
+    [list source [file join $dir tcl transaction_descriptor.tcl]]
+
 package ifneeded tclwire::application 0.1 [subst {
     package require tclwire::application::io 0.1
     package require tclwire::http::application::io 0.1
     package require tclwire::http::range 0.1
+    package require tclwire::http::request 0.1
     source [list [file join $dir tcl application.tcl]]
 }]
 
 package ifneeded tclwire::content_generator_agent 0.1 [subst {
     package require tclwire::application::io 0.1
+    package require tclwire::http::request 0.1
     package require tclwire::tpba::control 0.1
     source [list [file join $dir tcl content_generator_agent.tcl]]
 }]
@@ -50,8 +63,10 @@ package ifneeded tclwire::application_dispatcher 0.1 [subst {
     source [list [file join $dir tcl application_dispatcher.tcl]]
 }]
 
-package ifneeded tclwire::connection_agent 0.1 \
-    [list source [file join $dir tcl connection_agent.tcl]]
+package ifneeded tclwire::connection_agent 0.1 [subst {
+    package require tclwire::transaction_descriptor 0.1
+    source [list [file join $dir tcl connection_agent.tcl]]
+}]
 
 package ifneeded tclwire::http::connection_agent 0.1 [subst {
     package require tclwire::connection_agent 0.1

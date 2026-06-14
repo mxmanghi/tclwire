@@ -7,6 +7,7 @@ lappend auto_path $project_root
 
 package require tclwire::runtime 0.1
 package require tclwire::http::protocol 0.1
+package require tclwire::http::query 0.1
 package require tclwire::connection_agent 0.1
 package require tclwire::http::connection_agent 0.1
 
@@ -62,13 +63,35 @@ test http-protocol-1.1 {protocol session extracts path query and headers} -body 
             [dict get $info method] \
             [dict get $info path] \
             [dict get $info query] \
+            [dict get $info query_dict] \
             [dict get $info version] \
             [dict get $info headers host] \
             [dict get $info headers x-test]
     } finally {
         $protocol destroy
     }
-} -result {GET /hello/world name=TclWire&mode=test 1.1 localhost yes}
+} -result {GET /hello/world name=TclWire&mode=test {name TclWire mode test} 1.1 localhost yes}
+
+test http-query-1.1 {query fields decode into a dictionary} -body {
+    ::tclwire::http::query decode \
+        {name=Tcl+Wire&message=caf%C3%A8&escaped=a%26b%3Dc}
+} -result [dict create name {Tcl Wire} message "caf\u00e8" escaped {a&b=c}]
+
+test http-query-1.2 {empty and valueless query fields are retained} -body {
+    ::tclwire::http::query decode {flag&empty=&=value&&}
+} -result [dict create flag {} empty {} {} value]
+
+test http-query-1.3 {duplicate query names keep the last value} -body {
+    ::tclwire::http::query decode {mode=first&mode=second}
+} -result [dict create mode second]
+
+test http-query-1.4 {malformed query escapes are rejected} -body {
+    list \
+        [catch {::tclwire::http::query decode {value=%}} first] $first \
+        [catch {::tclwire::http::query decode {value=%GG}} second] $second
+} -result [list \
+    1 {incomplete percent escape in URL query} \
+    1 {invalid percent escape in URL query}]
 
 test http-protocol-1.2 {request completion waits for the declared body} -body {
     set protocol [::tclwire::HttpProtocolSession new]

@@ -5,6 +5,7 @@
 
 package require TclOO
 package require Thread
+package require tclwire::transaction_descriptor 0.1
 
 namespace eval ::tclwire {}
 
@@ -28,6 +29,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     destructor {
+        my clear_transaction
         my close
     }
 
@@ -94,33 +96,34 @@ oo::class create ::tclwire::ConnectionAgent {
         if {$transaction_state ne {}} {
             error "connection already has an active transaction"
         }
-        dict set descriptor transaction_id $transaction_id
-        set transaction_state $descriptor
+        set transaction_state \
+            [::tclwire::TransactionDescriptor new $descriptor $transaction_id]
         return $transaction_id
     }
 
     method transaction_for {transaction_id} {
         if {$transaction_state eq {} ||
-                [dict get $transaction_state transaction_id] != $transaction_id} {
+                [$transaction_state id] != $transaction_id} {
             return {}
         }
         return $transaction_state
     }
 
-    method update_transaction {transaction_id descriptor} {
-        if {[my transaction_for $transaction_id] eq {}} {
-            error "transaction is not active: $transaction_id"
+    method clear_transaction {} {
+        if {$transaction_state ne {}} {
+            $transaction_state destroy
+            set transaction_state {}
         }
-        dict set descriptor transaction_id $transaction_id
-        set transaction_state $descriptor
-        return $transaction_id
+        return
     }
 
     method finish_transaction {transaction_id} {
-        set descriptor [my transaction_for $transaction_id]
-        if {$descriptor ne {}} {
-            set transaction_state {}
+        set transaction [my transaction_for $transaction_id]
+        if {$transaction eq {}} {
+            return {}
         }
+        set descriptor [$transaction snapshot]
+        my clear_transaction
         return $descriptor
     }
 
@@ -164,7 +167,7 @@ oo::class create ::tclwire::ConnectionAgent {
         }
         catch {chan event $channel readable {}}
         catch {close $channel}
-        set transaction_state {}
+        my clear_transaction
         after 0 [list ::tclwire::connection_agent_finished [self]]
     }
 
@@ -177,11 +180,14 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method active_transaction {} {
-        return $transaction_state
+        if {$transaction_state eq {}} {
+            return {}
+        }
+        return [$transaction_state snapshot]
     }
 
-    unexport begin_transaction clear_input_buffer finish_transaction initial_read \
-        read_available refresh_timeout transaction_for update_transaction \
+    unexport begin_transaction clear_input_buffer clear_transaction \
+        finish_transaction initial_read read_available refresh_timeout transaction_for \
         write_and_close write_output
 }
 

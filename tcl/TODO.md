@@ -20,7 +20,7 @@ meaningfully implemented by the legacy server.
 
 ## HTTP Application Support
 
-- [ ] Provide reusable URL query decoding into a dictionary.
+- [x] Provide reusable URL query decoding into a dictionary.
 - [ ] Provide reusable redirect-response construction.
 - [ ] Provide reusable request-header access.
 - [x] Provide reusable byte-range parsing.

@@ -8,6 +8,8 @@ package require Thread
 package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
 package require tclwire::http::range 0.1
+package require tclwire::http::request 0.1
+package require tclwire::transaction_descriptor 0.1
 package require tclwire::application 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::connection_agent 0.1
@@ -16,6 +18,57 @@ package require tclwire::http::errors 0.1
 namespace eval ::tclwire::application_test {
     variable events {}
 }
+
+test transaction-descriptor-1.1 {
+    request fields are immutable while transaction state remains mutable
+} -body {
+    set transaction [::tclwire::TransactionDescriptor new \
+        [dict create method GET path /resource] 7]
+    try {
+        set immutable_result [catch {
+            $transaction set method POST
+        } immutable_error]
+        $transaction set response_status 201
+        $transaction append response_body alpha
+        $transaction append response_body beta
+        list \
+            $immutable_result \
+            $immutable_error \
+            [$transaction get method] \
+            [$transaction get response_status] \
+            [$transaction get response_body]
+    } finally {
+        $transaction destroy
+    }
+} -result [list \
+    1 {transaction field is immutable: method} GET 201 alphabeta]
+
+test http-request-1.1 {HTTP request exposes a read-only semantic interface} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /search?q=Tcl \
+        path /search \
+        query q=Tcl \
+        query_dict [dict create q Tcl] \
+        version 1.1 \
+        headers [dict create host localhost x-test yes] \
+        body_mode in_memory \
+        body payload \
+        body_size 7 \
+        transaction_id 3]]
+    try {
+        list \
+            [$request method] \
+            [$request path] \
+            [$request query_dict] \
+            [$request query_parameter q] \
+            [$request header X-Test] \
+            [$request body] \
+            [expr {"set" ni [info object methods $request -all]}]
+    } finally {
+        $request destroy
+    }
+} -result {GET /search {q Tcl} Tcl yes payload 1}
 
 oo::class create ::tclwire::application_test::OutputReceiver {
     method application_output {transaction_id event} {
@@ -288,11 +341,13 @@ test application-1.2 {CApplication reads content using its configured encoding} 
         docroot $docroot \
         encoding iso8859-1]
     set application [::tclwire::CApplication new $descriptor]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET path / transaction_id 8]]
     set receiver [::tclwire::application_test::OutputReceiver new]
     set ::tclwire::application_test::events {}
     try {
         ::tclwire::io begin [::thread::id] $receiver 8
-        $application handle_request [dict create path /]
+        $application handle_request $request
         ::tclwire::io complete
         ::tclwire::io end
         update
@@ -307,6 +362,7 @@ test application-1.2 {CApplication reads content using its configured encoding} 
                 [dict get $output_event data]]
     } finally {
         catch {::tclwire::io end}
+        $request destroy
         $receiver destroy
         $application destroy
         file delete -force $docroot
@@ -563,11 +619,13 @@ test application-1.4 {HEAD obtains file metadata without reading the file} -setu
     set receiver [::tclwire::application_test::OutputReceiver new]
     set ::tclwire::application_test::events {}
 } -body {
-    ::tclwire::io begin [::thread::id] $receiver 14
-    $application handle_request [dict create \
+    set request [::tclwire::HttpRequest new [dict create \
         method HEAD \
         path /data.bin \
-        headers [dict create range bytes=2-5]]
+        headers [dict create range bytes=2-5] \
+        transaction_id 14]]
+    ::tclwire::io begin [::thread::id] $receiver 14
+    $application handle_request $request
     ::tclwire::io end
     update
     set event [lindex [lindex $::tclwire::application_test::events 0] 1]
@@ -578,6 +636,7 @@ test application-1.4 {HEAD obtains file metadata without reading the file} -setu
         [llength $::tclwire::application_test::events]
 } -cleanup {
     catch {::tclwire::io end}
+    catch {$request destroy}
     $receiver destroy
     $application destroy
     ::tclwire::application_test::MetadataApplication destroy
@@ -610,11 +669,13 @@ test application-1.5 {derived applications can serve abstract content ranges} -s
     set receiver [::tclwire::application_test::OutputReceiver new]
     set ::tclwire::application_test::events {}
 } -body {
-    ::tclwire::io begin [::thread::id] $receiver 16
-    $application handle_request [dict create \
+    set request [::tclwire::HttpRequest new [dict create \
         method GET \
         path /data.bin \
-        headers [dict create range bytes=0-1,8-9]]
+        headers [dict create range bytes=0-1,8-9] \
+        transaction_id 16]]
+    ::tclwire::io begin [::thread::id] $receiver 16
+    $application handle_request $request
     ::tclwire::io complete
     ::tclwire::io end
     update
@@ -628,6 +689,7 @@ test application-1.5 {derived applications can serve abstract content ranges} -s
         [dict get $output_event data]
 } -cleanup {
     catch {::tclwire::io end}
+    catch {$request destroy}
     $receiver destroy
     $application destroy
     ::tclwire::application_test::RangeApplication destroy

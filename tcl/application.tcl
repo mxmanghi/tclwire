@@ -21,6 +21,7 @@ package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
 package require tclwire::http::errors 0.1
 package require tclwire::http::range 0.1
+package require tclwire::http::request 0.1
 package require fileutil
 
 namespace eval ::tclwire {}
@@ -178,22 +179,6 @@ oo::class create ::tclwire::CApplication {
         }
     }
 
-    method request_method {request_descriptor} {
-        set method GET
-        if {[dict exists $request_descriptor method]} {
-            set method [dict get $request_descriptor method]
-        }
-        return $method
-    }
-
-    method request_header {request_descriptor name} {
-        set name [string tolower $name]
-        if {[dict exists $request_descriptor headers $name]} {
-            return [dict get $request_descriptor headers $name]
-        }
-        return {}
-    }
-
     method serve_file_metadata {resource} {
         set headers [my resource_headers $resource]
         lappend headers "Content-Length: [dict get $resource length]"
@@ -273,8 +258,8 @@ oo::class create ::tclwire::CApplication {
         return
     }
 
-    method handle_request {request_descriptor} {
-        set path [dict get $request_descriptor path]
+    method handle_request {request} {
+        set path [$request path]
         if {[catch {set local_path [my local_path $path]}]} {
             my send_error 400 $path
             return
@@ -285,13 +270,13 @@ oo::class create ::tclwire::CApplication {
         }
 
         set resource [my file_resource $local_path]
-        set method [my request_method $request_descriptor]
+        set method [$request method]
         if {$method eq "HEAD"} {
             my serve_file_metadata $resource
             return
         }
 
-        set range_value [my request_header $request_descriptor range]
+        set range_value [$request header range]
         if {$range_value eq {} || $method ne "GET"} {
             my serve_complete_file $resource
             return
@@ -302,7 +287,7 @@ oo::class create ::tclwire::CApplication {
     }
 
     unexport decode_path file_resource read_file read_file_range \
-        request_header request_method resource_headers send_error \
+        resource_headers send_error \
         serve_complete_file serve_content_ranges serve_file_metadata \
         serve_file_ranges serve_single_range serve_unsatisfiable_range
 }

@@ -143,10 +143,10 @@ oo::class create ::tclwire::ProxyConnectionAgent {
             return
         }
 
-        set descriptor [dict merge $descriptor [dict create \
-            proxy_path $origin_path \
-            upstream_response {}]]
+        dict set descriptor proxy_path $origin_path
         my begin_transaction 1 $descriptor
+        set transaction [my transaction_for 1]
+        $transaction set upstream_response {}
         chan event $upstream_channel readable [list [self] upstream_readable]
         my upstream_readable
         return
@@ -156,26 +156,25 @@ oo::class create ::tclwire::ProxyConnectionAgent {
         if {$upstream_channel eq {} || $closed} {
             return
         }
-        set descriptor [my transaction_for 1]
-        if {$descriptor eq {}} {
+        set transaction [my transaction_for 1]
+        if {$transaction eq {}} {
             return
         }
 
         set chunk [read $upstream_channel]
         if {$chunk ne {}} {
-            dict append descriptor upstream_response $chunk
-            my update_transaction 1 $descriptor
+            $transaction append upstream_response $chunk
         }
         if {![eof $upstream_channel]} {
             return
         }
 
-        set response [dict get $descriptor upstream_response]
+        set response [$transaction get upstream_response]
         set status ?
         if {[regexp {^HTTP/[0-9.]+\s+([0-9]+)} $response -> parsed_status]} {
             set status $parsed_status
         }
-        my finish_transaction 1
+        set descriptor [my finish_transaction 1]
         my close_upstream
         my log_request \
             [dict get $descriptor method] \
