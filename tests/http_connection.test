@@ -510,5 +510,42 @@ encoding = "utf-8"
     removeFile $streaming_application
 } -result {1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a}
 
+test http-connection-1.13 {connection workers resolve installation-relative application files} -setup {
+    set docroot [file join [temporaryDirectory] tclwire-relative-file-[pid]]
+    file mkdir $docroot
+    ::fileutil::writeFile [file join $docroot index.html] relative-file-ok
+    set relative_file_config [makeFile [format {
+[tclwire]
+default_application = "default"
+docroot = "%s"
+logfile = "%s"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+class = "::tclwire::CApplication"
+file = "tcl/application.tcl"
+hosts = "localhost"
+
+[http."relative.example.test"]
+docroot = "%s"
+} $docroot \
+   $::tclwire::http_connection_test::logfile \
+   $docroot] relative-file-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $relative_file_config]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: relative.example.test\r\nConnection: close\r\n\r\n"]
+    list \
+        [string match "HTTP/1.1 200 OK*" $response] \
+        [string match "*relative-file-ok" $response]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $relative_file_config
+    file delete -force $docroot
+} -result {1 1}
+
 ::tclwire::http_connection_test::cleanup
 cleanupTests

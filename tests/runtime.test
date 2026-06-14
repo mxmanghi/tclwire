@@ -263,6 +263,7 @@ encoding = "iso8859-1"
 docroot = "www"
 ftproot = "ftp"
 logfile = "logs/runtime.log"
+libdir = "lib"
 certfile = "tls/default.crt"
 keyfile = "tls/default.key"
 ftp_user_check = false
@@ -279,6 +280,7 @@ port = 8443
 [https."site.example.test"]
 class = "::example::Application"
 file = "apps/example.tcl"
+libdir = "site-lib"
 encoding = "utf-8"
 minimum_workers = 2
 maximum_workers = 7
@@ -303,6 +305,7 @@ port = 8081
         [dict get $config docroot] \
         [dict get $config ftproot] \
         [dict get $config logfile] \
+        [dict get $config libdir] \
         [dict get $config certfile] \
         [dict get $config keyfile] \
         [dict get $config ftp_user_check] \
@@ -317,6 +320,7 @@ port = 8081
     [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
     [file normalize [file join [temporaryDirectory] tclwire-config-[pid] ftp-public]] \
     [file normalize [file join [temporaryDirectory] tclwire-config-[pid] logs runtime.log]] \
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] lib]] \
     [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.crt]] \
     [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.key]] \
     1 \
@@ -332,7 +336,8 @@ port = 8081
         encoding utf-8 \
         class ::example::Application \
         hosts site.example.test \
-        file [file normalize [file join [temporaryDirectory] tclwire-config-[pid] apps example.tcl]] \
+        libdir [file normalize [file join [temporaryDirectory] tclwire-config-[pid] site-lib]] \
+        file [file join apps example.tcl] \
         pool_policy [dict create minimum_workers 2 maximum_workers 7]]]
 
 test runtime-1.13 {CLI values supersede TOML configuration} -body {
@@ -390,6 +395,86 @@ logfile = "runtime.log"
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result {{} {}}
+
+test runtime-1.15 {application libdir precedence is host service global} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+libdir = "global-lib"
+
+[http]
+libdir = "http-lib"
+
+[http.service]
+class = "::example::ServiceApplication"
+file = "service.tcl"
+
+[http.host]
+class = "::example::HostApplication"
+file = "host.tcl"
+libdir = "host-lib"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    list \
+        [dict get $config libdir] \
+        [dict get $config applications service libdir] \
+        [dict get $config applications host libdir]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] global-lib]] \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] http-lib]] \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] host-lib]]]
+
+test runtime-1.16 {host applications inherit the named default descriptor} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "global-www"
+default_application = "default"
+
+[http]
+
+[http.default]
+class = "::example::Application"
+package = "example::application"
+encoding = "iso8859-1"
+minimum_workers = 2
+maximum_workers = 8
+
+[http."one.example.test"]
+docroot = "sites/one"
+
+[http.two]
+hosts = "two.example.test www.two.example.test"
+docroot = "sites/two"
+maximum_workers = 12
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    list \
+        [dict get $config applications one.example.test] \
+        [dict get $config applications two]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    [dict create \
+        docroot [file normalize [file join \
+            [temporaryDirectory] tclwire-config-[pid] sites one]] \
+        encoding iso8859-1 \
+        class ::example::Application \
+        package example::application \
+        hosts one.example.test \
+        pool_policy [dict create minimum_workers 2 maximum_workers 8]] \
+    [dict create \
+        docroot [file normalize [file join \
+            [temporaryDirectory] tclwire-config-[pid] sites two]] \
+        encoding iso8859-1 \
+        class ::example::Application \
+        package example::application \
+        hosts {two.example.test www.two.example.test} \
+        pool_policy [dict create minimum_workers 2 maximum_workers 12]]]
 
 ::tclwire::runtime_test::cleanup
 cleanupTests

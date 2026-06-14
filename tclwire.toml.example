@@ -10,7 +10,9 @@
 # option overrides protocol selection, while the protocol-specific CLI port
 # option overrides the port below.
 #
-# Paths should be resolved relative to the directory containing this file.
+# Configuration paths are resolved relative to the directory containing this
+# file. Relative application "file" values are searched for under the
+# application's docroot, its effective libdir, and the TclWire installation.
 
 [tclwire]
 host = "127.0.0.1"
@@ -22,18 +24,26 @@ ftproot = "/tmp/tclwire"
 ftp_user_check = true
 logfile = "/tmp/tclwire.log"
 
+# Optional directory containing application class files. An application's
+# libdir overrides this value. The application docroot still has precedence.
+# libdir = "/opt/tclwire-apps"
+
 # Empty values preserve the runtime's current TLS defaults. Set these when
 # secure protocols should share one certificate and private key.
 certfile = ""
 keyfile = ""
 
-# This is the application selected when an HTTP request has no Host header.
-# It must name one of the application tables under [http] or [https].
+# This application is selected when an HTTP request has no Host header. Its
+# descriptor also provides defaults for every other host application.
 default_application = "default"
 
 [http]
 enabled = true
 port = 8990
+
+# Optional default for applications configured under this service. This
+# overrides [tclwire].libdir and is overridden by an application's libdir.
+# libdir = "/opt/tclwire-apps/http"
 
 # The final table component is the application ID and, when "hosts" is
 # omitted, its hostname. Quote DNS names containing dots, for example:
@@ -44,10 +54,13 @@ port = 8990
 hosts = "localhost 127.0.0.1"
 class = "::tclwire::CApplication"
 
-# "file" is the proposed application entry point. Loading it should define
-# the TclOO class named by "class". It is relative to this configuration file
-# unless absolute.
+# "file" is the application entry point. Loading it should define the TclOO
+# class named by "class". Relative paths are searched for in this order:
+# application docroot, effective libdir, TclWire installation directory.
 file = "tcl/application.tcl"
+
+# Optional per-application override for [tclwire].libdir.
+# libdir = "/opt/tclwire-apps/default"
 
 # "package" preserves compatibility with the current dispatcher, which uses
 # package require rather than sourcing "file". A future loader may make this
@@ -59,21 +72,20 @@ encoding = "utf-8"
 minimum_workers = 0
 maximum_workers = 20
 
-# Example virtual host/application:
+# A virtual host can override only what differs from the default application.
 #
 # [http."example.test"]
-# hosts: example.test and www.example.test
-# class: ::example::Application
-# file: applications/example/application.tcl
-# package: example::application
-# docroot: applications/example/public
-# encoding: utf-8
-# minimum_workers = 1
-# maximum_workers = 20
+# hosts = "example.test www.example.test"
+# docroot = "applications/example/public"
+#
+# class, file/package, encoding, libdir, and worker limits are inherited from
+# [http.default]. Any of them may still be overridden in the host table.
 
 [https]
 enabled = false
 port = 9443
+
+# libdir = "/opt/tclwire-apps/https"
 
 # These override the global TLS defaults in [tclwire].
 certfile = ""

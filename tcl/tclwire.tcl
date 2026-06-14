@@ -278,7 +278,7 @@ namespace eval ::tclwire::runtime {
             }]
             set paths [dict map {field value} \
                     [dict filter $global key \
-                        docroot ftproot certfile keyfile logfile] {
+                        docroot ftproot certfile keyfile logfile libdir] {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
@@ -350,8 +350,13 @@ namespace eval ::tclwire::runtime {
                 continue
             }
             set protocol_config [dict get $toml_config $protocol]
+            set protocol_libdir {}
+            if {[dict exists $protocol_config libdir]} {
+                set protocol_libdir [resolve_config_path \
+                    $config_dir [dict get $protocol_config libdir]]
+            }
             dict for {application_id descriptor} $protocol_config {
-                if {$application_id in {enabled port certfile keyfile}} {
+                if {$application_id in {enabled port certfile keyfile libdir}} {
                     continue
                 }
                 if {[catch {dict size $descriptor}]} {
@@ -367,10 +372,21 @@ namespace eval ::tclwire::runtime {
                     dict set application hosts [list $application_id]
                 }
                 set application_paths [dict map {field value} \
-                        [dict filter $descriptor key file docroot] {
+                        [dict filter $descriptor key docroot libdir] {
                     resolve_config_path $config_dir $value
                 }]
                 set application [dict merge $application $application_paths]
+                if {![dict exists $application libdir] &&
+                        $protocol_libdir ne {}} {
+                    dict set application libdir $protocol_libdir
+                }
+                if {[dict exists $descriptor file]} {
+                    set application_file [dict get $descriptor file]
+                    if {[file pathtype $application_file] eq "absolute"} {
+                        set application_file [file normalize $application_file]
+                    }
+                    dict set application file $application_file
+                }
 
                 set pool_policy [dict filter $descriptor key \
                     minimum_workers maximum_workers]
@@ -385,7 +401,26 @@ namespace eval ::tclwire::runtime {
             }
         }
         if {[dict size $applications]} {
-            dict set config applications $applications
+            set merged_applications [dict create]
+            set default_application [dict get $config default_application]
+            if {[dict exists $config applications $default_application]} {
+                dict set merged_applications $default_application \
+                    [dict get $config applications $default_application]
+            }
+            dict for {application_id descriptor} $applications {
+                if {[dict exists $merged_applications $application_id]} {
+                    set inherited [dict get $merged_applications $application_id]
+                    if {[dict exists $inherited pool_policy] &&
+                            [dict exists $descriptor pool_policy]} {
+                        dict set descriptor pool_policy [dict merge \
+                            [dict get $inherited pool_policy] \
+                            [dict get $descriptor pool_policy]]
+                    }
+                    set descriptor [dict merge $inherited $descriptor]
+                }
+                dict set merged_applications $application_id $descriptor
+            }
+            dict set config applications $merged_applications
         }
         return $config
     }
@@ -510,12 +545,42 @@ namespace eval ::tclwire::runtime {
 
     proc finalize_config {config} {
         set applications [dict get $config applications]
+        set default_application [dict get $config default_application]
+        if {![dict exists $applications $default_application]} {
+            error "default application is not registered: $default_application"
+        }
+        set default_descriptor [dict get $applications $default_application]
+
         dict for {application_id descriptor} $applications {
-            # Merge defaults first so application-specific values retain
-            # precedence without separate existence checks.
-            set descriptor [dict merge [dict create \
+            set application_hosts {}
+            if {[dict exists $descriptor hosts]} {
+                set application_hosts [dict get $descriptor hosts]
+            }
+
+            # The named default application is the template for every
+            # host-specific application. Global runtime values remain the
+            # fallback for fields omitted by the default itself.
+            set inherited [dict merge [dict create \
                 docroot [dict get $config docroot] \
-                encoding [dict get $config encoding]] $descriptor]
+                encoding [dict get $config encoding]] $default_descriptor]
+            if {$application_id eq $default_application} {
+                set descriptor $inherited
+            } else {
+                if {[dict exists $inherited pool_policy] &&
+                        [dict exists $descriptor pool_policy]} {
+                    dict set descriptor pool_policy [dict merge \
+                        [dict get $inherited pool_policy] \
+                        [dict get $descriptor pool_policy]]
+                }
+                set descriptor [dict merge $inherited $descriptor]
+                if {$application_hosts ne {}} {
+                    dict set descriptor hosts $application_hosts
+                }
+            }
+            if {[dict exists $config libdir] &&
+                    ![dict exists $descriptor libdir]} {
+                dict set descriptor libdir [dict get $config libdir]
+            }
             dict set applications $application_id $descriptor
         }
         dict set config applications $applications

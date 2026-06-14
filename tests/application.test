@@ -152,6 +152,108 @@ test application-dispatcher-1.9 {package-backed applications remain supported} -
     }
 } -result 1
 
+test application-dispatcher-1.10 {relative application files prefer docroot} -setup {
+    set root [file join [temporaryDirectory] tclwire-app-files-[pid]]
+    set docroot [file join $root docroot]
+    set libdir [file join $root lib]
+    file mkdir $docroot
+    file mkdir $libdir
+    set docroot_file [file join $docroot application.tcl]
+    set libdir_file [file join $libdir application.tcl]
+    ::fileutil::writeFile $docroot_file {# docroot application}
+    ::fileutil::writeFile $libdir_file {# libdir application}
+} -body {
+    set config $application_config
+    dict set config libdir $libdir
+    dict set config applications default [dict create \
+        class ::example::Application \
+        file application.tcl \
+        hosts example.test \
+        docroot $docroot \
+        encoding utf-8]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        dict get [$dispatcher application default] file
+    } finally {
+        $dispatcher destroy
+    }
+} -cleanup {
+    file delete -force $root
+} -result [file normalize [file join \
+    [temporaryDirectory] tclwire-app-files-[pid] docroot application.tcl]]
+
+test application-dispatcher-1.11 {application libdir overrides global libdir} -setup {
+    set root [file join [temporaryDirectory] tclwire-app-libdir-[pid]]
+    set global_libdir [file join $root global]
+    set application_libdir [file join $root application]
+    file mkdir $global_libdir
+    file mkdir $application_libdir
+    set application_file [file join $application_libdir application.tcl]
+    ::fileutil::writeFile $application_file {# application libdir}
+} -body {
+    set config $application_config
+    dict set config libdir $global_libdir
+    dict set config applications default [dict create \
+        class ::example::Application \
+        file application.tcl \
+        libdir $application_libdir \
+        hosts example.test \
+        docroot [file join $root docroot] \
+        encoding utf-8]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        list \
+            [dict get [$dispatcher application default] file] \
+            [dict get [$dispatcher application default] libdir]
+    } finally {
+        $dispatcher destroy
+    }
+} -cleanup {
+    file delete -force $root
+} -result [list \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-app-libdir-[pid] application application.tcl]] \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-app-libdir-[pid] application]]]
+
+test application-dispatcher-1.12 {relative files fall back to TclWire installation} -body {
+    set config $application_config
+    dict set config applications default [dict create \
+        class ::tclwire::CApplication \
+        file [file join tcl application.tcl] \
+        hosts localhost \
+        docroot [file join [temporaryDirectory] absent-docroot] \
+        encoding utf-8]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        dict get [$dispatcher application default] file
+    } finally {
+        $dispatcher destroy
+    }
+} -result [file normalize [file join $project_root tcl application.tcl]]
+
+test application-dispatcher-1.13 {host descriptors can reuse a default application class} -body {
+    set config $application_config
+    dict set config applications example.test [dict create \
+        hosts example.test \
+        docroot /tmp/example.test]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set descriptor [$dispatcher application example.test]
+        list \
+            [dict get $descriptor class] \
+            [dict get $descriptor package] \
+            [dict get $descriptor hosts] \
+            [dict get $descriptor docroot]
+    } finally {
+        $dispatcher destroy
+    }
+} -result [list \
+    ::tclwire::CApplication \
+    tclwire::application \
+    example.test \
+    [file normalize /tmp/example.test]]
+
 test application-1.1 {CApplication receives its effective document root} -body {
     set descriptor [dict create \
         class ::tclwire::CApplication \

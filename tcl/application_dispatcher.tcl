@@ -4,6 +4,7 @@
 
 package require TclOO
 package require Thread
+package require tclwire::support 0.1
 package require tclwire::tpba::control 0.1
 
 namespace eval ::tclwire {}
@@ -17,8 +18,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
         }
         set applications        [dict get $application_config applications]
         set default_application [dict get $application_config default_application]
-        set project_root        [file normalize \
-                                    [file join [file dirname [info script]] ..]]
+        set project_root        [::tclwire::support project_root]
         set owned_pools         {}
         set default_docroot {}
         if {[dict exists $application_config docroot]} {
@@ -27,6 +27,27 @@ oo::class create ::tclwire::ApplicationDispatcher {
         set default_encoding {}
         if {[dict exists $application_config encoding]} {
             set default_encoding [dict get $application_config encoding]
+        }
+
+        if {![dict exists $applications $default_application]} {
+            error "default application is not registered: $default_application"
+        }
+        set default_descriptor [dict get $applications $default_application]
+        dict for {application_id descriptor} $applications {
+            if {$application_id eq $default_application} {
+                continue
+            }
+            if {[dict exists $default_descriptor pool_policy] &&
+                    [dict exists $descriptor pool_policy]} {
+                dict set descriptor pool_policy [dict merge \
+                    [dict get $default_descriptor pool_policy] \
+                    [dict get $descriptor pool_policy]]
+            }
+            set descriptor [dict merge $default_descriptor $descriptor]
+            if {![dict exists [dict get $applications $application_id] hosts]} {
+                dict set descriptor hosts [list $application_id]
+            }
+            dict set applications $application_id $descriptor
         }
 
         dict for {application_id descriptor} $applications {
@@ -38,11 +59,27 @@ oo::class create ::tclwire::ApplicationDispatcher {
             }
             dict set descriptor docroot \
                 [file normalize [dict get $descriptor docroot]]
+            if {![dict exists $descriptor libdir] &&
+                    [dict exists $application_config libdir]} {
+                dict set descriptor libdir [dict get $application_config libdir]
+            }
+            if {[dict exists $descriptor libdir]} {
+                if {[dict get $descriptor libdir] eq {}} {
+                    dict unset descriptor libdir
+                } else {
+                    dict set descriptor libdir \
+                        [file normalize [dict get $descriptor libdir]]
+                }
+            }
             if {![dict exists $descriptor encoding]} {
                 if {$default_encoding eq {}} {
                     error "application '$application_id' is missing encoding"
                 }
                 dict set descriptor encoding $default_encoding
+            }
+            if {[dict exists $descriptor file]} {
+                dict set descriptor file \
+                    [my resolve_application_file $application_id $descriptor]
             }
             dict set applications $application_id $descriptor
         }
@@ -53,10 +90,34 @@ oo::class create ::tclwire::ApplicationDispatcher {
         my stop
     }
 
-    method validate {} {
-        if {![dict exists $applications $default_application]} {
-            error "default application is not registered: $default_application"
+    method resolve_application_file {application_id descriptor} {
+        set application_file [dict get $descriptor file]
+        if {[file pathtype $application_file] eq "absolute"} {
+            return [file normalize $application_file]
         }
+
+        set search_directories [list [dict get $descriptor docroot]]
+        if {[dict exists $descriptor libdir] &&
+                [dict get $descriptor libdir] ne {}} {
+            lappend search_directories [dict get $descriptor libdir]
+        }
+        lappend search_directories $project_root
+
+        set searched {}
+        foreach directory $search_directories {
+            set candidate [file normalize [file join $directory $application_file]]
+            if {$candidate in $searched} {
+                continue
+            }
+            lappend searched $candidate
+            if {[file isfile $candidate]} {
+                return $candidate
+            }
+        }
+        error "application '$application_id' file '$application_file' was not found; searched: [join $searched {, }]"
+    }
+
+    method validate {} {
         dict for {application_id descriptor} $applications {
             foreach field {class hosts docroot encoding} {
                 if {![dict exists $descriptor $field]} {
