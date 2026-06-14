@@ -7,6 +7,7 @@ lappend auto_path $project_root
 package require Thread
 package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
+package require tclwire::http::range 0.1
 package require tclwire::application 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::connection_agent 0.1
@@ -292,6 +293,7 @@ test application-1.2 {CApplication reads content using its configured encoding} 
     try {
         ::tclwire::io begin [::thread::id] $receiver 8
         $application handle_request [dict create path /]
+        ::tclwire::io complete
         ::tclwire::io end
         update
         set response_event \
@@ -361,6 +363,38 @@ test application-io-1.1 {output commands send ordered transaction events} -body 
         $receiver destroy
     }
 } -result {7 output 1 7 flush 2 7 complete 3}
+
+test application-io-1.2 {buffer exposes pending application output} -body {
+    set ::tclwire::application_test::events {}
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 15
+        ::tclwire::io out alpha
+        set first [::tclwire::io buffer]
+        ::tclwire::io puts -nonewline beta
+        set combined [::tclwire::io buffer]
+        ::tclwire::io flush
+        set drained [::tclwire::io buffer]
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set output_event \
+            [lindex [lindex $::tclwire::application_test::events 0] 1]
+        list \
+            $first \
+            $combined \
+            $drained \
+            [dict get $output_event type] \
+            [dict get $output_event data] \
+            [lmap item $::tclwire::application_test::events {
+                dict get [lindex $item 1] type
+            }]
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result {alpha alphabeta {} output alphabeta {output flush complete}}
 
 test http-application-io-1.1 {HTTP header commands maintain and emit metadata} -body {
     set ::tclwire::application_test::events {}
@@ -482,6 +516,125 @@ test http-application-io-1.5 {HTTP cookies reject invalid attributes} -body {
     {invalid HTTP cookie value} \
     {invalid HTTP cookie path} \
     {invalid HTTP cookie expiration}]
+
+test http-range-1.1 {byte ranges support closed open and suffix forms} -body {
+    set results {}
+    foreach value {bytes=2-5 bytes=7- bytes=-4 bytes=0-99} {
+        set result [::tclwire::http::range classify $value 10]
+        lappend results \
+            [dict get $result status] \
+            [dict get $result ranges]
+    }
+    set results
+} -result [list \
+    satisfiable {{2 5}} \
+    satisfiable {{7 9}} \
+    satisfiable {{6 9}} \
+    satisfiable {{0 9}}]
+
+test http-range-1.2 {mixed range sets retain satisfiable members} -body {
+    set result [::tclwire::http::range classify bytes=20-30,2-4 10]
+    list [dict get $result status] [dict get $result ranges]
+} -result {satisfiable {{2 4}}}
+
+test http-range-1.3 {range outcomes are classified without control-flow errors} -body {
+    list \
+        [dict get [::tclwire::http::range classify items=0-1 10] status] \
+        [dict get [::tclwire::http::range classify bytes=bad 10] status] \
+        [dict get [::tclwire::http::range classify bytes=20-30 10] status]
+} -result {unsupported malformed unsatisfiable}
+
+test application-1.4 {HEAD obtains file metadata without reading the file} -setup {
+    oo::class create ::tclwire::application_test::MetadataApplication {
+        superclass ::tclwire::CApplication
+        method read_file {path} {
+            error "HEAD attempted a complete file read"
+        }
+        method read_file_range {path start end} {
+            error "HEAD attempted a range read"
+        }
+    }
+    set docroot [file join [temporaryDirectory] tclwire-head-[pid]]
+    file mkdir $docroot
+    ::fileutil::writeFile -translation binary \
+        [file join $docroot data.bin] 0123456789
+    set application [::tclwire::application_test::MetadataApplication new \
+        [dict create docroot $docroot encoding utf-8]]
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+} -body {
+    ::tclwire::io begin [::thread::id] $receiver 14
+    $application handle_request [dict create \
+        method HEAD \
+        path /data.bin \
+        headers [dict create range bytes=2-5]]
+    ::tclwire::io end
+    update
+    set event [lindex [lindex $::tclwire::application_test::events 0] 1]
+    list \
+        [dict get $event type] \
+        [dict get $event flags status] \
+        [dict get $event flags headers] \
+        [llength $::tclwire::application_test::events]
+} -cleanup {
+    catch {::tclwire::io end}
+    $receiver destroy
+    $application destroy
+    ::tclwire::application_test::MetadataApplication destroy
+    file delete -force $docroot
+} -result [list \
+    response \
+    200 \
+    [list \
+        "Accept-Ranges: bytes" \
+        "Content-Type: application/octet-stream" \
+        "Content-Length: 10"] \
+    1]
+
+test application-1.5 {derived applications can serve abstract content ranges} -setup {
+    oo::class create ::tclwire::application_test::RangeApplication {
+        superclass ::tclwire::CApplication
+
+        method serve_content_ranges {resource ranges} {
+            ::tclwire::io response 206 "Partial Content" \
+                [list "Content-Type: application/x-generated-ranges"]
+            ::tclwire::io out [list content-ranges $ranges]
+        }
+    }
+    set docroot [file join [temporaryDirectory] tclwire-range-hook-[pid]]
+    file mkdir $docroot
+    ::fileutil::writeFile -translation binary \
+        [file join $docroot data.bin] 0123456789
+    set application [::tclwire::application_test::RangeApplication new \
+        [dict create docroot $docroot encoding utf-8]]
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+} -body {
+    ::tclwire::io begin [::thread::id] $receiver 16
+    $application handle_request [dict create \
+        method GET \
+        path /data.bin \
+        headers [dict create range bytes=0-1,8-9]]
+    ::tclwire::io complete
+    ::tclwire::io end
+    update
+
+    set response_event \
+        [lindex [lindex $::tclwire::application_test::events 0] 1]
+    set output_event \
+        [lindex [lindex $::tclwire::application_test::events 1] 1]
+    list \
+        [dict get $response_event flags headers] \
+        [dict get $output_event data]
+} -cleanup {
+    catch {::tclwire::io end}
+    $receiver destroy
+    $application destroy
+    ::tclwire::application_test::RangeApplication destroy
+    file delete -force $docroot
+} -result [list \
+    [list "Content-Type: application/x-generated-ranges"] \
+    [list content-ranges {{0 1} {8 9}}]]
 
 test http-errors-1.1 {HTTP errors are loaded from the root JSON catalog} -body {
     set response [::tclwire::http::errors response 503]

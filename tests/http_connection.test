@@ -268,6 +268,22 @@ test http-protocol-1.12 {protocol session frames chunked response bytes} -body {
     330d0a0080ff0d0a \
     "0\r\n\r\n"]
 
+test http-protocol-1.13 {HEAD response retains GET content length without body} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set response [$protocol build_response \
+            200 OK {caffè} utf-8 [list "Content-Type: text/plain"] text 1]
+        set separator [string first "\r\n\r\n" $response]
+        set headers [string range $response 0 [expr {$separator - 1}]]
+        set body [string range $response [expr {$separator + 4}] end]
+        list \
+            [regexp {Content-Length: 6} $headers] \
+            [string length $body]
+    } finally {
+        $protocol destroy
+    }
+} -result {1 0}
+
 test http-connection-agent-1.1 {HTTP agent specializes the generic connection agent} -body {
     list \
         [info class superclasses ::tclwire::HttpConnectionAgent] \
@@ -546,6 +562,146 @@ docroot = "%s"
     removeFile $relative_file_config
     file delete -force $docroot
 } -result {1 1}
+
+test http-connection-1.14 {HEAD returns GET metadata without representation bytes} -body {
+    ::tclwire::runtime start [list \
+        --docroot $project_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set get_response [::tclwire::http_connection_test::request \
+        "GET /index.html HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    set head_response [::tclwire::http_connection_test::request \
+        "HEAD /index.html HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    set error_response [::tclwire::http_connection_test::request \
+        "HEAD /missing HTTP/1.1\r\nHost: unknown.example\r\nConnection: close\r\n\r\n"]
+
+    set get_separator [string first "\r\n\r\n" $get_response]
+    set head_separator [string first "\r\n\r\n" $head_response]
+    set error_separator [string first "\r\n\r\n" $error_response]
+    set get_headers [string range $get_response 0 [expr {$get_separator - 1}]]
+    set head_headers [string range $head_response 0 [expr {$head_separator - 1}]]
+    set error_headers [string range $error_response 0 \
+        [expr {$error_separator - 1}]]
+    set head_body [string range $head_response [expr {$head_separator + 4}] end]
+    set error_body [string range $error_response \
+        [expr {$error_separator + 4}] end]
+    regexp -nocase {Content-Length:\s*([0-9]+)} \
+        $get_headers -> get_length
+    regexp -nocase {Content-Length:\s*([0-9]+)} \
+        $head_headers -> head_length
+    list \
+        [string match "HTTP/1.1 200 OK*" $head_headers] \
+        [expr {$get_length == $head_length}] \
+        [regexp -nocase {Accept-Ranges: bytes} $head_headers] \
+        [string length $head_body] \
+        [string match "HTTP/1.1 404 Not Found*" $error_headers] \
+        [string length $error_body]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result {1 1 1 0 1 0}
+
+test http-connection-1.15 {static files support single byte ranges} -setup {
+    set range_root [file join [temporaryDirectory] tclwire-range-[pid]]
+    file mkdir $range_root
+    ::fileutil::writeFile -translation binary \
+        [file join $range_root range.bin] 0123456789
+} -body {
+    ::tclwire::runtime start [list \
+        --docroot $range_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: bytes=2-5\r\nConnection: close\r\n\r\n"]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body [string range $response [expr {$separator + 4}] end]
+    list \
+        [string match "HTTP/1.1 206 Partial Content*" $headers] \
+        [regexp -nocase {Content-Range: bytes 2-5/10} $headers] \
+        [regexp -nocase {Content-Length: 4} $headers] \
+        $body
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $range_root}
+} -result {1 1 1 2345}
+
+test http-connection-1.16 {static files support multipart byte ranges} -setup {
+    set range_root [file join [temporaryDirectory] tclwire-range-[pid]]
+    file mkdir $range_root
+    ::fileutil::writeFile -translation binary \
+        [file join $range_root range.bin] 0123456789
+} -body {
+    ::tclwire::runtime start [list \
+        --docroot $range_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: bytes=0-1,8-9\r\nConnection: close\r\n\r\n"]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body [string range $response [expr {$separator + 4}] end]
+    regexp -nocase \
+        {Content-Type: multipart/byteranges; boundary=([^\r\n]+)} \
+        $headers -> boundary
+    list \
+        [string match "HTTP/1.1 206 Partial Content*" $headers] \
+        [string match \
+            "*--$boundary\r\n*Content-Range: bytes 0-1/10*\r\n01\r\n*" \
+            $body] \
+        [string match \
+            "*Content-Range: bytes 8-9/10*\r\n89\r\n--$boundary--\r\n" \
+            $body]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $range_root}
+} -result {1 1 1}
+
+test http-connection-1.17 {unsatisfiable byte ranges return 416} -setup {
+    set range_root [file join [temporaryDirectory] tclwire-range-[pid]]
+    file mkdir $range_root
+    ::fileutil::writeFile -translation binary \
+        [file join $range_root range.bin] 0123456789
+} -body {
+    ::tclwire::runtime start [list \
+        --docroot $range_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: bytes=20-30\r\nConnection: close\r\n\r\n"]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 [expr {$separator - 1}]]
+    set body [string range $response [expr {$separator + 4}] end]
+    list \
+        [string match "HTTP/1.1 416 Range Not Satisfiable*" $headers] \
+        [regexp -nocase {Content-Range: bytes \*/10} $headers] \
+        [regexp -nocase {Content-Length: 0} $headers] \
+        [string length $body]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $range_root}
+} -result {1 1 1 0}
+
+test http-connection-1.18 {unsupported and malformed ranges fall back to 200} -setup {
+    set range_root [file join [temporaryDirectory] tclwire-range-[pid]]
+    file mkdir $range_root
+    ::fileutil::writeFile -translation binary \
+        [file join $range_root range.bin] 0123456789
+} -body {
+    ::tclwire::runtime start [list \
+        --docroot $range_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set results {}
+    foreach range {items=2-5 bytes=bad} {
+        set response [::tclwire::http_connection_test::request \
+            "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: $range\r\nConnection: close\r\n\r\n"]
+        set separator [string first "\r\n\r\n" $response]
+        set headers [string range $response 0 [expr {$separator - 1}]]
+        set body [string range $response [expr {$separator + 4}] end]
+        lappend results \
+            [string match "HTTP/1.1 200 OK*" $headers] \
+            $body
+    }
+    set results
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $range_root}
+} -result {1 0123456789 1 0123456789}
 
 ::tclwire::http_connection_test::cleanup
 cleanupTests

@@ -13,9 +13,9 @@ meaningfully implemented by the legacy server.
 - [x] Generate chunked HTTP responses.
 - [x] Support incremental and delayed response output without buffering the
       complete result in the Connection Agent.
-- [ ] Implement correct `HEAD` handling: generate the same headers as `GET`,
+- [x] Implement correct `HEAD` handling: generate the same headers as `GET`,
       including the appropriate content length, but omit the response body.
-- [ ] Implement single-range and multipart byte-range responses, including
+- [x] Implement single-range and multipart byte-range responses, including
       `206 Partial Content` and the appropriate range headers.
 
 ## HTTP Application Support
@@ -23,7 +23,7 @@ meaningfully implemented by the legacy server.
 - [ ] Provide reusable URL query decoding into a dictionary.
 - [ ] Provide reusable redirect-response construction.
 - [ ] Provide reusable request-header access.
-- [ ] Provide reusable byte-range parsing.
+- [x] Provide reusable byte-range parsing.
 - [x] Provide reusable response-cookie construction with URI path and
       expiration support.
 - [ ] Define application result semantics for delayed responses and deliberate

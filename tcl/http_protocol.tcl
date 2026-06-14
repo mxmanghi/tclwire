@@ -252,14 +252,19 @@ oo::class create ::tclwire::HttpProtocolSession {
 
     method build_response {
         status reason body content_encoding {headers {}} {body_mode text}
+        {head_only 0}
     } {
         set body_bytes [my encode_response_body \
             $body $content_encoding $body_mode]
         set response_headers [list \
             "HTTP/1.1 $status $reason" \
-            "Connection: close" \
-            "Content-Length: [string length $body_bytes]"]
-        if {![regexp -nocase {^Content-Type:} [join $headers "\n"]]} {
+            "Connection: close"]
+        if {![regexp -nocase {(^|\n)Content-Length:} \
+                [join $headers "\n"]]} {
+            lappend response_headers \
+                "Content-Length: [string length $body_bytes]"
+        }
+        if {![regexp -nocase {(^|\n)Content-Type:} [join $headers "\n"]]} {
             if {$body_mode eq "binary"} {
                 lappend response_headers "Content-Type: application/octet-stream"
             } else {
@@ -270,7 +275,9 @@ oo::class create ::tclwire::HttpProtocolSession {
         set response_headers [concat $response_headers $headers]
         set response [encoding convertto ascii \
             "[join $response_headers "\r\n"]\r\n\r\n"]
-        append response $body_bytes
+        if {!$head_only} {
+            append response $body_bytes
+        }
         return $response
     }
 
@@ -295,7 +302,7 @@ oo::class create ::tclwire::HttpProtocolSession {
             "HTTP/1.1 $status $reason" \
             "Connection: close" \
             "Transfer-Encoding: chunked"]
-        if {![regexp -nocase {^Content-Type:} [join $headers "\n"]]} {
+        if {![regexp -nocase {(^|\n)Content-Type:} [join $headers "\n"]]} {
             if {$body_mode eq "binary"} {
                 lappend response_headers "Content-Type: application/octet-stream"
             } else {

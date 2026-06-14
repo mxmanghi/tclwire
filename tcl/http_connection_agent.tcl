@@ -58,7 +58,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {[catch {
             set request_data [my request_complete [my input_buffer]]
         }]} {
-            my send_error 400
+            my send_error 400 {} [my request_is_head [my input_buffer]]
             return
         }
         if {$request_data eq {}} {
@@ -89,12 +89,16 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return [dict get $request_descriptor body]
     }
 
+    method request_is_head {request_data} {
+        return [regexp {^HEAD[ \t]} $request_data]
+    }
+
     method handle_request {request_data} {
         if {[catch {
             set request_d [my build_request_descriptor $request_data]
         }]} {
             my log_request {} 400 0
-            my send_error 400
+            my send_error 400 {} [my request_is_head $request_data]
             return {}
         }
 
@@ -117,10 +121,12 @@ oo::class create ::tclwire::HttpConnectionAgent {
             my finish_transaction $transaction_id
             if {[string match "no application is configured for Host *" $message]} {
                 my log_request $request_d 404 0
-                my send_error 404 [dict create path [dict get $request_d path]]
+                my send_error 404 \
+                    [dict create path [dict get $request_d path]] \
+                    [my head_only $request_d]
             } else {
                 my log_request $request_d 503 0
-                my send_error 503
+                my send_error 503 {} [my head_only $request_d]
             }
             return {}
         }
@@ -175,6 +181,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
             error "chunked responses require HTTP/1.1"
         }
         return 1
+    }
+
+    method head_only {descriptor} {
+        return [expr {[dict get $descriptor method] eq "HEAD"}]
     }
 
     method apply_header_event {descriptor flags} {
@@ -240,7 +250,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     method abort_application_response {transaction_id descriptor} {
         my finish_transaction $transaction_id
         if {[dict get $descriptor response_state] eq "preparing"} {
-            my send_error 500
+            my send_error 500 {} [my head_only $descriptor]
         } else {
             my close
         }
@@ -256,7 +266,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set expected [expr {[dict get $descriptor output_sequence] + 1}]
         if {[dict get $event output_sequence] != $expected} {
             my finish_transaction $transaction_id
-            my send_error 500
+            my send_error 500 {} [my head_only $descriptor]
             return
         }
         dict set descriptor output_sequence $expected
@@ -308,20 +318,24 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 if {$chunked} {
                     if {[catch {
                         set descriptor [my commit_chunked_response $descriptor]
-                        set body_bytes [$protocol_session encode_response_body \
-                            [dict get $event data] \
-                            [dict get $descriptor response_encoding] \
-                            $body_mode]
-                        set frame [$protocol_session chunk_frame $body_bytes]
-                        if {$frame ne {} && ![my write_output $frame]} {
-                            error "failed to write HTTP response chunk"
+                        if {![my head_only $descriptor]} {
+                            set body_bytes [$protocol_session encode_response_body \
+                                [dict get $event data] \
+                                [dict get $descriptor response_encoding] \
+                                $body_mode]
+                            set frame [$protocol_session chunk_frame $body_bytes]
+                            if {$frame ne {} && ![my write_output $frame]} {
+                                error "failed to write HTTP response chunk"
+                            }
                         }
                     }]} {
                         my abort_application_response $transaction_id $descriptor
                         return
                     }
-                    dict incr descriptor response_bytes \
-                        [string length $body_bytes]
+                    if {![my head_only $descriptor]} {
+                        dict incr descriptor response_bytes \
+                            [string length $body_bytes]
+                    }
                 } else {
                     dict append descriptor response_body [dict get $event data]
                 }
@@ -353,7 +367,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 if {$chunked} {
                     if {[catch {
                         set descriptor [my commit_chunked_response $descriptor]
-                        if {![my write_output \
+                        if {[my head_only $descriptor]} {
+                            if {![my write_output {} 1]} {
+                                error "failed to complete HTTP HEAD response"
+                            }
+                        } elseif {![my write_output \
                                 [$protocol_session chunk_terminator] 1]} {
                             error "failed to terminate HTTP chunks"
                         }
@@ -377,8 +395,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 set body_mode [dict get $descriptor response_body_mode]
                 my finish_transaction $transaction_id
                 set response [$protocol_session build_response \
-                    $status $reason $body $content_encoding $headers $body_mode]
-                if {$body_mode eq "binary"} {
+                    $status $reason $body $content_encoding $headers $body_mode \
+                    [my head_only $descriptor]]
+                if {[my head_only $descriptor]} {
+                    set body_bytes 0
+                } elseif {$body_mode eq "binary"} {
                     set body_bytes [string length $body]
                 } else {
                     set body_bytes [string length \
@@ -397,14 +418,16 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return
     }
 
-    method send_error {status {context {}}} {
+    method send_error {status {context {}} {head_only 0}} {
         set error_response [::tclwire::http::errors response $status $context]
         set response [$protocol_session build_response \
             [dict get $error_response status] \
             [dict get $error_response reason] \
             [dict get $error_response body] \
             $default_encoding \
-            [dict get $error_response headers]]
+            [dict get $error_response headers] \
+            text \
+            $head_only]
         my write_and_close $response
     }
 
@@ -435,8 +458,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     unexport abort_application_response apply_header_event \
-        chunked_response commit_chunked_response header_name header_value \
-        log_request response_header_values
+        chunked_response commit_chunked_response head_only header_name header_value \
+        log_request request_is_head response_header_values
 }
 
 package provide tclwire::http::connection_agent 0.1

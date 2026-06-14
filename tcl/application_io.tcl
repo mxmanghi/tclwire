@@ -12,6 +12,8 @@ namespace eval ::tclwire::io {
     variable connection_agent_id {}
     variable transaction_id {}
     variable output_sequence 0
+    variable output_buffer {}
+    variable output_body_mode {}
 
     proc begin {thread_id agent_id tx_id} {
         variable active
@@ -19,6 +21,8 @@ namespace eval ::tclwire::io {
         variable connection_agent_id
         variable transaction_id
         variable output_sequence
+        variable output_buffer
+        variable output_body_mode
 
         if {$active} {
             error "an application output transaction is already active"
@@ -27,6 +31,8 @@ namespace eval ::tclwire::io {
         set connection_agent_id $agent_id
         set transaction_id $tx_id
         set output_sequence 0
+        set output_buffer [binary format a* {}]
+        set output_body_mode {}
         set active 1
         return
     }
@@ -37,12 +43,16 @@ namespace eval ::tclwire::io {
         variable connection_agent_id
         variable transaction_id
         variable output_sequence
+        variable output_buffer
+        variable output_body_mode
 
         set active 0
         set connection_thread_id {}
         set connection_agent_id {}
         set transaction_id {}
         set output_sequence 0
+        set output_buffer [binary format a* {}]
+        set output_body_mode {}
         return
     }
 
@@ -97,7 +107,43 @@ namespace eval ::tclwire::io {
     }
 
     proc out {data {body_mode text}} {
-        send_event output $data [dict create body_mode $body_mode]
+        variable active
+        variable output_buffer
+        variable output_body_mode
+
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        if {$output_body_mode eq {}} {
+            set output_body_mode $body_mode
+        } elseif {$output_body_mode ne $body_mode} {
+            error "application output buffer cannot mix body modes"
+        }
+        append output_buffer $data
+        return
+    }
+
+    proc buffer {} {
+        variable active
+        variable output_buffer
+
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        return $output_buffer
+    }
+
+    proc flush_buffer {} {
+        variable output_buffer
+        variable output_body_mode
+
+        if {$output_buffer eq {}} {
+            return
+        }
+        send_event output $output_buffer \
+            [dict create body_mode $output_body_mode]
+        set output_buffer [binary format a* {}]
+        set output_body_mode {}
         return
     }
 
@@ -117,16 +163,18 @@ namespace eval ::tclwire::io {
         if {!$nonewline} {
             append data "\n"
         }
-        send_event output $data [dict create nonewline $nonewline]
+        out $data text
         return
     }
 
     proc flush {} {
+        flush_buffer
         send_event flush
         return
     }
 
     proc complete {} {
+        flush_buffer
         send_event complete
         return
     }
@@ -136,7 +184,7 @@ namespace eval ::tclwire::io {
         return
     }
 
-    namespace export begin end context response out puts flush complete fail
+    namespace export begin end context response out buffer puts flush complete fail
     namespace ensemble create
 }
 
