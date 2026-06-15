@@ -110,11 +110,47 @@ This method extracts the request body from the buffered HTTP request and, when
 needed, asks the service to decode a chunked upload. It exists to give route
 handlers a payload-oriented view of the request.
 
-### `redirect_response {location {reason "Found"}}`
+### Redirect Responses
 
-This helper builds the response dictionary for simple redirect replies. It is
-application logic because redirects are chosen by route behavior, not by the
-transport layer.
+Route selection remains application logic, but redirect response construction
+is reusable HTTP application support:
+
+```tcl
+set response [::tclwire::http::redirect response /target -status 303]
+```
+
+The constructor returns a response dictionary containing `status`, `reason`,
+`body`, `headers`, and `body_mode`. It supports `301`, `302`, `303`, `307`,
+and `308`, derives the canonical reason phrase, defaults to an empty body,
+and rejects unsafe `Location` values or conflicting `Location` headers.
+Applications that add a response body must also provide its `Content-Type`;
+the connection agent does not infer representation semantics from the body
+encoding mode.
+
+An application with an active output transaction may construct and emit the
+response in one operation:
+
+```tcl
+::tclwire::http::redirect send /target -status 303
+```
+
+The implementation is
+[`tcl/http_redirect.tcl`](../tcl/http_redirect.tcl), not a method on
+`CApplication`.
+
+### Removing A Response Body
+
+An application can explicitly discard response data that has not reached the
+client:
+
+```tcl
+::tclwire::http::no_body
+```
+
+The command clears pending application output and asks the Connection Agent to
+clear its accumulated body. For chunked output it remains valid after the
+headers have been committed only while no non-empty chunk has been
+transmitted.
 
 ### `static_file_response {path}`
 
@@ -210,4 +246,3 @@ and determine through the Host HTTP header line which (virtual) host the request
 Different host may in general serve entirely different applications.
     3. we have worker threads. After what we did today I would restring the worker thread to
 the application generation. In this moment
-

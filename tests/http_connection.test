@@ -135,7 +135,7 @@ test http-protocol-1.4 {UTF-8 response lengths count encoded bytes} -body {
     }
 } -result {1 caffè}
 
-test http-protocol-1.5 {response framing uses the configured encoding} -body {
+test http-protocol-1.5 {response framing does not infer a media type} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
         set response [$protocol build_response 200 OK {caffè} iso8859-1]
@@ -144,8 +144,7 @@ test http-protocol-1.5 {response framing uses the configured encoding} -body {
         set body_bytes [string range $response [expr {$separator + 4}] end]
         list \
             [regexp {Content-Length: 5} $headers] \
-            [regexp -nocase \
-                {Content-Type: text/html; charset=iso8859-1} $headers] \
+            [expr {![regexp -nocase {Content-Type:} $headers]}] \
             [encoding convertfrom iso8859-1 $body_bytes]
     } finally {
         $protocol destroy
@@ -270,6 +269,8 @@ test http-protocol-1.12 {protocol session frames chunked response bytes} -body {
     try {
         set head [$protocol build_chunked_response_head \
             200 OK utf-8 [list "Content-Type: text/plain"] text]
+        set untyped_head [$protocol build_chunked_response_head \
+            200 OK utf-8 {} text]
         set first [$protocol chunk_frame \
             [$protocol encode_response_body alpha utf-8 text]]
         set binary [binary format H* 0080ff]
@@ -279,6 +280,7 @@ test http-protocol-1.12 {protocol session frames chunked response bytes} -body {
             [string match "HTTP/1.1 200 OK*" $head] \
             [regexp -nocase {Transfer-Encoding: chunked} $head] \
             [expr {![regexp -nocase {Content-Length:} $head]}] \
+            [expr {![regexp -nocase {Content-Type:} $untyped_head]}] \
             [binary encode hex $first] \
             [binary encode hex $second] \
             [$protocol chunk_terminator]
@@ -286,7 +288,7 @@ test http-protocol-1.12 {protocol session frames chunked response bytes} -body {
         $protocol destroy
     }
 } -result [list \
-    1 1 1 \
+    1 1 1 1 \
     350d0a616c7068610d0a \
     330d0a0080ff0d0a \
     "0\r\n\r\n"]

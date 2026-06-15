@@ -21,7 +21,8 @@ meaningfully implemented by the legacy server.
 ## HTTP Application Support
 
 - [x] Provide reusable URL query decoding into a dictionary.
-- [ ] Provide reusable redirect-response construction.
+- [x] Provide reusable redirect-response construction.
+- [x] Provide a semantic operation for discarding an unsent response body.
 - [ ] Provide reusable request-header access.
 - [x] Provide reusable byte-range parsing.
 - [x] Provide reusable response-cookie construction with URI path and

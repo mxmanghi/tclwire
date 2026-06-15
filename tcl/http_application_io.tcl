@@ -6,6 +6,13 @@ package require tclwire::application::io 0.1
 
 namespace eval ::tclwire::http {}
 
+proc ::tclwire::http::no_body {} {
+    ::tclwire::http::io::reset_if_needed
+    ::tclwire::io discard_buffer
+    ::tclwire::io::send_event no_body
+    return
+}
+
 namespace eval ::tclwire::http::io {
     variable context_key {}
     variable headers {}

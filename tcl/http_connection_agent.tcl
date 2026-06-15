@@ -343,6 +343,21 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     $transaction append response_body [dict get $event data]
                 }
             }
+            no_body {
+                if {[$transaction get response_bytes] > 0} {
+                    my abort_application_response $transaction_id $transaction
+                    return
+                }
+                set response_headers {}
+                foreach response_header [$transaction get response_headers] {
+                    if {![string equal -nocase \
+                            [my header_name $response_header] Content-Length]} {
+                        lappend response_headers $response_header
+                    }
+                }
+                $transaction set response_headers $response_headers
+                $transaction set response_body {}
+            }
             flush {
                 if {[catch {set chunked [my chunked_response $transaction]}]} {
                     my abort_application_response $transaction_id $transaction
@@ -426,9 +441,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
             [dict get $error_response status] \
             [dict get $error_response reason] \
             [dict get $error_response body] \
-            $default_encoding \
+            [dict get $error_response encoding] \
             [dict get $error_response headers] \
-            text \
+            [dict get $error_response body_mode] \
             $head_only]
         my write_and_close $response
     }

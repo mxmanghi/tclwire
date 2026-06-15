@@ -252,6 +252,19 @@ Requests transmission of pending output. Both `data` and `flags` are empty.
 It commits and flushes a chunked response; it does not force an accumulated
 non-chunked response to be sent.
 
+### `no_body`
+
+Deletes representation data accumulated for the response. Both `data` and
+`flags` are empty. It is emitted by `::tclwire::http::no_body`, which first
+discards output still buffered in the Content Generator Agent.
+
+For a non-chunked response, the Connection Agent clears `response_body`. For
+a chunked response, the operation is accepted while no non-empty chunk has
+been transmitted, including after an empty response head has been committed.
+Any uncommitted `Content-Length` is removed so completion can calculate zero.
+Once `response_bytes` is greater than zero, deleting the body is impossible
+and the response is aborted.
+
 ### `complete`
 
 Marks successful application completion. Both `data` and `flags` are empty.
@@ -297,3 +310,5 @@ The Connection Agent enforces these rules:
   [`tcl/application_io.tcl`](../tcl/application_io.tcl)
 - HTTP output controls:
   [`tcl/http_application_io.tcl`](../tcl/http_application_io.tcl)
+- Redirect response construction:
+  [`tcl/http_redirect.tcl`](../tcl/http_redirect.tcl)

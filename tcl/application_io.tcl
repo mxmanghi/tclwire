@@ -133,6 +133,19 @@ namespace eval ::tclwire::io {
         return $output_buffer
     }
 
+    proc discard_buffer {} {
+        variable active
+        variable output_buffer
+        variable output_body_mode
+
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        set output_buffer [binary format a* {}]
+        set output_body_mode {}
+        return
+    }
+
     proc flush_buffer {} {
         variable output_buffer
         variable output_body_mode
@@ -184,7 +197,8 @@ namespace eval ::tclwire::io {
         return
     }
 
-    namespace export begin end context response out buffer puts flush complete fail
+    namespace export \
+        begin end context response out buffer discard_buffer puts flush complete fail
     namespace ensemble create
 }
 

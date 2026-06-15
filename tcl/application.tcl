@@ -21,6 +21,7 @@ package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
 package require tclwire::http::errors 0.1
 package require tclwire::http::range 0.1
+package require tclwire::http::redirect 0.1
 package require tclwire::http::request 0.1
 package require fileutil
 
@@ -146,8 +147,9 @@ oo::class create ::tclwire::CApplication {
             $status [dict create path $path]]
 
         dict with response {
-            ::tclwire::io response $status $reason $headers text [my encoding] 
-            ::tclwire::io out $body
+            ::tclwire::io response \
+                $status $reason $headers $body_mode $encoding
+            ::tclwire::io out $body $body_mode
         }
         return
     }
