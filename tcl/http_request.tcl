@@ -23,6 +23,8 @@ oo::class create ::tclwire::HttpRequest {
         return [dict get $descriptor $field]
     }
 
+    method snapshot {} { return $descriptor }
+
     method optional {field default_value} {
         if {[dict exists $descriptor $field]} {
             return [dict get $descriptor $field]
