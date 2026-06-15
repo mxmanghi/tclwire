@@ -91,6 +91,9 @@ namespace eval ::tclwire::http::io {
 
     proc cookie {name value args} {
         reset_if_needed
+        if {![::tclwire::io::accepting_output]} {
+            return
+        }
         validate_cookie_name $name
         validate_cookie_value $value
 
@@ -128,6 +131,9 @@ namespace eval ::tclwire::http::io {
     proc header_set {name value} {
         variable headers
         reset_if_needed
+        if {![::tclwire::io::accepting_output]} {
+            return
+        }
         validate_header $name $value
 
         set updated {}
@@ -146,6 +152,9 @@ namespace eval ::tclwire::http::io {
     proc header_add {name value} {
         variable headers
         reset_if_needed
+        if {![::tclwire::io::accepting_output]} {
+            return
+        }
         validate_header $name $value
 
         lappend headers [list $name $value]
@@ -157,6 +166,9 @@ namespace eval ::tclwire::http::io {
     proc header_remove {name} {
         variable headers
         reset_if_needed
+        if {![::tclwire::io::accepting_output]} {
+            return
+        }
         validate_header $name
 
         set updated {}

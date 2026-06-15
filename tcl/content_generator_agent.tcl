@@ -28,7 +28,9 @@ namespace eval ::tclwire::cga {
                 [dict get $request_descriptor transaction_id]
             set request [::tclwire::HttpRequest new $request_descriptor]
             $application handle_request $request
-            ::tclwire::io complete
+            if {[::tclwire::io::accepting_output]} {
+                ::tclwire::io complete
+            }
         } on error {message options} {
             catch {::tclwire::io fail $message}
         } finally {

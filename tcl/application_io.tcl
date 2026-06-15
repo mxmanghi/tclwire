@@ -8,6 +8,7 @@ namespace eval ::tclwire {}
 
 namespace eval ::tclwire::io {
     variable active 0
+    variable response_state inactive
     variable connection_thread_id {}
     variable connection_agent_id {}
     variable transaction_id {}
@@ -17,6 +18,7 @@ namespace eval ::tclwire::io {
 
     proc begin {thread_id agent_id tx_id} {
         variable active
+        variable response_state
         variable connection_thread_id
         variable connection_agent_id
         variable transaction_id
@@ -33,12 +35,14 @@ namespace eval ::tclwire::io {
         set output_sequence 0
         set output_buffer [binary format a* {}]
         set output_body_mode {}
+        set response_state open
         set active 1
         return
     }
 
     proc end {} {
         variable active
+        variable response_state
         variable connection_thread_id
         variable connection_agent_id
         variable transaction_id
@@ -47,6 +51,7 @@ namespace eval ::tclwire::io {
         variable output_body_mode
 
         set active 0
+        set response_state inactive
         set connection_thread_id {}
         set connection_agent_id {}
         set transaction_id {}
@@ -58,12 +63,14 @@ namespace eval ::tclwire::io {
 
     proc context {} {
         variable active
+        variable response_state
         variable connection_thread_id
         variable connection_agent_id
         variable transaction_id
 
         return [dict create \
             active $active \
+            response_state $response_state \
             connection_thread_id $connection_thread_id \
             connection_agent_id $connection_agent_id \
             transaction_id $transaction_id]
@@ -71,6 +78,7 @@ namespace eval ::tclwire::io {
 
     proc send_event {type {data {}} {flags {}}} {
         variable active
+        variable response_state
         variable connection_thread_id
         variable connection_agent_id
         variable transaction_id
@@ -78,6 +86,9 @@ namespace eval ::tclwire::io {
 
         if {!$active} {
             error "no application output transaction is active"
+        }
+        if {$response_state ne "open"} {
+            return {}
         }
         if {![::thread::exists $connection_thread_id]} {
             error "connection-agent thread is no longer available"
@@ -98,6 +109,13 @@ namespace eval ::tclwire::io {
     }
 
     proc response {status reason headers {body_mode text} {encoding {}}} {
+        variable active
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        if {![accepting_output]} {
+            return
+        }
         send_event response {} [dict create status      $status     \
                                             reason      $reason     \
                                             headers     $headers    \
@@ -113,6 +131,9 @@ namespace eval ::tclwire::io {
 
         if {!$active} {
             error "no application output transaction is active"
+        }
+        if {![accepting_output]} {
+            return
         }
         if {$output_body_mode eq {}} {
             set output_body_mode $body_mode
@@ -130,6 +151,9 @@ namespace eval ::tclwire::io {
         if {!$active} {
             error "no application output transaction is active"
         }
+        if {![accepting_output]} {
+            return
+        }
         return $output_buffer
     }
 
@@ -141,6 +165,9 @@ namespace eval ::tclwire::io {
         if {!$active} {
             error "no application output transaction is active"
         }
+        if {![accepting_output]} {
+            return
+        }
         set output_buffer [binary format a* {}]
         set output_body_mode {}
         return
@@ -151,6 +178,11 @@ namespace eval ::tclwire::io {
         variable output_body_mode
 
         if {$output_buffer eq {}} {
+            return
+        }
+        if {![accepting_output]} {
+            set output_buffer [binary format a* {}]
+            set output_body_mode {}
             return
         }
         send_event output $output_buffer \
@@ -181,20 +213,50 @@ namespace eval ::tclwire::io {
     }
 
     proc flush {} {
+        variable active
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        if {![accepting_output]} {
+            return
+        }
         flush_buffer
         send_event flush
         return
     }
 
     proc complete {} {
+        variable active
+        variable response_state
+
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        if {$response_state ne "open"} {
+            return
+        }
         flush_buffer
         send_event complete
+        set response_state completed
         return
     }
 
     proc fail {message} {
+        variable active
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        if {![accepting_output]} {
+            return
+        }
         send_event error $message
         return
+    }
+
+    proc accepting_output {} {
+        variable active
+        variable response_state
+        return [expr {$active && $response_state eq "open"}]
     }
 
     namespace export \

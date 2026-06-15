@@ -1,397 +1,460 @@
-# Worker Request API Sketch
-
-This note sketches a possible worker-facing API for the future HTTP server
-architecture.
-
-The goal is to support the planned separation:
-
-- infrastructure code accepts connections and recognizes requests
-- worker threads own the request/response transaction
-- application code runs inside the worker context
-
-This is not yet an implementation contract. It is a design guide for the next
-refactoring steps.
-
-## Goals
-
-The worker-facing API should:
-
-- avoid mandatory full in-memory buffering of request bodies
-- allow the worker to own the client channel
-- allow the worker to return the client channel to infrastructure when request
-  recognition remains there
-- support simple buffered request handling for tests
-- support large uploads efficiently
-- keep response generation and error handling in the worker
-- make application boundaries explicit
-
-## High-Level Model
-
-The likely execution model is:
-
-1. infrastructure accepts the client socket
-2. infrastructure reads enough bytes to recognize the request line and headers
-3. infrastructure chooses the application
-4. infrastructure transfers the channel to a worker thread
-5. worker constructs a request object
-6. application handles the request through that object
-7. worker sends the response
-8. worker either closes the channel or returns it to infrastructure if the
-   connection remains open and request recognition stays there
-
-In that model, the worker should receive:
-
-- the client channel
-- parsed request-line metadata
-- parsed headers
-- body handling mode
-- any already-buffered body bytes
-
-If infrastructure code remains responsible for recognizing request boundaries,
-then channel ownership transfer is not one-way. After a request is completed,
-the worker must be able to:
-
-- close the channel
-- or return the channel to the infrastructure thread for the next request
-
-## Proposed Main Objects
-
-The design can be described with three main concepts:
-
-- request context
-- request body
-- response writer
-
-These may become TclOO classes, dictionaries plus helper commands, or a hybrid.
-
-## Request Context
-
-The request context represents request metadata and the execution environment
-for one HTTP transaction.
-
-Possible responsibilities:
-
-- request method
-- request target
-- HTTP version
-- parsed headers
-- client address information
-- application selection
-- access to the request body abstraction
-- access to the response writer
-
-### Suggested Fields
-
-A worker-side request context should probably expose values equivalent to:
-
-- `method`
-- `target`
-- `path`
-- `query`
-- `version`
-- `headers`
-- `remote_host`
-- `remote_port`
-- `body_mode`
-- `body`
-- `response`
-
-### Suggested Methods
-
-If implemented as a TclOO object, the request context could expose methods such
-as:
-
-- `method`
-- `target`
-- `path`
-- `query_dict`
-- `version`
-- `headers`
-- `header name`
-- `body`
-- `response`
-- `channel`
-- `remote_host`
-- `remote_port`
-
-These methods should be read-oriented. The request context should not invite
-application code to mutate protocol metadata casually.
-
-## Request Body
-
-The request body abstraction is the most important change relative to the
-current implementation.
-
-The application should not be forced to assume that the body is always a single
-string.
-
-### Body Modes
-
-The request body object should expose one of these modes:
-
-- `in_memory`
-- `spooled_file`
-- `streaming`
-
-### `in_memory`
-
-The body is fully available in RAM.
-
-Suggested operations:
-
-- `mode`
-- `size`
-- `as_bytes`
-- `as_string ?encoding?`
-
-This mode preserves compatibility with the current test-server style.
-
-### `spooled_file`
-
-The body is fully available, but stored in a temporary file.
-
-Suggested operations:
-
-- `mode`
-- `size`
-- `file_path`
-- `open`
-- `copy_to channel`
-
-This mode is useful when the application still wants a complete body but memory
-usage must stay bounded.
-
-### `streaming`
-
-The body is not materialized in full. The worker or application consumes it
-incrementally.
-
-Suggested operations:
-
-- `mode`
-- `read chunkSize`
-- `read_all`
-- `copy_to channel`
-- `foreach_chunk varName script`
-- `eof`
-
-This mode is the best fit for large uploads and proxy-style forwarding.
-
-## Buffered-Bytes Handoff
-
-When the infrastructure thread stops after parsing headers, it may already have
-read some bytes that belong to the request body.
-
-The worker-side body abstraction should therefore support:
-
-- an initial buffered prefix
-- the live channel as the remaining source
-
-This means a streaming body implementation should conceptually read from:
-
-1. already-buffered bytes first
-2. then the channel
-
-That avoids losing bytes during thread handoff.
-
-## Response Writer
-
-The response writer owns all response-side I/O.
-
-This aligns with the design goal that worker code performs:
-
-- header transmission
-- body transmission
-- chunked transfer generation
-- delayed/streaming output
-- channel write error handling
-- final channel close or keep-alive handling
-
-### Suggested Methods
-
-Possible response-writer methods:
-
-- `set_status code reason`
-- `set_header name value`
-- `add_header name value`
-- `write_headers`
-- `write data`
-- `write_chunk data`
-- `flush`
-- `close`
-- `send_buffered_response body`
-- `send_file path`
-
-Depending on design preference, some of these can remain internal helper
-methods rather than direct application API.
-
-## Suggested Application Entry Point
-
-A future application entrypoint could be as simple as:
+# Worker Request API
+
+This document describes the worker-facing HTTP request and response API
+implemented by TclWire.
+
+The current architecture does not transfer client channels to application
+workers. A connection thread owns the channel and HTTP protocol state for the
+entire connection. Content Generator Agent (CGA) workers receive copied request
+descriptors, run application code, and send ordered output events back to the
+owning connection thread.
+
+## Current Execution Model
+
+One request follows this path:
+
+1. `HttpConnectionAgent` reads request bytes from its client channel.
+2. `HttpProtocolSession` waits for the complete request, parses it, and decodes
+   its body.
+3. `HttpConnectionAgent` creates the transaction and adds connection and
+   output-routing metadata.
+4. `ApplicationDispatcher` selects an application from the normalized `Host`
+   header, falling back to the configured default application when no host is
+   present.
+5. The dispatcher acquires a worker from the application's TPBA pool and sends
+   the request descriptor to it asynchronously.
+6. `::tclwire::cga::execute` creates one application instance and one
+   read-only `HttpRequest` object.
+7. The application handles the request through
+   `handle_request {request}`.
+8. Application output commands send sequenced events to the connection thread.
+9. `HttpConnectionAgent` validates the events, constructs or streams the HTTP
+   response, logs the request, and closes the connection.
+10. The CGA destroys the request and application objects and releases itself
+    back to the TPBA pool.
+
+The worker never receives the client channel and does not perform socket I/O,
+HTTP request parsing, response framing, or connection lifecycle management.
+
+## Worker Pool Dispatch
+
+Each configured application has a TPBA pool identified by an application pool
+key. The default pool policy is:
 
 ```tcl
-method service_request {request_context} {
-    ...
+dict create minimum_workers 0 maximum_workers 20
+```
+
+An application descriptor may override this through `pool_policy`.
+
+The dispatcher adds these values to the request descriptor sent to the worker:
+
+- `application_id`
+- `application_pool_key`
+- `application_descriptor`
+
+If no worker is available, dispatch fails and the connection receives a
+`503 Service Unavailable` response. An unknown nonempty `Host` receives
+`404 Not Found`.
+
+## Application Lifecycle and Entry Point
+
+The application package or file is loaded when each worker interpreter is
+initialized. For each request, the CGA invokes:
+
+```tcl
+set application [$application_class new $application_descriptor]
+set request [::tclwire::HttpRequest new $request_descriptor]
+$application handle_request $request
+```
+
+Before loading the application, the worker bootstrap places these directories
+at the front of its interpreter-local `auto_path`, in order and without
+duplicates:
+
+1. the application's normalized `docroot`
+2. its effective `libdir`, when configured
+3. the TclWire installation root
+
+For a package-backed application, `package require` runs only after those paths
+have been added. An application may therefore place `pkgIndex.tcl` directly in
+its document root or effective library directory. A file-backed application is
+loaded with `source` after the same `auto_path` initialization.
+
+The application constructor receives its effective configuration dictionary.
+The request entry point is:
+
+```tcl
+method handle_request {request} {
+    # Read request metadata through $request.
+    # Produce the response through ::tclwire::io and HTTP helpers.
 }
 ```
 
-instead of the current:
+The application object is request-scoped, not worker-scoped. It is destroyed
+after `handle_request` returns or raises an error.
+
+`::tclwire::CApplication` is the default implementation. It serves static
+resources and provides extension points for path mapping, resource metadata,
+complete files, and byte ranges. Derived applications normally override
+`handle_request`.
+
+## Read-Only Request Object
+
+The CGA wraps the transported dictionary in `::tclwire::HttpRequest`.
+Applications do not receive or mutate the Connection Agent's authoritative
+transaction state.
+
+The request object exposes:
+
+| Method | Result |
+| --- | --- |
+| `method` | HTTP method. |
+| `target` | Unmodified request target. |
+| `path` | Target path before the first `?`. |
+| `query` | Raw query text without the leading `?`. |
+| `query_dict` | Decoded query parameter dictionary. |
+| `query_parameters` | Alias for `query_dict`. |
+| `query_parameter name ?default?` | One decoded query value or the supplied default. |
+| `version` | HTTP version, such as `1.1`. |
+| `headers` | Dictionary keyed by lowercase header names. |
+| `header name ?default?` | Case-insensitive header lookup. |
+| `body_mode` | Request body storage mode. |
+| `body` | In-memory decoded request body. |
+| `body_size` | Request body length. |
+| `trailers` | Decoded chunk trailer dictionary. |
+| `connection_id` | Runtime connection identifier. |
+| `transaction_id` | Connection-local transaction identifier. |
+| `remote_host` | Client address. |
+| `remote_port` | Client port. |
+| `application_id` | Selected application registration name. |
+
+There are no request mutation methods and no channel accessor.
+
+## Request Parsing and Body Handling
+
+The connection thread fully buffers each request before dispatch. The protocol
+session handles:
+
+- request-line validation
+- normalized, lowercase header names
+- `Content-Length` framing
+- chunked transfer decoding
+- supported transfer-coding decoding
+- chunk trailer parsing
+- URL query decoding
+
+The current request body mode is always:
 
 ```tcl
-method service_request {service chan request} {
-    ...
-}
+in_memory
 ```
 
-That would remove most transport knowledge from application code.
+`$request body` returns the decoded body value. It raises an error if a future
+descriptor uses another body mode. `body_size` reports the length of the
+decoded body.
 
-## Minimal Compatibility Layer
+There is currently no spooled-file or streaming request-body API. Large
+uploads are therefore buffered in the connection thread and copied to the CGA
+worker.
 
-To migrate incrementally, the first worker-side request context can still be
-backed by the current fully buffered request string.
+## Application Output Context
+
+Before invoking the application, the CGA starts a transaction-scoped
+`::tclwire::io` context containing:
+
+- connection thread ID
+- connection agent object ID
+- transaction ID
+- output sequence number
+- buffered output
+- buffered body mode
+- response state: `open` or `completed`
+
+Only one application output transaction may be active in a worker interpreter
+at a time. TPBA worker acquisition enforces one dispatched request per worker.
+
+The CGA automatically:
+
+- sends `complete` after `handle_request` returns successfully if the response
+  is still open
+- sends `error` if application construction or request handling raises an error
+  while the response is still open
+- clears the output context
+- destroys request-scoped objects
+- releases the worker
+
+Applications may call `::tclwire::io complete` to finish the response before
+`handle_request` returns. `begin`, `end`, and `fail` remain CGA lifecycle
+operations and should not be called by applications.
+
+Response completion does not release the worker or change its accounting
+status. The worker remains `running` while `handle_request` performs cleanup or
+other non-response work. It becomes `idle` only when `handle_request` has
+terminated, request-scoped objects have been destroyed, and the CGA releases
+the worker to TPBA.
+
+## Response Metadata
+
+An application can declare response metadata with:
+
+```tcl
+::tclwire::io response $status $reason $headers ?$body_mode? ?$encoding?
+```
+
+Arguments are:
+
+- `status`: HTTP status code
+- `reason`: HTTP reason phrase
+- `headers`: ordered list of complete header lines
+- `body_mode`: `text` by default, or `binary`
+- `encoding`: optional text encoding override
+
+If the application emits no `response` event, the Connection Agent retains its
+defaults:
+
+- status `200`
+- reason `OK`
+- empty header list
+- body mode `text`
+- the selected application's configured encoding
+
+Response metadata must be emitted while the response is still preparing and
+before body output has accumulated.
+
+## Response Output
+
+Application output is buffered in the worker with:
+
+```tcl
+::tclwire::io out $data ?$body_mode?
+```
+
+The body mode defaults to `text`. One pending buffer cannot mix `text` and
+`binary` output.
+
+The compatibility command:
+
+```tcl
+::tclwire::io puts ?-nonewline? ?stdout? $string
+```
+
+appends text to the same buffer. This is a namespaced command; TclWire does not
+replace the interpreter's global `puts` command.
+
+The following commands inspect or clear worker-local pending output:
+
+```tcl
+::tclwire::io buffer
+::tclwire::io discard_buffer
+```
+
+## Flush and Completion
+
+`::tclwire::io flush` first sends pending output as an `output` event and then
+sends a `flush` event.
+
+For a normal non-chunked response, output events accumulate in the Connection
+Agent until the CGA sends `complete`. A flush does not send that accumulated
+body to the client.
+
+For a chunked response, output events are framed and written immediately after
+commitment. A flush requests progress through the connection thread's output
+path.
+
+An application may complete the response explicitly:
+
+```tcl
+::tclwire::io complete
+```
+
+This flushes pending output, sends exactly one `complete` event, and changes
+the CGA output context from `open` to `completed`. Repeated completion is
+idempotent. Response metadata, body output, flushes, header mutations, cookies,
+and `no_body` operations become inert after completion, allowing
+`handle_request` to continue with cleanup that cannot accidentally modify the
+finished response.
+
+If the application returns while the response is still open, the CGA completes
+it automatically. If it was completed explicitly, the CGA does not send a
+second event.
+
+## HTTP Header and Cookie Controls
+
+HTTP response headers may be changed before commitment:
+
+```tcl
+::tclwire::http::io header set $name $value
+::tclwire::http::io header add $name $value
+::tclwire::http::io header remove $name
+::tclwire::http::io header get $name
+```
+
+Header names and values are validated, and line breaks in values are rejected.
+`get` returns all current values for the named header.
+
+Cookies may be appended as `Set-Cookie` headers:
+
+```tcl
+::tclwire::http::io cookie $name $value \
+    ?-path $uri_path? ?-expires $expiration?
+```
+
+Cookie names, values, paths, and expiration values are validated.
+
+## Removing a Response Body
+
+An application can discard pending response data with:
+
+```tcl
+::tclwire::http::no_body
+```
+
+This clears the worker-local output buffer and asks the Connection Agent to
+clear accumulated response data and remove an uncommitted `Content-Length`.
+
+For a chunked response, this remains valid only while no nonempty chunk has
+been transmitted. Once response bytes have been sent, the response cannot be
+replaced and the connection is aborted.
+
+## Chunked Responses
+
+An application opts into chunked output by setting:
+
+```tcl
+::tclwire::http::io header set Transfer-Encoding chunked
+```
+
+Chunked responses:
+
+- require HTTP/1.1
+- must not also contain `Content-Length`
+- accept only `chunked` as the response transfer coding
+- commit on the first output event or flush
+- encode and write each subsequent output event as one HTTP chunk
+- write the terminating `0\r\n\r\n` chunk when the application completes
 
 For example:
 
-- `body_mode` can initially be `in_memory`
-- `body as_bytes` can return the current decoded body
-- existing route logic can continue to work with small changes
-
-This makes it possible to introduce the API before introducing true streaming.
-
-## Parsing Ownership
-
-For the future architecture, request parsing should likely move fully to the
-worker/application side once the worker owns the channel.
-
-The parsing split could become:
-
-- infrastructure:
-  only enough parsing to detect header completion and application selection
-- worker:
-  request-line parsing
-  header normalization
-  body interpretation
-  response generation
-
-This is cleaner than leaving request interpretation spread across acceptor and
-worker code.
-
-## Error Handling
-
-The worker-side API should make error behavior explicit.
-
-Important cases include:
-
-- malformed request line
-- malformed headers
-- mismatched `Content-Length`
-- invalid chunk framing
-- client disconnect during upload
-- write failure during response
-
-A practical rule is:
-
-- infrastructure handles socket acceptance failures
-- worker handles request/response protocol failures
-
-## Keep-Alive and Multiple Requests
-
-The current server closes the connection after each response. A general-purpose
-server may later support multiple requests per connection.
-
-If that happens, the request context should represent exactly one transaction,
-but channel ownership depends on where request recognition lives.
-
-### Infrastructure-Owned Request Recognition
-
-In this model:
-
-1. infrastructure recognizes the request line and headers
-2. infrastructure hands the channel to the worker
-3. worker consumes the request body and sends the response
-4. worker returns the channel to infrastructure if keep-alive continues
-
-This means returning the client channel is part of the normal request
-lifecycle.
-
-### Worker-Owned Persistent Connection
-
-In this model:
-
-1. infrastructure only accepts the connection and performs the first handoff
-2. worker keeps channel ownership
-3. worker parses subsequent requests itself
-4. worker decides when the connection ends
-
-This avoids ownership round-trips, but it moves more protocol responsibility to
-the worker.
-
-This is another reason not to model the API as “one complete request string per
-connection”.
-
-## Example Conceptual Flow
-
-An eventual worker flow might look like this:
-
 ```tcl
-set req [::tclwire::HttpRequestContext new \
-    -channel $chan \
-    -method $method \
-    -target $target \
-    -version $version \
-    -headers $headers \
-    -body $bodyObject]
+method handle_request {request} {
+    ::tclwire::io response 200 OK \
+        [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+    ::tclwire::http::io header set Transfer-Encoding chunked
+    ::tclwire::io out "first\n"
+    ::tclwire::io flush
+    ::tclwire::io out "second\n"
 
-$application service_request $req
-```
+    # Finish the transfer now. This flushes "second\n" and sends complete.
+    ::tclwire::io complete
 
-Inside the application:
-
-```tcl
-method service_request {req} {
-    set response [$req response]
-
-    switch -- [$req path] {
-        /upload {
-            set body [$req body]
-            if {[$body mode] eq "streaming"} {
-                $body copy_to $someDestination
-            } else {
-                set bytes [$body as_bytes]
-            }
-            $response set_status 200 OK
-            $response write "upload=ok\n"
-            return
-        }
-    }
+    # The response is closed, but this worker remains running until the method
+    # returns. Later response output is intentionally ignored.
+    ::tclwire::io out "not sent"
+    my perform_cleanup
 }
 ```
 
-This example is only illustrative, but it shows the intended separation:
+Application code may therefore terminate a chunked transfer explicitly by
+calling `::tclwire::io complete`. If it does not, returning successfully from
+`handle_request` causes the CGA to call it automatically. On receiving the
+`complete` event, the connection thread writes the zero-length terminating
+chunk:
 
-- the request object describes the request
-- the body object describes body access
-- the response object performs output
+```text
+0\r\n
+\r\n
+```
 
-## Likely Refactoring Order
+Applications must not write this marker through `::tclwire::io out`; doing so
+would place those bytes inside a normal data chunk.
 
-A practical sequence could be:
+The connection thread, not the application or CGA, generates response heads,
+data-chunk frames, and the terminating chunk.
 
-1. Introduce an internal request-context abstraction while still using full
-   buffering.
-2. Replace `service_request {service chan request}` with
-   `service_request {request_context}`.
-3. Move request parsing helpers into the request-context or application layer.
-4. Introduce `in_memory` body objects.
-5. Add `spooled_file` bodies behind a size threshold.
-6. Add `streaming` bodies for worker-thread execution.
-7. Move response-writing logic behind a response-writer object.
-8. Decide explicitly whether keep-alive request recognition remains in
-   infrastructure or moves fully into the worker.
+## Output Events
 
-## Summary
+Worker output is transported as ordered dictionaries with these common fields:
 
-The future worker-facing API should make request metadata, body access, and
-response output explicit and separate. The most important design point is that
-the request body must become an abstraction rather than always being a fully
-buffered Tcl string.
+```tcl
+dict create \
+    type            $event_type \
+    transaction_id  $transaction_id \
+    output_sequence $sequence_number \
+    stream          stdout \
+    data            $event_data \
+    flags           $event_flags
+```
+
+The implemented event types are:
+
+| Type | Purpose |
+| --- | --- |
+| `response` | Set status, reason, initial headers, body mode, and encoding. |
+| `http_header` | Set, add, or remove one HTTP header. |
+| `output` | Transfer buffered text or binary body data. |
+| `flush` | Request output progress. |
+| `no_body` | Discard response representation data. |
+| `complete` | Finish and send the response. |
+| `error` | Report application failure. |
+
+Events are sent asynchronously to the connection thread. Sequence numbers must
+be contiguous and begin at 1. The Connection Agent ignores events for inactive
+transactions and aborts invalid event sequences or state transitions.
+
+Detailed descriptor and event field definitions are in
+[`AGENT_DATA_STRUCTURES.md`](./AGENT_DATA_STRUCTURES.md).
+
+## Error Behavior
+
+The connection thread handles malformed requests before worker dispatch:
+
+- invalid request line or headers
+- conflicting request framing
+- incomplete or invalid chunk framing
+- unsupported transfer coding
+- invalid query encoding
+
+Application construction and `handle_request` errors become `error` events.
+If the HTTP response is still uncommitted, the Connection Agent sends
+`500 Internal Server Error`. If output has already committed the response, it
+closes the connection because a replacement response cannot be sent safely.
+
+Invalid response metadata, body-mode changes, header changes after commitment,
+and broken output-event ordering also abort the application response.
+
+## Connection Lifetime and Current Limitations
+
+The current implementation processes one request per accepted connection and
+closes the channel after the response. Keep-alive and HTTP pipelining are not
+implemented.
+
+Current limitations relevant to the worker API are:
+
+- request bodies are fully buffered in memory
+- request descriptors are copied between threads
+- application objects are recreated for each request
+- workers cannot access client channels
+- non-chunked response bodies are accumulated before transmission
+- there is no cancellation message from a closed connection to a running CGA
+- there is no worker-facing request-body stream, response-writer object, or
+  backpressure API
+
+These are future extension points, not part of the current application
+contract.
+
+## Implementation References
+
+- Request parsing: [`tcl/http_protocol.tcl`](../tcl/http_protocol.tcl)
+- Read-only request API: [`tcl/http_request.tcl`](../tcl/http_request.tcl)
+- Connection and response state:
+  [`tcl/http_connection_agent.tcl`](../tcl/http_connection_agent.tcl)
+- Application selection and worker dispatch:
+  [`tcl/application_dispatcher.tcl`](../tcl/application_dispatcher.tcl)
+- CGA request lifecycle:
+  [`tcl/content_generator_agent.tcl`](../tcl/content_generator_agent.tcl)
+- Application output commands:
+  [`tcl/application_io.tcl`](../tcl/application_io.tcl)
+- HTTP output controls:
+  [`tcl/http_application_io.tcl`](../tcl/http_application_io.tcl)
+- Default application API: [`tcl/application.tcl`](../tcl/application.tcl)

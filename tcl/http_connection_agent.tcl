@@ -103,38 +103,37 @@ oo::class create ::tclwire::HttpConnectionAgent {
         }
 
         set transaction_id [incr next_transaction_id]
-        dict set request_d transaction_id $transaction_id
+        dict set request_d transaction_id       $transaction_id
         dict set request_d connection_thread_id [::thread::id]
-        dict set request_d connection_agent_id [self]
+        dict set request_d connection_agent_id  [self]
+
         my begin_transaction $transaction_id $request_d
         set transaction [my transaction_for $transaction_id]
-        $transaction set response_body {}
-        $transaction set response_status 200
-        $transaction set response_reason OK
-        $transaction set response_headers {}
+        $transaction set response_body      {}
+        $transaction set response_status    200
+        $transaction set response_reason    OK
+        $transaction set response_headers   {}
         $transaction set response_body_mode text
-        $transaction set response_state preparing
-        $transaction set response_bytes 0
-        $transaction set output_sequence 0
+        $transaction set response_state     preparing
+        $transaction set response_bytes     0
+        $transaction set output_sequence    0
         if {[catch {
-            set dispatch_info [$application_dispatcher dispatch \
-                [$transaction snapshot]]
+            set dispatch_info [$application_dispatcher dispatch [$transaction snapshot]]
         } message]} {
             set request_d [my finish_transaction $transaction_id]
             if {[string match "no application is configured for Host *" $message]} {
                 my log_request $request_d 404 0
-                my send_error 404 \
-                    [dict create path [dict get $request_d path]] \
-                    [my head_only $request_d]
+                my send_error 404 [dict create path [dict get $request_d path]] \
+                                  [my head_only $request_d]
             } else {
                 my log_request $request_d 503 0
                 my send_error 503 {} [my head_only $request_d]
             }
             return {}
         }
-        $transaction set application_id [dict get $dispatch_info application_id]
+        $transaction set application_id       [dict get $dispatch_info application_id]
         $transaction set application_pool_key [dict get $dispatch_info pool_key]
-        $transaction set response_encoding [dict get $dispatch_info encoding]
+        $transaction set response_encoding    [dict get $dispatch_info encoding]
         return [$transaction snapshot]
     }
 

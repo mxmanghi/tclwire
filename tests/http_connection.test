@@ -498,7 +498,8 @@ test http-connection-1.11 {gzip chunked requests reach the application} -body {
 } -result 1
 
 test http-connection-1.12 {applications can stream chunked responses} -setup {
-    set streaming_application [makeFile {
+    set streaming_status [makeFile {} streaming-status.txt]
+    set streaming_application [makeFile [format {
 package require tclwire::application 0.1
 
 oo::class create ::tclwire::http_connection_test::StreamingApplication {
@@ -511,9 +512,15 @@ oo::class create ::tclwire::http_connection_test::StreamingApplication {
         ::tclwire::io out alpha
         ::tclwire::io flush
         ::tclwire::io out beta
+        ::tclwire::io complete
+        ::tclwire::io out ignored
+        set account [::tclwire::accounting get_thread_account [::thread::id]]
+        set channel [open %s w]
+        puts $channel [dict get $account status]
+        close $channel
     }
 }
-} streaming-application.tcl]
+} [list $streaming_status]] streaming-application.tcl]
     set streaming_config [makeFile [format {
 [tclwire]
 default_application = "localhost"
@@ -540,16 +547,23 @@ encoding = "utf-8"
     set separator [string first "\r\n\r\n" $response]
     set headers [string range $response 0 [expr {$separator - 1}]]
     set body [string range $response [expr {$separator + 4}] end]
+    for {set attempt 0} {$attempt < 100 && [file size $streaming_status] == 0} \
+            {incr attempt} {
+        after 10
+        update
+    }
     list \
         [string match "HTTP/1.1 200 OK*" $headers] \
         [regexp -nocase {Transfer-Encoding: chunked} $headers] \
         [expr {![regexp -nocase {Content-Length:} $headers]}] \
-        [binary encode hex $body]
+        [binary encode hex $body] \
+        [string trim [::fileutil::cat $streaming_status]]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
     removeFile $streaming_config
     removeFile $streaming_application
-} -result {1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a}
+    removeFile $streaming_status
+} -result {1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a running}
 
 test http-connection-1.13 {connection workers resolve installation-relative application files} -setup {
     set docroot [file join [temporaryDirectory] tclwire-relative-file-[pid]]
@@ -586,6 +600,74 @@ docroot = "%s"
     ::tclwire::http_connection_test::cleanup
     removeFile $relative_file_config
     file delete -force $docroot
+} -result {1 1}
+
+test http-connection-1.13a {
+    package-backed applications are loaded from their document root
+} -setup {
+    set package_docroot [file join \
+        [temporaryDirectory] tclwire-package-docroot-[pid]]
+    set package_libdir [file join \
+        [temporaryDirectory] tclwire-package-libdir-[pid]]
+    file mkdir $package_docroot
+    file mkdir $package_libdir
+    ::fileutil::writeFile [file join $package_docroot package_application.tcl] {
+package require TclOO
+
+oo::class create ::example::PackageApplication {
+    constructor {descriptor} {}
+    method handle_request {request} {
+        ::tclwire::io response 200 OK \
+            [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+        ::tclwire::io out package-docroot-ok
+    }
+}
+
+package provide example::package_application 0.1
+}
+    ::fileutil::writeFile [file join $package_docroot pkgIndex.tcl] {
+package ifneeded example::package_application 0.1 \
+    [list source [file join $dir package_application.tcl]]
+}
+    ::fileutil::writeFile [file join $package_libdir package_application.tcl] {
+error "application package was loaded from libdir instead of docroot"
+}
+    ::fileutil::writeFile [file join $package_libdir pkgIndex.tcl] {
+package ifneeded example::package_application 0.1 \
+    [list source [file join $dir package_application.tcl]]
+}
+    set package_config [makeFile [format {
+[tclwire]
+default_application = "package.example.test"
+docroot = "%s"
+logfile = "%s"
+
+[http]
+enabled = true
+port = 8990
+
+[http."package.example.test"]
+class = "::example::PackageApplication"
+package = "example::package_application"
+docroot = "%s"
+libdir = "%s"
+encoding = "utf-8"
+} $package_docroot \
+   $::tclwire::http_connection_test::logfile \
+   $package_docroot \
+   $package_libdir] package-application-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $package_config]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: package.example.test\r\nConnection: close\r\n\r\n"]
+    list \
+        [string match "HTTP/1.1 200 OK*" $response] \
+        [string match "*package-docroot-ok" $response]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $package_config
+    file delete -force $package_docroot
+    file delete -force $package_libdir
 } -result {1 1}
 
 test http-connection-1.14 {HEAD returns GET metadata without representation bytes} -body {

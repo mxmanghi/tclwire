@@ -62,9 +62,10 @@ file = "tcl/application.tcl"
 # Optional per-application override for [tclwire].libdir.
 # libdir = "/opt/tclwire-apps/default"
 
-# "package" preserves compatibility with the current dispatcher, which uses
-# package require rather than sourcing "file". A future loader may make this
-# optional when "file" is present.
+# When "file" is absent, the worker loads "package" with package require.
+# Before loading it, the worker places the application's docroot, effective
+# libdir, and the TclWire installation directory at the front of auto_path, in
+# that order.
 package = "tclwire::application"
 
 docroot = "/tmp/tclwire"

@@ -38,10 +38,12 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 continue
             }
             if {[dict exists $default_descriptor pool_policy] &&
-                    [dict exists $descriptor pool_policy]} {
+                [dict exists $descriptor pool_policy]} {
+
                 dict set descriptor pool_policy [dict merge \
                     [dict get $default_descriptor pool_policy] \
                     [dict get $descriptor pool_policy]]
+
             }
             set descriptor [dict merge $default_descriptor $descriptor]
             if {![dict exists [dict get $applications $application_id] hosts]} {
@@ -188,6 +190,22 @@ oo::class create ::tclwire::ApplicationDispatcher {
     }
 
     method worker_script {application_descriptor} {
+        set application_paths {}
+        if {[dict exists $application_descriptor docroot]} {
+            lappend application_paths [dict get $application_descriptor docroot]
+        }
+        if {[dict exists $application_descriptor libdir]} {
+            lappend application_paths [dict get $application_descriptor libdir]
+        }
+        lappend application_paths $project_root
+        set unique_paths {}
+        foreach directory $application_paths {
+            if {$directory ni $unique_paths} {
+                lappend unique_paths $directory
+            }
+        }
+        set application_paths $unique_paths
+
         set loader {}
         if {[dict exists $application_descriptor file]} {
             set loader [list source [dict get $application_descriptor file]]
@@ -196,7 +214,14 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 [dict get $application_descriptor package] 0.1]
         }
         return [format {
-            lappend auto_path %s
+            set application_paths %s
+            set inherited_paths {}
+            foreach directory $auto_path {
+                if {$directory ni $application_paths} {
+                    lappend inherited_paths $directory
+                }
+            }
+            set auto_path [concat $application_paths $inherited_paths]
             package require Thread
             package require tclwire::accounting 1.2
             package require tclwire::content_generator_agent 0.1
@@ -208,7 +233,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
 
             ::thread::wait
             catch {::tclwire::accounting remove_thread [::thread::id]}
-        } [list $project_root] $loader]
+        } [list $application_paths] $loader]
     }
 
     method start {} {
@@ -273,10 +298,10 @@ oo::class create ::tclwire::ApplicationDispatcher {
         dict set request_descriptor application_descriptor $descriptor
         if {[catch {
             ::thread::send -async $worker_id \
-                [list ::tclwire::cga::execute   $key \
-                                                [dict get $descriptor class] \
-                                                $descriptor \
-                                                $request_descriptor]
+                [list ::tclwire::cga::execute $key \
+                                              [dict get $descriptor class] \
+                                              $descriptor \
+                                              $request_descriptor]
         } message options]} {
             catch {::tclwire::tpba request [dict create operation   release_worker \
                                                         pool_key    $key \

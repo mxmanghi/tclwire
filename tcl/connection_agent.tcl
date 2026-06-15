@@ -15,15 +15,15 @@ oo::class create ::tclwire::ConnectionAgent {
     variable transaction_state closed
 
     constructor {conn_channel id host port} {
-        set channel $conn_channel
-        set connection_id $id
-        set peer_host $host
-        set peer_port $port
-        set input_buffer {}
-        set timeout_id {}
+        set channel         $conn_channel
+        set connection_id   $id
+        set peer_host       $host
+        set peer_port       $port
+        set input_buffer    {}
+        set timeout_id      {}
         set initial_read_id {}
         set transaction_state {}
-        set closed 0
+        set closed          0
 
         chan configure $channel -blocking 0 -buffering none -translation binary
     }
@@ -102,8 +102,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method transaction_for {transaction_id} {
-        if {$transaction_state eq {} ||
-                [$transaction_state id] != $transaction_id} {
+        if {[$transaction_state id] != $transaction_id} {
             return {}
         }
         return $transaction_state
@@ -153,9 +152,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method close {} {
-        if {$closed} {
-            return
-        }
+        if {$closed} { return }
         set closed 1
         if {$timeout_id ne {}} {
             after cancel $timeout_id
@@ -235,8 +232,8 @@ namespace eval ::tclwire {
     }
 
     proc start_connection_agent {
-        agent_class conn_channel connection_id host port finished_thread
-        finished_command
+        agent_class conn_channel connection_id 
+        host port finished_thread finished_command
         agent_args transport_config
     } {
         variable connection_agent
@@ -257,10 +254,8 @@ namespace eval ::tclwire {
                 [::thread::id] running [list $agent_class $connection_id]
         }
         if {[catch {
-            set conn_channel [prepare_connection_channel \
-                $conn_channel $transport_config]
-            set connection_agent [$agent_class new \
-                $conn_channel $connection_id $host $port {*}$agent_args]
+            set conn_channel [prepare_connection_channel $conn_channel $transport_config]
+            set connection_agent [$agent_class new $conn_channel $connection_id $host $port {*}$agent_args]
         } message options]} {
             catch {close $conn_channel}
             if {$connection_finished_thread ne {} &&
@@ -296,7 +291,8 @@ namespace eval ::tclwire {
             set connection_agent {}
         }
 
-        if {$connection_finished_thread ne {} && [::thread::exists $connection_finished_thread]} {
+        if {($connection_finished_thread ne {}) && \
+            [::thread::exists $connection_finished_thread]} {
             set callback [list {*}$connection_finished_command $connection_id [::thread::id]]
             ::thread::send -async $connection_finished_thread $callback
         }

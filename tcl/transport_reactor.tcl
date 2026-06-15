@@ -192,13 +192,13 @@ oo::class create ::tclwire::TransportReactor {
 
         if {[catch {
             ::thread::detach $channel
-            set detached 1
+            set detached     1
             ::thread::send $tid [list ::thread::attach $channel]
             dict set agent_threads $tid $connection_id
             ::thread::send -async $tid [list ::tclwire::start_connection_agent \
-                $agent_class $channel $connection_id $peer_host $peer_port \
-                [::thread::id] [list [self] connection_finished $pool_key] \
-                $agent_args $transport_config]
+                                             $agent_class $channel $connection_id $peer_host $peer_port \
+                                             [::thread::id] [list [self] connection_finished $pool_key] \
+                                             $agent_args $transport_config]
         } error options]} {
             set last_accept_error $error
             if {$detached} {
@@ -209,10 +209,9 @@ oo::class create ::tclwire::TransportReactor {
             if {[dict exists $agent_threads $tid]} {
                 dict unset agent_threads $tid
             }
-            catch {::tclwire::tpba request [dict create \
-                operation release_worker \
-                pool_key $pool_key \
-                worker_id $tid]}
+            catch {::tclwire::tpba request [dict create operation release_worker \
+                                                        pool_key  $pool_key \
+                                                        worker_id $tid]}
             return
         }
         return
