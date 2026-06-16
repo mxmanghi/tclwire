@@ -25,16 +25,61 @@ namespace eval ::tclwire::runtime {
     variable shutdown_requested 0
     variable transport_reactors [dict create]
     variable application_dispatcher {}
-    variable protocol_defaults [dict create \
-        http 8990 \
-        https 9443 \
-        ftp 8991 \
-        ftps 990 \
-        proxy 8992]
+    variable protocol_descriptors [dict create \
+        http [dict create \
+            default_port 8990 \
+            secure 0 \
+            agent_class ::tclwire::HttpConnectionAgent \
+            agent_package tclwire::http::connection_agent \
+            setup_proc ::tclwire::runtime::http_service_agent_args] \
+        https [dict create \
+            default_port 9443 \
+            secure 1 \
+            agent_class ::tclwire::HttpConnectionAgent \
+            agent_package tclwire::http::connection_agent \
+            setup_proc ::tclwire::runtime::http_service_agent_args] \
+        ftp [dict create \
+            default_port 8991 \
+            secure 0 \
+            agent_class ::tclwire::FtpConnectionAgent \
+            agent_package tclwire::ftp::connection_agent \
+            setup_proc ::tclwire::runtime::ftp_service_agent_args] \
+        ftps [dict create \
+            default_port 990 \
+            secure 1 \
+            agent_class ::tclwire::FtpConnectionAgent \
+            agent_package tclwire::ftp::connection_agent \
+            setup_proc ::tclwire::runtime::ftp_service_agent_args] \
+        proxy [dict create \
+            default_port 8992 \
+            secure 0 \
+            agent_class ::tclwire::ProxyConnectionAgent \
+            agent_package tclwire::proxy::connection_agent \
+            setup_proc ::tclwire::runtime::proxy_service_agent_args]]
 
     proc implemented_protocols {} {
-        variable protocol_defaults
-        return [dict keys $protocol_defaults]
+        variable protocol_descriptors
+        return [dict keys $protocol_descriptors]
+    }
+
+    proc protocol_descriptor {protocol} {
+        variable protocol_descriptors
+        if {![dict exists $protocol_descriptors $protocol]} {
+            error "configured protocol is not implemented: $protocol"
+        }
+        return [dict get $protocol_descriptors $protocol]
+    }
+
+    proc protocol_default_port {protocol} {
+        return [dict get [protocol_descriptor $protocol] default_port]
+    }
+
+    proc protocol_defaults {} {
+        set defaults [dict create]
+        foreach protocol [implemented_protocols] {
+            dict set defaults $protocol [protocol_default_port $protocol]
+        }
+        return $defaults
     }
 
     proc default_protocols {} {
@@ -65,7 +110,8 @@ namespace eval ::tclwire::runtime {
         puts $channel "  --certfile <path>"
         puts $channel "  --keyfile <path>"
         puts $channel "  --noftp-user-check"
-        puts $channel "  --logfile <path>    Default: /tmp/tclwire.log"
+        puts $channel "  --logfile <path>    Access log. Default: /tmp/tclwire.log"
+        puts $channel "  --logerr <path>     Error log. Default: /tmp/tclwire-err.log"
         puts $channel "  --quiet"
         puts $channel "  --debug"
         return
@@ -109,7 +155,7 @@ namespace eval ::tclwire::runtime {
     }
 
     proc secure_protocol {protocol} {
-        return [expr {$protocol in {https ftps}}]
+        return [dict get [protocol_descriptor $protocol] secure]
     }
 
     proc normalize_service {service default_certfile default_keyfile} {
@@ -178,8 +224,6 @@ namespace eval ::tclwire::runtime {
     }
 
     proc default_config {} {
-        variable protocol_defaults
-
         set host 127.0.0.1
         set quiet 0
         set debug 0
@@ -189,14 +233,15 @@ namespace eval ::tclwire::runtime {
         set certfile {}
         set keyfile {}
         set logfile [file normalize /tmp/tclwire.log]
+        set logerr [file normalize /tmp/tclwire-err.log]
         set ftp_user_check 1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
         set startservers [default_protocols]
         set services [list [dict create \
             protocol http \
-            port [dict get $protocol_defaults http]]]
+            port [protocol_default_port http]]]
         set custom_services 0
-        set ports $protocol_defaults
+        set ports [protocol_defaults]
         set default_application default
         set default_encoding utf-8
         set applications [dict create \
@@ -219,6 +264,7 @@ namespace eval ::tclwire::runtime {
                             keyfile      $keyfile \
                             ftp_user_check $ftp_user_check \
                             logfile      $logfile \
+                            logerr       $logerr \
                             startservers $startservers \
                             services     $services \
                             custom_services $custom_services \
@@ -251,8 +297,6 @@ namespace eval ::tclwire::runtime {
     }
 
     proc apply_file_config {config path toml_config} {
-        variable protocol_defaults
-
         if {$path eq "."} {
             return $config
         }
@@ -278,7 +322,7 @@ namespace eval ::tclwire::runtime {
             }]
             set paths [dict map {field value} \
                     [dict filter $global key \
-                        docroot ftproot certfile keyfile logfile libdir] {
+                        docroot ftproot certfile keyfile logfile logerr libdir] {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
@@ -296,7 +340,7 @@ namespace eval ::tclwire::runtime {
                 continue
             }
             set protocol_config [dict get $toml_config $protocol]
-            set port [dict get $protocol_defaults $protocol]
+            set port [protocol_default_port $protocol]
             if {[dict exists $protocol_config port]} {
                 set port [parse_port_value "$protocol.port" \
                     [dict get $protocol_config port]]
@@ -497,6 +541,10 @@ namespace eval ::tclwire::runtime {
                     dict set config logfile [file normalize \
                         [require_value $argv [incr i] $option]]
                 }
+                --logerr {
+                    dict set config logerr [file normalize \
+                        [require_value $argv [incr i] $option]]
+                }
                 --quiet {
                     dict set config quiet 1
                 }
@@ -616,6 +664,59 @@ namespace eval ::tclwire::runtime {
         return $config
     }
 
+    proc service_transport_config {service} {
+        set transport_config [dict create secure [dict get $service secure]]
+        if {[dict get $service secure]} {
+            dict set transport_config certfile [dict get $service certfile]
+            dict set transport_config keyfile [dict get $service keyfile]
+        }
+        return $transport_config
+    }
+
+    proc ensure_application_dispatcher {config} {
+        variable application_dispatcher
+
+        if {$application_dispatcher eq {}} {
+            set application_dispatcher \
+                [::tclwire::ApplicationDispatcher new $config]
+            $application_dispatcher start
+        }
+        return $application_dispatcher
+    }
+
+    proc http_service_agent_args {config service} {
+        ensure_application_dispatcher $config
+        return [list -applicationconfig $config \
+                     -protocol [dict get $service protocol]]
+    }
+
+    proc ftp_service_agent_args {config service} {
+        ::tclwire::support prepare_ftp_root [dict get $config ftproot]
+        return [list -config [dict merge $config $service]]
+    }
+
+    proc proxy_service_agent_args {config service} {
+        return [list -config $config]
+    }
+
+    proc create_transport_reactor {config service} {
+        set protocol [dict get $service protocol]
+        set service_id [dict get $service id]
+        set descriptor [protocol_descriptor $protocol]
+        set setup_proc [dict get $descriptor setup_proc]
+        set agent_args [$setup_proc $config $service]
+
+        return [::tclwire::TransportReactor new \
+            -host [dict get $config host] \
+            -port [dict get $service port] \
+            -protocol $protocol \
+            -serviceid $service_id \
+            -transportconfig [service_transport_config $service] \
+            -agentclass [dict get $descriptor agent_class] \
+            -agentpackage [dict get $descriptor agent_package] \
+            -agentargs $agent_args]
+    }
+
     proc start {argv} {
         variable active
         variable active_config
@@ -646,75 +747,12 @@ namespace eval ::tclwire::runtime {
 
             set configured_services {}
             foreach service [dict get $config services] {
-                set protocol [dict get $service protocol]
                 set service_id [dict get $service id]
                 if {$service_id in $configured_services} {
                     error "duplicate service endpoint: $service_id"
                 }
                 lappend configured_services $service_id
-                set transport_config \
-                    [dict create secure [dict get $service secure]]
-                if {[dict get $service secure]} {
-                    dict set transport_config certfile \
-                        [dict get $service certfile]
-                    dict set transport_config keyfile \
-                        [dict get $service keyfile]
-                }
-
-                switch -exact -- $protocol {
-                    http -
-                    https {
-
-                        # only HTTP based services have an
-                        # application dispatcher driven by
-                        # the 'Host:' header value
-
-                        if {$application_dispatcher eq {}} {
-                            set application_dispatcher \
-                                [::tclwire::ApplicationDispatcher new $config]
-                            $application_dispatcher start
-                        }
-                        set reactor [::tclwire::TransportReactor new \
-                                        -host [dict get $config host] \
-                                        -port [dict get $service port] \
-                                        -protocol $protocol \
-                                        -serviceid $service_id \
-                                        -transportconfig $transport_config \
-                                        -agentclass     ::tclwire::HttpConnectionAgent \
-                                        -agentpackage   tclwire::http::connection_agent \
-                                        -agentargs      [list -applicationconfig $config \
-                                                              -protocol $protocol]]
-                    }
-                    ftp -
-                    ftps {
-                        ::tclwire::support prepare_ftp_root \
-                            [dict get $config ftproot]
-                        set service_config [dict merge $config $service]
-                        set reactor [::tclwire::TransportReactor new \
-                                            -host [dict get $config host] \
-                                            -port [dict get $service port] \
-                                            -protocol $protocol \
-                                            -serviceid $service_id \
-                                            -transportconfig $transport_config \
-                                            -agentclass     ::tclwire::FtpConnectionAgent \
-                                            -agentpackage   tclwire::ftp::connection_agent \
-                                            -agentargs      [list -config $service_config]]
-                    }
-                    proxy {
-                        set reactor [::tclwire::TransportReactor new \
-                                            -host [dict get $config host] \
-                                            -port [dict get $service port] \
-                                            -protocol proxy \
-                                            -serviceid $service_id \
-                                            -transportconfig $transport_config \
-                                            -agentclass ::tclwire::ProxyConnectionAgent \
-                                            -agentpackage tclwire::proxy::connection_agent \
-                                            -agentargs [list -config $config]]
-                    }
-                    default {
-                        error "configured protocol is not implemented: $protocol"
-                    }
-                }
+                set reactor [create_transport_reactor $config $service]
                 dict set transport_reactors $service_id $reactor
                 $reactor start
             }

@@ -42,8 +42,19 @@ package ifneeded tclwire::http::redirect 0.1 [subst {
 package ifneeded tclwire::http::query 0.1 \
     [list source [file join $dir tcl http_query.tcl]]
 
-package ifneeded tclwire::http::request 0.1 \
-    [list source [file join $dir tcl http_request.tcl]]
+package ifneeded tclwire::http::message 0.1 \
+    [list source [file join $dir tcl http_message.tcl]]
+
+package ifneeded tclwire::http::multipart 0.1 [subst {
+    package require tclwire::http::message 0.1
+    source [list [file join $dir tcl http_multipart.tcl]]
+}]
+
+package ifneeded tclwire::http::request 0.1 [subst {
+    package require tclwire::http::message 0.1
+    package require tclwire::http::multipart 0.1
+    source [list [file join $dir tcl http_request.tcl]]
+}]
 
 package ifneeded tclwire::transaction_descriptor 0.1 \
     [list source [file join $dir tcl transaction_descriptor.tcl]]

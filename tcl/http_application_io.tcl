@@ -40,8 +40,7 @@ namespace eval ::tclwire::http::io {
         if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $name]} {
             error "invalid HTTP response header name"
         }
-        if {[string first "\r" $value] >= 0 ||
-                [string first "\n" $value] >= 0} {
+        if {[string first "\r" $value] >= 0 || [string first "\n" $value] >= 0} {
             error "invalid HTTP response header value"
         }
         return

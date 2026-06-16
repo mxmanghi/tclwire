@@ -7,24 +7,38 @@ namespace eval ::tclwire {}
 namespace eval ::tclwire::logger {
     variable logchan {}
     variable logfile {}
+    variable errchan {}
+    variable logerr {}
 
     proc timestamp {} {
         return [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S"]
     }
 
-    proc agent_initialize {path} {
+    proc agent_initialize {path {error_path {}}} {
         variable logchan
         variable logfile
+        variable errchan
+        variable logerr
 
-        if {$logchan ne {}} {
+        if {$logchan ne {} || $errchan ne {}} {
             error "logger agent is already initialized"
         }
 
         set logfile [file normalize $path]
+        if {$error_path eq {}} {
+            set error_path [file normalize /tmp/tclwire-err.log]
+        }
+        set logerr [file normalize $error_path]
+
         file mkdir [file dirname $logfile]
         set logchan [open $logfile a]
         chan configure $logchan -buffering line -translation lf -encoding utf-8
-        return $logfile
+
+        file mkdir [file dirname $logerr]
+        set errchan [open $logerr a]
+        chan configure $errchan -buffering line -translation lf -encoding utf-8
+
+        return [dict create logfile $logfile logerr $logerr]
     }
 
     proc agent_write {line} {
@@ -39,15 +53,34 @@ namespace eval ::tclwire::logger {
         return
     }
 
+    proc agent_write_error {line} {
+        variable errchan
+
+        if {$errchan eq {}} {
+            error "logger error channel is not initialized"
+        }
+
+        puts $errchan "[timestamp] $line"
+        flush $errchan
+        return
+    }
+
     proc agent_shutdown {} {
         variable logchan
         variable logfile
+        variable errchan
+        variable logerr
 
         if {$logchan ne {}} {
             catch {close $logchan}
             set logchan {}
         }
+        if {$errchan ne {}} {
+            catch {close $errchan}
+            set errchan {}
+        }
         set logfile {}
+        set logerr {}
         after 0 [list ::thread::release [::thread::id]]
         return
     }

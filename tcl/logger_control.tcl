@@ -19,13 +19,21 @@ namespace eval ::tclwire::logger {
         if {![dict exists $config logfile]} {
             error "logger configuration is missing logfile"
         }
+        if {![dict exists $config logerr]} {
+            dict set config logerr [file normalize /tmp/tclwire-err.log]
+        }
 
         set path [dict get $config logfile]
         if {[string trim $path] eq {}} {
             error "logger logfile must not be empty"
         }
+        set error_path [dict get $config logerr]
+        if {[string trim $error_path] eq {}} {
+            error "logger logerr must not be empty"
+        }
 
         dict set config logfile [file normalize $path]
+        dict set config logerr [file normalize $error_path]
         return $config
     }
 
@@ -48,7 +56,7 @@ namespace eval ::tclwire::logger {
         try {
             ::thread::send $tid [list source $agent_script_path]
             ::thread::send $tid [list ::tclwire::logger::agent_initialize \
-                [dict get $config logfile]]
+                [dict get $config logfile] [dict get $config logerr]]
         } on error {message options} {
             catch {
                 ::thread::send -async $tid [list ::thread::release $tid]

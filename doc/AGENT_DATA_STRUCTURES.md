@@ -136,6 +136,11 @@ The request body must be interpreted according to `body_mode`. Only
 `in_memory` is implemented; future modes may replace the direct `body` field
 with another access mechanism.
 
+`HttpRequest` adds convenience methods over these descriptor fields. Multipart
+helpers parse `Content-Type: multipart/*` request bodies from the in-memory
+`body` field and expose each part as a dictionary containing `headers`, `body`,
+and, for `form-data`, optional `name`, `filename`, and `content_type` fields.
+
 ## Transaction Descriptor
 
 The Connection Agent stores one active `::tclwire::TransactionDescriptor`

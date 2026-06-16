@@ -23,7 +23,10 @@ meaningfully implemented by the legacy server.
 - [x] Provide reusable URL query decoding into a dictionary.
 - [x] Provide reusable redirect-response construction.
 - [x] Provide a semantic operation for discarding an unsent response body.
-- [ ] Provide reusable request-header access.
+- [x] Provide reusable request-header access.
+- [x] Provide reusable request `Content-Type` parsing helpers.
+- [x] Provide in-memory MIME multipart request parsing with form-field and
+      uploaded-file accessors.
 - [x] Provide reusable byte-range parsing.
 - [x] Provide reusable response-cookie construction with URI path and
       expiration support.
@@ -37,28 +40,39 @@ methods placed directly in the default `::tclwire::CApplication`.
 
 - [x] Make `::tclwire::io::flush` forward buffered output to the Connection
       Agent and ultimately to the socket channel.
-- [ ] Allow application output to be streamed instead of always accumulated in
-      `::tclwire::HttpConnectionAgent`.
-- [ ] Add a stdout compatibility layer for applications that use Tcl `puts`
-      and `flush`.
-- [ ] Add stderr redirection to the logging facility.
-- [ ] Track whether HTTP response headers have been sent.
-- [ ] Reject attempts to modify HTTP headers after transmission has begun.
-- [ ] Add convenient HTTP response-header add, replace, and remove operations
-      for Content Generator Agents.
+- [x] Stream application output for chunked HTTP responses instead of
+      accumulating it in `::tclwire::HttpConnectionAgent`.
+- [ ] Define a general streaming output mode for non-chunked responses,
+      including buffering and backpressure semantics.
+- [x] Add namespaced stdout compatibility commands for applications that use
+      Tcl-style `puts` and `flush`.
+- [ ] Implement an optionally loaded standard-channel redirection module for
+      application workers.
+- [ ] Decide how standard-channel redirection is enabled: application-level
+      opt-in package loading, or a TclWire worker configuration flag such as
+      `stdchans_redirect`.
+- [x] Add a dedicated logger-agent error log sink, configured by `--logerr`,
+      for future stderr redirection.
+- [ ] Redirect application `stderr` output to the logger-agent error log.
+- [x] Track response commitment state so the Connection Agent knows whether
+      HTTP response headers have been sent.
+- [x] Reject attempts to modify HTTP headers after response commitment.
+- [x] Add convenient HTTP response-header add, replace, remove, and inspect
+      operations for Content Generator Agents.
 
 ## Service Registration
 
-- [ ] Replace the hardcoded protocol switch in the runtime with a service
+- [x] Replace the hardcoded protocol switch in the runtime with a service
       descriptor registry.
-- [ ] Let each descriptor identify:
+- [x] Let each protocol descriptor identify:
   - protocol name;
   - default port;
   - secure transport requirement;
   - Connection Agent class and package;
-  - Transport Reactor arguments;
-  - pool descriptor and worker policy, where applicable.
-- [ ] Support multiple protocols sharing the same Connection Agent class, such
+  - Transport Reactor agent arguments.
+- [ ] Move pool descriptor and worker policy selection into service
+      descriptors where applicable.
+- [x] Support multiple protocols sharing the same Connection Agent class, such
       as HTTP/HTTPS and FTP/FTPS.
 
 This should use the current Transport Reactor and Connection Agent terminology,
@@ -130,4 +144,5 @@ in the current architecture rather than copied again from `legacy/`:
 - Host-based application dispatch;
 - binary-safe static-file serving;
 - centralized logger agent and client interface;
+- split access-log and error-log logger outputs;
 - shared thread accounting.

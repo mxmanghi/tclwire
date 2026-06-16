@@ -119,9 +119,20 @@ The request object exposes:
 | `version` | HTTP version, such as `1.1`. |
 | `headers` | Dictionary keyed by lowercase header names. |
 | `header name ?default?` | Case-insensitive header lookup. |
+| `content_type ?default?` | Raw `Content-Type` header value. |
+| `content_type_info` | Parsed media type and parameters dictionary. |
+| `media_type ?default?` | Lowercase media type from `Content-Type`. |
+| `content_type_parameter name ?default?` | One lowercase-keyed `Content-Type` parameter. |
+| `is_multipart` | True if the request media type is `multipart/*`. |
 | `body_mode` | Request body storage mode. |
 | `body` | In-memory decoded request body. |
 | `body_size` | Request body length. |
+| `multipart_parts` | Parsed in-memory MIME multipart parts. |
+| `form_fields` | Dictionary of non-file multipart form fields. |
+| `form_values name` | All non-file multipart values for one field name. |
+| `form_value name ?default?` | Last non-file multipart value for one field name. |
+| `uploaded_files ?name?` | Multipart file parts, optionally filtered by field name. |
+| `uploaded_file name` | First multipart file part for one field name, or empty. |
 | `trailers` | Decoded chunk trailer dictionary. |
 | `connection_id` | Runtime connection identifier. |
 | `transaction_id` | Connection-local transaction identifier. |
@@ -154,9 +165,280 @@ in_memory
 descriptor uses another body mode. `body_size` reports the length of the
 decoded body.
 
+Multipart request helpers currently parse the in-memory body. Each part is a
+dictionary with `headers` and `body`; form-data parts also expose `name`, and
+file parts expose `filename`. Parts with their own `Content-Type` include
+`content_type`. Parsed parts are cached by the immutable request object.
+
 There is currently no spooled-file or streaming request-body API. Large
 uploads are therefore buffered in the connection thread and copied to the CGA
 worker.
+
+## Content-Type and Multipart Reference
+
+The request object includes convenience methods for inspecting request media
+types and for accessing `multipart/*` request bodies. These methods are
+read-only and operate on the already-decoded in-memory request body.
+
+### Summary
+
+The new request-side helpers cover three layers:
+
+- raw `Content-Type` access
+- parsed media type and parameter access
+- parsed MIME multipart parts, including `multipart/form-data` fields and
+  uploaded file parts
+
+This keeps request-body interpretation on the `HttpRequest` object while
+leaving response output controls in `::tclwire::io` and
+`::tclwire::http::io`.
+
+### Content-Type Methods
+
+```tcl
+$request content_type ?default?
+```
+
+Returns the raw `Content-Type` request header value. Header lookup is
+case-insensitive because request headers are normalized by the protocol
+parser.
+
+If the request has no `Content-Type`, the optional default is returned. Without
+an explicit default, the result is an empty string.
+
+Example:
+
+```tcl
+set value [$request content_type]
+# multipart/form-data; boundary=AaB03x
+```
+
+```tcl
+$request content_type_info
+```
+
+Parses the `Content-Type` header and returns a dictionary with:
+
+- `media_type`: lowercase media type
+- `parameters`: dictionary of lowercase parameter names to unquoted values
+
+If the request has no `Content-Type`, this method raises an error.
+
+Example:
+
+```tcl
+$request content_type_info
+# media_type multipart/form-data parameters {boundary AaB03x}
+```
+
+```tcl
+$request media_type ?default?
+```
+
+Returns only the lowercase media type from `Content-Type`. If no
+`Content-Type` is present, the optional default is returned.
+
+Example:
+
+```tcl
+$request media_type
+# multipart/form-data
+```
+
+```tcl
+$request content_type_parameter name ?default?
+```
+
+Returns one parsed `Content-Type` parameter. Parameter names are matched
+case-insensitively. Quoted parameter values are returned without surrounding
+quotes.
+
+If the request has no `Content-Type`, or if the named parameter is absent, the
+optional default is returned.
+
+Example:
+
+```tcl
+$request content_type_parameter boundary
+# AaB03x
+```
+
+```tcl
+$request is_multipart
+```
+
+Returns true when the parsed media type matches `multipart/*`; otherwise
+returns false.
+
+Example:
+
+```tcl
+if {[$request is_multipart]} {
+    set parts [$request multipart_parts]
+}
+```
+
+### Multipart Part Access
+
+```tcl
+$request multipart_parts
+```
+
+Parses a `multipart/*` request body and returns a Tcl list of part
+dictionaries. The parsed list is cached by the immutable request object, so
+subsequent calls do not reparse the body.
+
+This method requires:
+
+- an in-memory request body
+- a `Content-Type` whose media type is `multipart/*`
+- a nonempty `boundary` parameter
+- a body containing the declared boundary and closing boundary
+
+If any of those requirements is not met, it raises an error.
+
+Every returned part dictionary contains:
+
+| Key | Meaning |
+| --- | --- |
+| `headers` | Part headers keyed by lowercase header name. |
+| `body` | Raw part body. |
+
+For parts with a `Content-Type` header, the part also contains:
+
+| Key | Meaning |
+| --- | --- |
+| `content_type` | Raw part `Content-Type` value. |
+
+For parts with `Content-Disposition`, the part may also contain:
+
+| Key | Meaning |
+| --- | --- |
+| `disposition` | Lowercase disposition type, such as `form-data`. |
+| `name` | Unquoted `name` parameter. |
+| `filename` | Unquoted `filename` parameter. |
+
+Example:
+
+```tcl
+foreach part [$request multipart_parts] {
+    set headers [dict get $part headers]
+    set body [dict get $part body]
+}
+```
+
+For a typical file upload part:
+
+```tcl
+dict create \
+    headers [dict create \
+        content-disposition {form-data; name="upload"; filename="hello.txt"} \
+        content-type text/plain] \
+    body {hello file} \
+    content_type text/plain \
+    disposition form-data \
+    name upload \
+    filename hello.txt
+```
+
+### Multipart Form Helpers
+
+The form helpers operate on parsed multipart parts and are intended for
+`multipart/form-data` requests.
+
+```tcl
+$request form_fields
+```
+
+Returns a dictionary of non-file form fields. Parts that have a `filename`
+parameter are excluded. If the same field name appears more than once, the last
+value is retained in the returned dictionary.
+
+Example:
+
+```tcl
+$request form_fields
+# title {Quarterly report} published yes
+```
+
+```tcl
+$request form_values name
+```
+
+Returns a list containing every non-file value for the named field, preserving
+request order.
+
+Example:
+
+```tcl
+$request form_values tag
+# tcl web server
+```
+
+```tcl
+$request form_value name ?default?
+```
+
+Returns the last non-file value for the named field. If no value exists, the
+optional default is returned.
+
+Example:
+
+```tcl
+$request form_value title Untitled
+# Quarterly report
+```
+
+```tcl
+$request uploaded_files ?name?
+```
+
+Returns all file parts. When `name` is supplied, only file parts whose
+form-data `name` parameter matches are returned.
+
+Example:
+
+```tcl
+foreach file [$request uploaded_files attachment] {
+    set filename [dict get $file filename]
+    set bytes [dict get $file body]
+}
+```
+
+```tcl
+$request uploaded_file name
+```
+
+Returns the first uploaded file part for the named field. If no matching file
+part exists, the result is an empty string.
+
+Example:
+
+```tcl
+set file [$request uploaded_file avatar]
+if {$file ne {}} {
+    set filename [dict get $file filename]
+    set body [dict get $file body]
+}
+```
+
+### Error Behavior
+
+Multipart parsing errors are application-facing request interpretation errors.
+They are raised when an application calls a multipart method, not while the
+connection thread parses the HTTP request.
+
+Representative errors include:
+
+- `request Content-Type is not multipart`
+- `multipart Content-Type is missing boundary`
+- `multipart boundary was not found`
+- `multipart closing boundary was not found`
+- `multipart part headers are incomplete`
+
+Applications that accept optional multipart bodies should check
+`$request is_multipart` before calling `multipart_parts` or the form/file
+helpers.
 
 ## Application Output Context
 

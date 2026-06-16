@@ -71,6 +71,99 @@ test http-request-1.1 {HTTP request exposes a read-only semantic interface} -bod
     }
 } -result {GET /search {q Tcl} Tcl yes payload 1}
 
+test http-request-1.2 {HTTP request exposes Content-Type parameters} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method POST \
+        target /upload \
+        path /upload \
+        query {} \
+        version 1.1 \
+        headers [dict create \
+            content-type {Multipart/Form-Data; boundary="AaB03x"; charset=utf-8}] \
+        body_mode in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 3]]
+    try {
+        list \
+            [$request content_type] \
+            [$request media_type] \
+            [$request content_type_parameter boundary] \
+            [$request content_type_parameter charset] \
+            [$request is_multipart]
+    } finally {
+        $request destroy
+    }
+} -result [list \
+    {Multipart/Form-Data; boundary="AaB03x"; charset=utf-8} \
+    multipart/form-data \
+    AaB03x \
+    utf-8 \
+    1]
+
+test http-request-1.3 {HTTP request exposes multipart form fields and files} -body {
+    set boundary AaB03x
+    set body [binary format a* {}]
+    append body "--$boundary\r\n"
+    append body "Content-Disposition: form-data; name=\"field\"\r\n\r\n"
+    append body "value1\r\n"
+    append body "--$boundary\r\n"
+    append body "Content-Disposition: form-data; name=\"field\"\r\n\r\n"
+    append body "value2\r\n"
+    append body "--$boundary\r\n"
+    append body "Content-Disposition: form-data; name=\"upload\"; filename=\"hello.txt\"\r\n"
+    append body "Content-Type: text/plain\r\n\r\n"
+    append body "hello file\r\n"
+    append body "--$boundary--\r\n"
+
+    set request [::tclwire::HttpRequest new [dict create \
+        method POST \
+        target /upload \
+        path /upload \
+        query {} \
+        version 1.1 \
+        headers [dict create \
+            content-type "multipart/form-data; boundary=$boundary"] \
+        body_mode in_memory \
+        body $body \
+        body_size [string length $body] \
+        transaction_id 3]]
+    try {
+        set file [$request uploaded_file upload]
+        list \
+            [llength [$request multipart_parts]] \
+            [$request form_values field] \
+            [$request form_value field] \
+            [dict get [$request form_fields] field] \
+            [dict get $file name] \
+            [dict get $file filename] \
+            [dict get $file content_type] \
+            [dict get $file body]
+    } finally {
+        $request destroy
+    }
+} -result {3 {value1 value2} value2 value2 upload hello.txt text/plain {hello file}}
+
+test http-request-1.4 {multipart requests require a boundary parameter} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method POST \
+        target /upload \
+        path /upload \
+        query {} \
+        version 1.1 \
+        headers [dict create content-type multipart/form-data] \
+        body_mode in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 3]]
+    try {
+        catch {$request multipart_parts} message
+        set message
+    } finally {
+        $request destroy
+    }
+} -result {multipart Content-Type is missing boundary}
+
 oo::class create ::tclwire::application_test::OutputReceiver {
     method application_output {transaction_id event} {
         lappend ::tclwire::application_test::events \

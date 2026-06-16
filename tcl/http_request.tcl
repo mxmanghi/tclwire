@@ -3,17 +3,23 @@
 # Read-only application view of a transported HTTP request descriptor.
 
 package require TclOO
+package require tclwire::http::message 0.1
+package require tclwire::http::multipart 0.1
 
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::HttpRequest {
     variable descriptor
+    variable multipart_parts_cache
+    variable multipart_parts_cached
 
     constructor {request_descriptor} {
         if {[catch {dict size $request_descriptor}]} {
             error "HTTP request descriptor must be a dictionary"
         }
         set descriptor $request_descriptor
+        set multipart_parts_cache {}
+        set multipart_parts_cached 0
     }
 
     method required {field} {
@@ -81,6 +87,54 @@ oo::class create ::tclwire::HttpRequest {
         return $default_value
     }
 
+    method content_type {{default_value {}}} {
+        return [my header content-type $default_value]
+    }
+
+    method content_type_info {} {
+        set value [my content_type]
+        if {$value eq {}} {
+            error "HTTP request has no Content-Type"
+        }
+        return [::tclwire::http::message parse_content_type $value]
+    }
+
+    method media_type {{default_value {}}} {
+        set value [my content_type]
+        if {$value eq {}} {
+            return $default_value
+        }
+        return [dict get \
+            [::tclwire::http::message parse_content_type $value] media_type]
+    }
+
+    method content_type_parameter {name {default_value {}}} {
+        set value [my content_type]
+        if {$value eq {}} {
+            return $default_value
+        }
+        set parameters [dict get \
+            [::tclwire::http::message parse_content_type $value] parameters]
+        set name [string tolower $name]
+        if {[dict exists $parameters $name]} {
+            return [dict get $parameters $name]
+        }
+        return $default_value
+    }
+
+    method is_multipart {} {
+        set value [my content_type]
+        if {$value eq {}} {
+            return 0
+        }
+        return [expr {
+            [string match multipart/* \
+                [dict get \
+                    [::tclwire::http::message parse_content_type $value] \
+                    media_type]]
+        }]
+    }
+
     method body_mode {} {
         return [my optional body_mode none]
     }
@@ -94,6 +148,49 @@ oo::class create ::tclwire::HttpRequest {
 
     method body_size {} {
         return [my optional body_size 0]
+    }
+
+    method multipart_parts {} {
+        variable multipart_parts_cache
+        variable multipart_parts_cached
+
+        if {!$multipart_parts_cached} {
+            set multipart_parts_cache [::tclwire::http::multipart parse \
+                [my content_type] [my body]]
+            set multipart_parts_cached 1
+        }
+        return $multipart_parts_cache
+    }
+
+    method form_fields {} {
+        return [::tclwire::http::multipart form_fields \
+            [my multipart_parts]]
+    }
+
+    method form_values {name} {
+        return [::tclwire::http::multipart field_values \
+            [my multipart_parts] $name]
+    }
+
+    method form_value {name {default_value {}}} {
+        set values [my form_values $name]
+        if {[llength $values] == 0} {
+            return $default_value
+        }
+        return [lindex $values end]
+    }
+
+    method uploaded_files {{name {}}} {
+        return [::tclwire::http::multipart files \
+            [my multipart_parts] $name]
+    }
+
+    method uploaded_file {name} {
+        set files [my uploaded_files $name]
+        if {[llength $files] == 0} {
+            return {}
+        }
+        return [lindex $files 0]
     }
 
     method trailers {} {

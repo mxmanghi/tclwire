@@ -23,6 +23,7 @@ docroot = "/tmp/tclwire"
 ftproot = "/tmp/tclwire"
 ftp_user_check = true
 logfile = "/tmp/tclwire.log"
+logerr = "/tmp/tclwire-err.log"
 
 # Optional directory containing application class files. An application's
 # libdir overrides this value. The application docroot still has precedence.

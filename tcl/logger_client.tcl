@@ -22,8 +22,19 @@ namespace eval ::tclwire::logger {
         return
     }
 
+    proc write_error {line} {
+        set tid [require_thread]
+        ::thread::send -async $tid \
+            [list ::tclwire::logger::agent_write_error $line]
+        return
+    }
+
     proc log {protocol message} {
         write "$protocol $message"
+    }
+
+    proc log_error {source message} {
+        write_error "$source $message"
     }
 
     proc log_value {value} {
@@ -38,7 +49,8 @@ namespace eval ::tclwire::logger {
         return $tid
     }
 
-    namespace export thread_id is_running write log log_value
+    namespace export thread_id is_running write write_error log log_error \
+        log_value
     namespace ensemble create
 }
 
