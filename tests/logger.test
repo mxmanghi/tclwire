@@ -1,5 +1,6 @@
 package require tcltest
 namespace import ::tcltest::*
+package require fileutil
 
 set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
@@ -72,7 +73,7 @@ test logger-1.2 {the logger thread owns and writes the configured logfile} -body
         [regexp {^[0-9-]+ [0-9:]+ http method=GET status=200$} [lindex $lines 1]] \
         [llength $error_lines] \
         [regexp {^[0-9-]+ [0-9:]+ stderr message$} [lindex $error_lines 0]] \
-        [regexp {^[0-9-]+ [0-9:]+ app uncaught-error$} [lindex $error_lines 1]]
+        [regexp {^[0-9-]+ [0-9:]+ app level=error uncaught-error$} [lindex $error_lines 1]]
 } -cleanup {
     ::tclwire::logger_test::cleanup
 } -result {2 1 1 2 1 1}
@@ -125,6 +126,42 @@ test logger-1.5 {stop is idempotent and clears shared discovery state} -body {
     ::tclwire::logger_test::cleanup
 } -result {1 {} 1 {} 0}
 
+test logger-1.5a {rotate reopens configured log files} -body {
+    ::tclwire::logger start \
+        [dict create \
+            logfile $::tclwire::logger_test::logfile \
+            logerr $::tclwire::logger_test::logerr]
+    ::tclwire::logger write before-rotate
+    ::tclwire::logger write_error error-before-rotate
+    file rename -force $::tclwire::logger_test::logfile \
+        "$::tclwire::logger_test::logfile.1"
+    file rename -force $::tclwire::logger_test::logerr \
+        "$::tclwire::logger_test::logerr.1"
+    set rotated [::tclwire::logger rotate]
+    ::tclwire::logger write after-rotate
+    ::tclwire::logger write_error error-after-rotate
+    ::tclwire::logger stop
+
+    set old_log [::fileutil::cat "$::tclwire::logger_test::logfile.1"]
+    set new_log [::tclwire::logger_test::contents]
+    set old_err [::fileutil::cat "$::tclwire::logger_test::logerr.1"]
+    set new_err [::tclwire::logger_test::error_contents]
+    list \
+        [dict get $rotated logfile] \
+        [dict get $rotated logerr] \
+        [string match {*before-rotate*} $old_log] \
+        [string match {*after-rotate*} $new_log] \
+        [string match {*error-before-rotate*} $old_err] \
+        [string match {*error-after-rotate*} $new_err]
+} -cleanup {
+    catch {file delete -force "$::tclwire::logger_test::logfile.1"}
+    catch {file delete -force "$::tclwire::logger_test::logerr.1"}
+    ::tclwire::logger_test::cleanup
+} -result [list \
+    [file normalize $::tclwire::logger_test::logfile] \
+    [file normalize $::tclwire::logger_test::logerr] \
+    1 1 1 1]
+
 test logger-1.6 {the client package excludes lifecycle control} -body {
     set child [interp create]
     try {
@@ -154,7 +191,71 @@ test logger-1.7 {the logger thread loads only agent runtime commands} -body {
     set commands
 } -cleanup {
     ::tclwire::logger_test::cleanup
-} -result {agent_initialize agent_shutdown agent_write agent_write_error timestamp}
+} -result {agent_initialize agent_rotate agent_shutdown agent_write agent_write_error close_log_channels open_log_channels timestamp}
+
+test logger-1.8 {configured log levels filter by severity and context} -body {
+    set config [dict create \
+        logfile $::tclwire::logger_test::logfile \
+        logerr $::tclwire::logger_test::logerr \
+        log_level error \
+        services [list \
+            [dict create id http:8990 log_level debug] \
+            [dict create id ftp:8991 log_level crit]] \
+        applications [dict create \
+            default [dict create hosts {localhost 127.0.0.1}] \
+            quiet [dict create hosts quiet.example log_level alert]]]
+    ::tclwire::logger start $config
+    list \
+        [::tclwire::logger should_log debug \
+            [dict create service_id http:8990]] \
+        [::tclwire::logger should_log info \
+            [dict create service_id ftp:8991]] \
+        [::tclwire::logger should_log error \
+            [dict create service_id ftp:8991]] \
+        [::tclwire::logger should_log crit \
+            [dict create service_id ftp:8991]] \
+        [::tclwire::logger should_log crit \
+            [dict create service_id http:8990 host quiet.example]] \
+        [::tclwire::logger should_log emerg \
+            [dict create service_id http:8990 host quiet.example]]
+} -cleanup {
+    ::tclwire::logger_test::cleanup
+} -result {1 0 0 1 0 1}
+
+test logger-1.9 {debug connection close logs only at debug threshold} -body {
+    set record [::tclwire::accounting new_connection_record \
+        connection_key http:8990#7 \
+        protocol http \
+        service_id http:8990 \
+        peer_host 127.0.0.1 \
+        status closed \
+        close_reason finished \
+        bytes_in 10 \
+        bytes_out 20]
+    ::tclwire::logger start \
+        [dict create \
+            logfile $::tclwire::logger_test::logfile \
+            logerr $::tclwire::logger_test::logerr \
+            log_level info]
+    ::tclwire::logger log_connection_closed $record
+    ::tclwire::logger stop
+    set suppressed [expr {[string trim [::tclwire::logger_test::error_contents]] eq {}}]
+
+    ::tclwire::logger start \
+        [dict create \
+            logfile $::tclwire::logger_test::logfile \
+            logerr $::tclwire::logger_test::logerr \
+            log_level debug]
+    ::tclwire::logger log_connection_closed $record
+    ::tclwire::logger stop
+    set content [::tclwire::logger_test::error_contents]
+    list \
+        $suppressed \
+        [string match {*connection level=debug connection=http:8990#7*} $content] \
+        [string match {*reason=finished*} $content]
+} -cleanup {
+    ::tclwire::logger_test::cleanup
+} -result {1 1 1}
 
 ::tclwire::logger_test::cleanup
 cleanupTests

@@ -13,13 +13,14 @@ namespace eval ::tclwire {}
 oo::class create ::tclwire::FtpConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
-    variable channel closed protocol_session command_buffer ftp_root
+    variable channel closed protocol_session command_buffer ftp_root connection_key
     variable ftp_user_check bind_host session secure_transport
     variable tls_certfile tls_keyfile log_protocol
 
     constructor {conn_channel id host port args} {
         array set options {
             -config {}
+            -connectionkey {}
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -30,6 +31,9 @@ oo::class create ::tclwire::FtpConnectionAgent {
         if {$options(-config) eq {}} {
             error "FTP connection agent requires configuration"
         }
+        if {$options(-connectionkey) eq {}} {
+            error "FTP connection agent requires connection key"
+        }
 
         set config $options(-config)
         foreach field {ftproot ftp_user_check host} {
@@ -38,7 +42,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
             }
         }
 
-        next $conn_channel $id $host $port
+        next $conn_channel $id $host $port $options(-connectionkey)
         set protocol_session [::tclwire::FtpProtocolSession new]
         set command_buffer {}
         set ftp_root [::fileutil::fullnormalize [dict get $config ftproot]]
@@ -100,6 +104,16 @@ oo::class create ::tclwire::FtpConnectionAgent {
                 [dict get $command_descriptor command]
             dict set session current_argument \
                 [dict get $command_descriptor argument]
+            catch {
+                set record [::tclwire::accounting get_connection_record $connection_key]
+                set request_count [expr {
+                    $record eq {} ? 1 : [dict get $record request_count] + 1
+                }]
+                ::tclwire::accounting update_connection $connection_key \
+                    [dict create \
+                        current_command [dict get $command_descriptor command] \
+                        request_count $request_count]
+            }
             if {[catch {
                 my execute_command \
                     [dict get $command_descriptor command] \

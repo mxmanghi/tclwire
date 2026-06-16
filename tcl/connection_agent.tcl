@@ -5,18 +5,24 @@
 
 package require TclOO
 package require Thread
+package require tclwire::accounting 1.2
+package require tclwire::logger::client 0.1
 package require tclwire::transaction_descriptor 0.1
 
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ConnectionAgent {
-    variable channel connection_id peer_host peer_port input_buffer timeout_id
+    variable channel connection_id connection_key peer_host peer_port input_buffer timeout_id
     variable initial_read_id
     variable transaction_state closed
 
-    constructor {conn_channel id host port} {
+    constructor {conn_channel id host port key} {
+        if {$key eq {}} {
+            error "connection agent requires connection key"
+        }
         set channel         $conn_channel
         set connection_id   $id
+        set connection_key  $key
         set peer_host       $host
         set peer_port       $port
         set input_buffer    {}
@@ -79,6 +85,15 @@ oo::class create ::tclwire::ConnectionAgent {
         }
 
         append input_buffer $chunk
+        catch {
+            set record [::tclwire::accounting get_connection_record $connection_key]
+            set bytes_in [expr {
+                $record eq {} ? [string length $chunk] :
+                [dict get $record bytes_in] + [string length $chunk]
+            }]
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create bytes_in $bytes_in]
+        }
         my refresh_timeout
         return $chunk
     }
@@ -144,8 +159,23 @@ oo::class create ::tclwire::ConnectionAgent {
                 flush $channel
             }
         }]} {
+            catch {
+                set close_record [::tclwire::accounting record_connection_closed $connection_key \
+                    [dict create status failed close_reason write_failed \
+                                  transport_error write_failed]]
+                ::tclwire::logger log_connection_closed $close_record
+            }
             my close
             return 0
+        }
+        catch {
+            set record [::tclwire::accounting get_connection_record $connection_key]
+            set bytes_out [expr {
+                $record eq {} ? [string length $data] :
+                [dict get $record bytes_out] + [string length $data]
+            }]
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create bytes_out $bytes_out]
         }
         my refresh_timeout
         return 1
@@ -165,11 +195,20 @@ oo::class create ::tclwire::ConnectionAgent {
         catch {chan event $channel readable {}}
         catch {close $channel}
         my clear_transaction
+        catch {
+            set close_record [::tclwire::accounting record_connection_closed $connection_key \
+                [dict create close_reason closed]]
+            ::tclwire::logger log_connection_closed $close_record
+        }
         after 0 [list ::tclwire::connection_agent_finished [self]]
     }
 
     method connection_id {} {
         return $connection_id
+    }
+
+    method connection_key {} {
+        return $connection_key
     }
 
     method peer {} {
@@ -232,7 +271,7 @@ namespace eval ::tclwire {
     }
 
     proc start_connection_agent {
-        agent_class conn_channel connection_id 
+        agent_class conn_channel connection_id connection_key
         host port finished_thread finished_command
         agent_args transport_config
     } {
@@ -249,15 +288,27 @@ namespace eval ::tclwire {
 
         set connection_finished_thread  $finished_thread
         set connection_finished_command $finished_command
-        if {[info commands ::tclwire::accounting] ne {}} {
-            ::tclwire::accounting change_thread_status \
-                [::thread::id] running [list $agent_class $connection_id]
-        }
+        ::tclwire::accounting change_thread_status \
+            [::thread::id] running [list $agent_class $connection_id]
         if {[catch {
             set conn_channel [prepare_connection_channel $conn_channel $transport_config]
-            set connection_agent [$agent_class new $conn_channel $connection_id $host $port {*}$agent_args]
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create \
+                    status open \
+                    worker_thread_id [::thread::id] \
+                    agent_class $agent_class]
+            set connection_agent [$agent_class new $conn_channel $connection_id \
+                $host $port -connectionkey $connection_key {*}$agent_args]
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create agent_id $connection_agent]
         } message options]} {
             catch {close $conn_channel}
+            catch {
+                set close_record [::tclwire::accounting record_connection_closed $connection_key \
+                    [dict create status failed close_reason startup_failed \
+                                  transport_error $message]]
+                ::tclwire::logger log_connection_closed $close_record
+            }
             if {$connection_finished_thread ne {} &&
                     [::thread::exists $connection_finished_thread]} {
                 set callback [list {*}$connection_finished_command \

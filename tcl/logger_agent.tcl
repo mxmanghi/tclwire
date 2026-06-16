@@ -14,6 +14,37 @@ namespace eval ::tclwire::logger {
         return [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S"]
     }
 
+    proc open_log_channels {} {
+        variable logchan
+        variable logfile
+        variable errchan
+        variable logerr
+
+        file mkdir [file dirname $logfile]
+        set logchan [open $logfile a]
+        chan configure $logchan -buffering line -translation lf -encoding utf-8
+
+        file mkdir [file dirname $logerr]
+        set errchan [open $logerr a]
+        chan configure $errchan -buffering line -translation lf -encoding utf-8
+        return
+    }
+
+    proc close_log_channels {} {
+        variable logchan
+        variable errchan
+
+        if {$logchan ne {}} {
+            catch {close $logchan}
+            set logchan {}
+        }
+        if {$errchan ne {}} {
+            catch {close $errchan}
+            set errchan {}
+        }
+        return
+    }
+
     proc agent_initialize {path {error_path {}}} {
         variable logchan
         variable logfile
@@ -30,14 +61,24 @@ namespace eval ::tclwire::logger {
         }
         set logerr [file normalize $error_path]
 
-        file mkdir [file dirname $logfile]
-        set logchan [open $logfile a]
-        chan configure $logchan -buffering line -translation lf -encoding utf-8
+        open_log_channels
 
-        file mkdir [file dirname $logerr]
-        set errchan [open $logerr a]
-        chan configure $errchan -buffering line -translation lf -encoding utf-8
+        return [dict create logfile $logfile logerr $logerr]
+    }
 
+    proc agent_rotate {} {
+        variable logchan
+        variable logfile
+        variable errchan
+        variable logerr
+
+        if {$logchan eq {} || $errchan eq {} ||
+                $logfile eq {} || $logerr eq {}} {
+            error "logger agent is not initialized"
+        }
+
+        close_log_channels
+        open_log_channels
         return [dict create logfile $logfile logerr $logerr]
     }
 
@@ -71,14 +112,7 @@ namespace eval ::tclwire::logger {
         variable errchan
         variable logerr
 
-        if {$logchan ne {}} {
-            catch {close $logchan}
-            set logchan {}
-        }
-        if {$errchan ne {}} {
-            catch {close $errchan}
-            set errchan {}
-        }
+        close_log_channels
         set logfile {}
         set logerr {}
         after 0 [list ::thread::release [::thread::id]]

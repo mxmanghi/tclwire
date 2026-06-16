@@ -15,6 +15,7 @@ package require tclwire::tpba::control 0.1
 package require tclwire::logger::control 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::transport_reactor 0.1
+package require tclwire::console::reactor 0.1
 package require tomlfile 0.1
 
 namespace eval ::tclwire {}
@@ -24,6 +25,7 @@ namespace eval ::tclwire::runtime {
     variable active_config {}
     variable shutdown_requested 0
     variable transport_reactors [dict create]
+    variable console_reactor {}
     variable application_dispatcher {}
     variable protocol_descriptors [dict create \
         http [dict create \
@@ -112,6 +114,8 @@ namespace eval ::tclwire::runtime {
         puts $channel "  --noftp-user-check"
         puts $channel "  --logfile <path>    Access log. Default: /tmp/tclwire.log"
         puts $channel "  --logerr <path>     Error log. Default: /tmp/tclwire-err.log"
+        puts $channel "  --log-level <level> Global logging threshold. Default: info"
+        puts $channel "  --unix-socket <path> Console socket. Default: /tmp/tclwire.sock"
         puts $channel "  --quiet"
         puts $channel "  --debug"
         return
@@ -213,6 +217,10 @@ namespace eval ::tclwire::runtime {
         }
     }
 
+    proc normalize_log_level {name value} {
+        return [::tclwire::logger normalize_level $value]
+    }
+
     proc resolve_config_path {config_dir value} {
         if {$value eq {}} {
             return {}
@@ -234,6 +242,8 @@ namespace eval ::tclwire::runtime {
         set keyfile {}
         set logfile [file normalize /tmp/tclwire.log]
         set logerr [file normalize /tmp/tclwire-err.log]
+        set log_level info
+        set unix_socket [file normalize /tmp/tclwire.sock]
         set ftp_user_check 1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
         set startservers [default_protocols]
@@ -265,6 +275,8 @@ namespace eval ::tclwire::runtime {
                             ftp_user_check $ftp_user_check \
                             logfile      $logfile \
                             logerr       $logerr \
+                            log_level    $log_level \
+                            unix_socket  $unix_socket \
                             startservers $startservers \
                             services     $services \
                             custom_services $custom_services \
@@ -312,6 +324,11 @@ namespace eval ::tclwire::runtime {
             # built-in defaults in one dictionary operation.
             set config [dict merge $config \
                 [dict filter $global key host encoding default_application]]
+            if {[dict exists $global log_level]} {
+                dict set config log_level \
+                    [normalize_log_level tclwire.log_level \
+                        [dict get $global log_level]]
+            }
 
             # dict filter selects the supported source fields; dict map
             # validates and replaces their values. The later merge applies
@@ -322,7 +339,8 @@ namespace eval ::tclwire::runtime {
             }]
             set paths [dict map {field value} \
                     [dict filter $global key \
-                        docroot ftproot certfile keyfile logfile logerr libdir] {
+                        docroot ftproot certfile keyfile logfile logerr libdir \
+                        unix_socket] {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
@@ -357,6 +375,11 @@ namespace eval ::tclwire::runtime {
             }
 
             set service [dict create protocol $protocol port $port]
+            if {[dict exists $protocol_config log_level]} {
+                dict set service log_level \
+                    [normalize_log_level "$protocol.log_level" \
+                        [dict get $protocol_config log_level]]
+            }
 
             # The script form is useful here because inclusion depends on
             # both the key and its value. It still preserves original values;
@@ -400,7 +423,7 @@ namespace eval ::tclwire::runtime {
                     $config_dir [dict get $protocol_config libdir]]
             }
             dict for {application_id descriptor} $protocol_config {
-                if {$application_id in {enabled port certfile keyfile libdir}} {
+                if {$application_id in {enabled port certfile keyfile libdir log_level}} {
                     continue
                 }
                 if {[catch {dict size $descriptor}]} {
@@ -411,7 +434,12 @@ namespace eval ::tclwire::runtime {
                 # representation. Paths and worker limits are normalized
                 # separately below.
                 set application [dict filter $descriptor key \
-                    class package hosts encoding]
+                    class package hosts encoding log_level]
+                if {[dict exists $application log_level]} {
+                    dict set application log_level \
+                        [normalize_log_level "$protocol.$application_id.log_level" \
+                            [dict get $application log_level]]
+                }
                 if {![dict exists $application hosts]} {
                     dict set application hosts [list $application_id]
                 }
@@ -543,6 +571,14 @@ namespace eval ::tclwire::runtime {
                 }
                 --logerr {
                     dict set config logerr [file normalize \
+                        [require_value $argv [incr i] $option]]
+                }
+                --log-level {
+                    dict set config log_level [normalize_log_level $option \
+                        [require_value $argv [incr i] $option]]
+                }
+                --unix-socket {
+                    dict set config unix_socket [file normalize \
                         [require_value $argv [incr i] $option]]
                 }
                 --quiet {
@@ -722,6 +758,7 @@ namespace eval ::tclwire::runtime {
         variable active_config
         variable shutdown_requested
         variable transport_reactors
+        variable console_reactor
         variable application_dispatcher
 
         if {$active} {
@@ -735,6 +772,7 @@ namespace eval ::tclwire::runtime {
 
         ::tclwire::accounting initialize
         set transport_reactors [dict create]
+        set console_reactor {}
         set logger_started 0
         set tpba_started 0
         try {
@@ -757,7 +795,16 @@ namespace eval ::tclwire::runtime {
                 $reactor start
             }
 
+            set console_reactor [::tclwire::ConsoleReactor new \
+                -path [dict get $config unix_socket] \
+                -shutdowncommand [list ::tclwire::runtime::request_shutdown]]
+            $console_reactor start
+
         } on error {message options} {
+            if {$console_reactor ne {}} {
+                catch {$console_reactor destroy}
+                set console_reactor {}
+            }
             dict for {protocol reactor} $transport_reactors {
                 catch {$reactor destroy}
             }
@@ -786,8 +833,13 @@ namespace eval ::tclwire::runtime {
         variable active_config
         variable shutdown_requested
         variable transport_reactors
+        variable console_reactor
         variable application_dispatcher
 
+        if {$console_reactor ne {}} {
+            catch {$console_reactor destroy}
+            set console_reactor {}
+        }
         dict for {protocol reactor} $transport_reactors {
             catch {$reactor destroy}
         }
@@ -853,6 +905,11 @@ namespace eval ::tclwire::runtime {
         return $transport_reactors
     }
 
+    proc console_reactor {} {
+        variable console_reactor
+        return $console_reactor
+    }
+
     proc application_dispatcher {} {
         variable application_dispatcher
         return $application_dispatcher
@@ -883,7 +940,7 @@ namespace eval ::tclwire::runtime {
 
     namespace export usage  parse_args prepare_config start stop is_running \
                      config transport_reactor transport_reactors request_shutdown run implemented_protocols \
-                     default_protocols application_dispatcher
+                     default_protocols application_dispatcher console_reactor
     namespace ensemble create
 }
 

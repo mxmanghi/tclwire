@@ -80,7 +80,7 @@ not restore the legacy service-class hierarchy.
 
 ## Accounting and Inspection
 
-- [ ] Add a shared per-connection database recording:
+- [x] Add a shared per-connection database recording:
   - connection identifier;
   - protocol and service endpoint;
   - peer address and port;
@@ -88,8 +88,13 @@ not restore the legacy service-class hierarchy.
   - creation and closure timestamps;
   - current status;
   - closure or transport error.
-- [ ] Reimplement a thread-accounting inspection/report utility.
-- [ ] Add connection-accounting inspection.
+- [x] Add a Unix-domain console socket for runtime inspection and control.
+- [x] Reimplement basic thread-accounting inspection through the console `PS`
+      command.
+- [x] Add connection-accounting inspection through the console `CONN` command,
+      including current console connections and simple port/remote filters.
+- [x] Add console-triggered logger reopening through `LOGROTATE` for external
+      log rotation tools.
 - [ ] Have the TPBA periodically evaluate pool workers and invoke stale-thread
       release according to each pool's resource policy.
 
@@ -112,7 +117,6 @@ Evaluate and selectively port the legacy TclCurl test application routes for:
 - [ ] compressed responses;
 - [ ] chunked responses;
 - [ ] slow or delayed responses;
-- [ ] byte-range responses;
 - [ ] controlled shutdown.
 
 These routes are conformance and integration-test fixtures. They should not be
@@ -145,4 +149,5 @@ in the current architecture rather than copied again from `legacy/`:
 - binary-safe static-file serving;
 - centralized logger agent and client interface;
 - split access-log and error-log logger outputs;
-- shared thread accounting.
+- shared thread and connection accounting;
+- Unix-domain console inspection and shutdown channel.

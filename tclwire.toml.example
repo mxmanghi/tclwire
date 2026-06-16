@@ -24,6 +24,8 @@ ftproot = "/tmp/tclwire"
 ftp_user_check = true
 logfile = "/tmp/tclwire.log"
 logerr = "/tmp/tclwire-err.log"
+log_level = "info"
+unix_socket = "/tmp/tclwire.sock"
 
 # Optional directory containing application class files. An application's
 # libdir overrides this value. The application docroot still has precedence.
@@ -41,6 +43,7 @@ default_application = "default"
 [http]
 enabled = true
 port = 8990
+log_level = "info"
 
 # Optional default for applications configured under this service. This
 # overrides [tclwire].libdir and is overridden by an application's libdir.
@@ -73,6 +76,11 @@ docroot = "/tmp/tclwire"
 encoding = "utf-8"
 minimum_workers = 0
 maximum_workers = 20
+
+# Optional per-host/application error-log threshold. Supported levels, from
+# least to most severe: trace8 through trace1, debug, info, notice, warn,
+# error, crit, alert, emerg.
+# log_level = "debug"
 
 # A virtual host can override only what differs from the default application.
 #

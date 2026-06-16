@@ -14,12 +14,13 @@ namespace eval ::tclwire {}
 oo::class create ::tclwire::HttpConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
-    variable protocol_session application_dispatcher closed channel
+    variable protocol_session application_dispatcher closed channel connection_key
     variable next_transaction_id default_encoding log_protocol
 
     constructor {conn_channel id host port args} {
         array set options {
             -applicationconfig {}
+            -connectionkey {}
             -protocol http
         }
         foreach {name value} $args {
@@ -31,8 +32,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {$options(-applicationconfig) eq {}} {
             error "HTTP connection agent requires application configuration"
         }
+        if {$options(-connectionkey) eq {}} {
+            error "HTTP connection agent requires connection key"
+        }
 
-        next $conn_channel $id $host $port
+        next $conn_channel $id $host $port $options(-connectionkey)
         set protocol_session [::tclwire::HttpProtocolSession new]
         set application_dispatcher \
             [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
@@ -93,6 +97,19 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return [regexp {^HEAD[ \t]} $request_data]
     }
 
+    method request_host {request_descriptor} {
+        if {![dict exists $request_descriptor headers host]} {
+            return {}
+        }
+        set host [string tolower \
+            [string trim [dict get $request_descriptor headers host]]]
+        if {[regexp {^\[([^\]]+)\](?::[0-9]+)?$} $host -> address]} {
+            return $address
+        }
+        regsub {:[0-9]+$} $host {} host
+        return $host
+    }
+
     method handle_request {request_data} {
         if {[catch {
             set request_d [my build_request_descriptor $request_data]
@@ -101,11 +118,26 @@ oo::class create ::tclwire::HttpConnectionAgent {
             my send_error 400 {} [my request_is_head $request_data]
             return {}
         }
+        catch {
+            ::tclwire::accounting set_thread_http_host \
+                [::thread::id] [my request_host $request_d]
+        }
 
         set transaction_id [incr next_transaction_id]
         dict set request_d transaction_id       $transaction_id
         dict set request_d connection_thread_id [::thread::id]
         dict set request_d connection_agent_id  [self]
+        catch {
+            set record [::tclwire::accounting get_connection_record $connection_key]
+            set request_count [expr {
+                $record eq {} ? 1 : [dict get $record request_count] + 1
+            }]
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create \
+                    current_transaction_id $transaction_id \
+                    current_command [dict get $request_d method] \
+                    request_count $request_count]
+        }
 
         my begin_transaction $transaction_id $request_d
         set transaction [my transaction_for $transaction_id]
@@ -396,6 +428,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     }
                     $transaction set response_state complete
                     set descriptor [my finish_transaction $transaction_id]
+                    catch {
+                        ::tclwire::accounting update_connection $connection_key \
+                            [dict create current_transaction_id {} \
+                                         current_command {}]
+                    }
                     my log_request $descriptor \
                         [dict get $descriptor response_status] \
                         [dict get $descriptor response_bytes]
@@ -410,6 +447,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 set body_mode [$transaction get response_body_mode]
                 set head_only [my head_only $transaction]
                 set descriptor [my finish_transaction $transaction_id]
+                catch {
+                    ::tclwire::accounting update_connection $connection_key \
+                        [dict create current_transaction_id {} \
+                                     current_command {}]
+                }
                 set response [$protocol_session build_response \
                     $status $reason $body $content_encoding $headers $body_mode \
                     $head_only]
@@ -475,7 +517,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     unexport abort_application_response apply_header_event \
         chunked_response commit_chunked_response head_only header_name header_value \
-        log_request request_is_head response_header_values
+        log_request request_host request_is_head response_header_values
 }
 
 package provide tclwire::http::connection_agent 0.1

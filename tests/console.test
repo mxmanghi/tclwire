@@ -1,0 +1,115 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+package require json
+package require fileutil
+package require tclwire::console::protocol 0.1
+
+test console-protocol-1.1 {PS returns thread accounting rows as JSON table} -body {
+    set thread_id console-test-thread
+    catch {::tclwire::accounting remove_thread $thread_id}
+    try {
+        ::tclwire::accounting register_thread $thread_id running http
+        set response [::json::json2dict [::tclwire::console dispatch PS]]
+        set rows [dict get $response rows]
+        set found 0
+        foreach row $rows {
+            if {[dict get $row thread_id] eq $thread_id} {
+                set found [expr {
+                    [dict get $row status] eq "running" &&
+                    [dict get $row family] eq "http"
+                }]
+            }
+        }
+        list \
+            [dict get $response ok] \
+            [dict get $response type] \
+            [dict get $response command] \
+            $found
+    } finally {
+        ::tclwire::accounting remove_thread $thread_id
+    }
+} -result {true table PS 1}
+
+test console-protocol-1.2 {CONN returns and filters connection rows} -body {
+    set first console-http#1
+    set second console-ftp#2
+    foreach key [list $first $second] {
+        catch {::tclwire::accounting remove_connection $key}
+    }
+    try {
+        ::tclwire::accounting record_connection_opened $first \
+            [dict create connection_id 1 protocol http service_id http:8990 \
+                         listener_port 8990 peer_host 127.0.0.1]
+        ::tclwire::accounting record_connection_opened $second \
+            [dict create connection_id 2 protocol ftp service_id ftp:2121 \
+                         listener_port 2121 peer_host 192.0.2.10]
+        set all [::json::json2dict [::tclwire::console dispatch CONN]]
+        set port [::json::json2dict \
+            [::tclwire::console dispatch {CONN -port 8990}]]
+        set remote [::json::json2dict \
+            [::tclwire::console dispatch {CONN -remote 192.0.2.10}]]
+        list \
+            [dict get $all ok] \
+            [llength [dict get $port rows]] \
+            [dict get [lindex [dict get $port rows] 0] connection_key] \
+            [llength [dict get $remote rows]] \
+            [dict get [lindex [dict get $remote rows] 0] connection_key]
+    } finally {
+        ::tclwire::accounting remove_connection $first
+        ::tclwire::accounting remove_connection $second
+    }
+} -result {true 1 console-http#1 1 console-ftp#2}
+
+test console-protocol-1.3 {console command errors use JSON error shape} -body {
+    set response [::json::json2dict [::tclwire::console dispatch {CONN -bad x}]]
+    set error [dict get $response error]
+    list \
+        [dict get $response ok] \
+        [dict get $response type] \
+        [dict get $response command] \
+        [dict get $error code] \
+        [dict exists $error message]
+} -result {false error CONN bad_arguments 1}
+
+test console-protocol-1.4 {SHUT returns conventional OK JSON} -body {
+    set response [::json::json2dict [::tclwire::console dispatch SHUT]]
+    list \
+        [dict get $response ok] \
+        [dict get $response type] \
+        [dict get $response command] \
+        [dict get $response message]
+} -result {true ok SHUT {shutdown requested}}
+
+test console-protocol-1.5 {LOGROTATE reopens logger files and returns OK} -body {
+    set logfile [file join [temporaryDirectory] tclwire-console-rotate-[pid].log]
+    set logerr [file join [temporaryDirectory] tclwire-console-rotate-[pid].err]
+    catch {::tclwire::logger stop}
+    catch {file delete -force $logfile $logerr "$logfile.1" "$logerr.1"}
+    try {
+        ::tclwire::logger start [dict create logfile $logfile logerr $logerr]
+        ::tclwire::logger write before-console-rotate
+        file rename -force $logfile "$logfile.1"
+        set response [::json::json2dict \
+            [::tclwire::console dispatch LOGROTATE]]
+        ::tclwire::logger write after-console-rotate
+        ::tclwire::logger stop
+        list \
+            [dict get $response ok] \
+            [dict get $response type] \
+            [dict get $response command] \
+            [dict get $response message] \
+            [string match {*before-console-rotate*} \
+                [::fileutil::cat "$logfile.1"]] \
+            [string match {*after-console-rotate*} \
+                [::fileutil::cat $logfile]]
+    } finally {
+        catch {::tclwire::logger stop}
+        catch {file delete -force $logfile $logerr "$logfile.1" "$logerr.1"}
+    }
+} -result {true ok LOGROTATE {logs reopened} 1 1}
+
+cleanupTests

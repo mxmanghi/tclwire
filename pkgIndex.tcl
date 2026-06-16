@@ -1,5 +1,12 @@
+package ifneeded tclwire::shared_state 0.1 \
+    [list source [file join $dir tcl shared_state.tcl]]
+
 package ifneeded tclwire::accounting 1.2 \
-    [list source [file join $dir tcl threads_shared_db.tcl]]
+    [subst {
+        package require tclwire::shared_state 0.1
+        source [list [file join $dir tcl threads_shared_db.tcl]]
+    }]
+
 
 package ifneeded tclwire::support 0.1 \
     [list source [file join $dir tcl support.tcl]]
@@ -58,6 +65,21 @@ package ifneeded tclwire::http::request 0.1 [subst {
 
 package ifneeded tclwire::transaction_descriptor 0.1 \
     [list source [file join $dir tcl transaction_descriptor.tcl]]
+
+package ifneeded tclwire::console::protocol 0.1 [subst {
+    package require tclwire::accounting 1.2
+    source [list [file join $dir tcl console_protocol.tcl]]
+}]
+
+package ifneeded tclwire::console::connection_agent 0.1 [subst {
+    package require tclwire::console::protocol 0.1
+    source [list [file join $dir tcl console_connection_agent.tcl]]
+}]
+
+package ifneeded tclwire::console::reactor 0.1 [subst {
+    package require tclwire::console::connection_agent 0.1
+    source [list [file join $dir tcl console_reactor.tcl]]
+}]
 
 package ifneeded tclwire::application 0.1 [subst {
     package require tclwire::application::io 0.1

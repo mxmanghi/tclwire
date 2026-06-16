@@ -65,6 +65,7 @@ namespace eval ::tclwire::logger {
         }
 
         set current_config $config
+        configure_levels $config
         ::tsv::set tclwire logger_thread_id $tid
         return $tid
     }
@@ -72,6 +73,7 @@ namespace eval ::tclwire::logger {
     proc stop {} {
         set tid [thread_id]
         ::tsv::set tclwire logger_thread_id {}
+        clear_levels
 
         if {$tid eq {} || ![::thread::exists $tid]} {
             return {}
@@ -104,6 +106,11 @@ namespace eval ::tclwire::logger {
         return [start $config]
     }
 
+    proc rotate {} {
+        set tid [require_thread]
+        return [::thread::send $tid ::tclwire::logger::agent_rotate]
+    }
+
     proc wait_for_exit {tid {timeout_ms 2000}} {
         set deadline [expr {[clock milliseconds] + $timeout_ms}]
         while {[::thread::exists $tid] && [clock milliseconds] < $deadline} {
@@ -115,7 +122,7 @@ namespace eval ::tclwire::logger {
         return
     }
 
-    namespace export start stop reset
+    namespace export start stop reset rotate
     namespace ensemble create
 }
 

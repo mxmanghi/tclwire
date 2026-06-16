@@ -13,12 +13,13 @@ namespace eval ::tclwire {}
 oo::class create ::tclwire::ProxyConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
-    variable channel closed protocol_session upstream_channel
+    variable channel closed protocol_session upstream_channel connection_key
     variable tunnel_active tunnel_pending
 
     constructor {conn_channel id host port args} {
         array set options {
             -config {}
+            -connectionkey {}
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -26,8 +27,11 @@ oo::class create ::tclwire::ProxyConnectionAgent {
             }
             set options($name) $value
         }
+        if {$options(-connectionkey) eq {}} {
+            error "proxy connection agent requires connection key"
+        }
 
-        next $conn_channel $id $host $port
+        next $conn_channel $id $host $port $options(-connectionkey)
         set protocol_session [::tclwire::ProxyProtocolSession new]
         set upstream_channel {}
         set tunnel_active 0
@@ -82,6 +86,15 @@ oo::class create ::tclwire::ProxyConnectionAgent {
 
         set method [dict get $descriptor method]
         set target [dict get $descriptor target]
+        catch {
+            set record [::tclwire::accounting get_connection_record $connection_key]
+            set request_count [expr {
+                $record eq {} ? 1 : [dict get $record request_count] + 1
+            }]
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create current_command $method \
+                             request_count $request_count]
+        }
         if {$method eq "CONNECT"} {
             if {[catch {
                 set endpoint [$protocol_session parse_connect_target $target]

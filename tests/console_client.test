@@ -1,0 +1,49 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+source [file join $project_root utils tclwire_console.tcl]
+
+test console-client-1.1 {--command captures a one-shot console command} -body {
+    set ::tclwire::console_client::socket_path [file normalize /tmp/tclwire.sock]
+    set command [::tclwire::console_client::parse_args \
+        [list --unix-socket /tmp/tclwire-test.sock --command {CONN -port 8990}]]
+    list \
+        $command \
+        $::tclwire::console_client::socket_path
+} -result [list {CONN -port 8990} [file normalize /tmp/tclwire-test.sock]]
+
+test console-client-1.2 {EXIT is recognized as a local console command} -body {
+    list \
+        [::tclwire::console_client::is_exit_command EXIT] \
+        [::tclwire::console_client::is_exit_command { exit }] \
+        [::tclwire::console_client::is_exit_command SHUT]
+} -result {1 1 0}
+
+test console-client-1.3 {interactive EXIT does not send a server command} -body {
+    rename ::tclreadline::readline ::tclreadline::readline.real
+    proc ::tclreadline::readline {args} {
+        return EXIT
+    }
+    proc test_send_command {channel command} {
+        error "unexpected send: $command"
+    }
+    rename ::tclwire::console_client::send_command \
+        ::tclwire::console_client::send_command.real
+    rename test_send_command ::tclwire::console_client::send_command
+    try {
+        ::tclwire::console_client::interactive fake-channel
+        set result ok
+    } finally {
+        rename ::tclwire::console_client::send_command {}
+        rename ::tclwire::console_client::send_command.real \
+            ::tclwire::console_client::send_command
+        rename ::tclreadline::readline {}
+        rename ::tclreadline::readline.real ::tclreadline::readline
+    }
+    set result
+} -result ok
+
+cleanupTests
