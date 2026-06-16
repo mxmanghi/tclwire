@@ -713,6 +713,14 @@ namespace eval ::tclwire::runtime {
         variable application_dispatcher
 
         if {$application_dispatcher eq {}} {
+            set prepared_docroots {}
+            dict for {application_id descriptor} [dict get $config applications] {
+                set docroot [dict get $descriptor docroot]
+                if {$docroot ni $prepared_docroots} {
+                    ::tclwire::support prepare_doc_root $docroot
+                    lappend prepared_docroots $docroot
+                }
+            }
             set application_dispatcher \
                 [::tclwire::ApplicationDispatcher new $config]
             $application_dispatcher start

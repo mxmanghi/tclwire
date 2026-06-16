@@ -1,4 +1,5 @@
 package require tcltest
+package require fileutil
 namespace import ::tcltest::*
 
 set project_root [file dirname [file dirname [file normalize [info script]]]]
@@ -170,6 +171,33 @@ test runtime-1.5 {runtime starts internal agents and the hardcoded HTTP listener
     [list [dict create \
         protocol http port 8990 id http:8990 secure 0]] \
     1 1 1 1 127.0.0.1 8990 1]
+
+test runtime-1.5a {missing document root is seeded from generated documentation} -body {
+    set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    catch {file delete -force $docroot}
+    ::tclwire::support prepare_doc_root $docroot
+    set index [::fileutil::cat -encoding utf-8 [file join $docroot index.html]]
+    list \
+        [file isdirectory $docroot] \
+        [string match {*TclWire Documentation*} $index] \
+        [file isfile [file join $docroot worker_request_api.html]]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    catch {file delete -force $docroot}
+} -result {1 1 1}
+
+test runtime-1.5b {existing document root is not seeded or overwritten} -body {
+    set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    file mkdir $docroot
+    ::fileutil::writeFile -encoding utf-8 [file join $docroot index.html] custom
+    ::tclwire::support prepare_doc_root $docroot
+    list \
+        [::fileutil::cat -encoding utf-8 [file join $docroot index.html]] \
+        [file exists [file join $docroot worker_request_api.html]]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    catch {file delete -force $docroot}
+} -result {custom 0}
 
 test runtime-1.6 {the runtime TPBA accepts broker requests} -body {
     ::tclwire::runtime start [list \

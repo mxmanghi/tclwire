@@ -100,7 +100,7 @@ not restore the legacy service-class hierarchy.
 
 ## Runtime Behavior
 
-- [ ] Prepare and seed the HTTP document root when HTTP or HTTPS is enabled,
+- [x] Prepare and seed the HTTP document root when HTTP or HTTPS is enabled,
       independently of whether FTP is enabled.
 - [ ] Make `--quiet` control applicable startup and runtime messages.
 - [ ] Use the configured `--debug` facility throughout the current runtime

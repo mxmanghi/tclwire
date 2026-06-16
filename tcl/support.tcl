@@ -28,6 +28,23 @@ namespace eval ::tclwire::support {
         return [file normalize [env_or_default TCLWIRE_FTP_ROOT [default_doc_root]]]
     }
 
+    proc prepare_doc_root {doc_root} {
+        variable project_root
+
+        set doc_root [file normalize $doc_root]
+        if {[file exists $doc_root] && ![file isdirectory $doc_root]} {
+            error "document root exists but is not a directory: $doc_root"
+        }
+        if {[file exists $doc_root]} {
+            return $doc_root
+        }
+
+        file mkdir $doc_root
+        exec [info nameofexecutable] [file join $project_root utils md2html.tcl] \
+            --output $doc_root
+        return $doc_root
+    }
+
     proc prepare_ftp_root {ftp_root} {
         variable project_root
 
@@ -69,7 +86,8 @@ namespace eval ::tclwire::support {
     }
 
     namespace export project_root env_or_default default_doc_root \
-        default_ftp_root prepare_ftp_root configure_debug debug_enabled debug
+        default_ftp_root prepare_doc_root prepare_ftp_root configure_debug \
+        debug_enabled debug
     namespace ensemble create
 }
 
