@@ -232,7 +232,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             }
 
             ::thread::wait
-            catch {::tclwire::accounting remove_thread [::thread::id]}
+            ::tclwire::accounting remove_thread [::thread::id]
         } [list $application_paths] $loader]
     }
 

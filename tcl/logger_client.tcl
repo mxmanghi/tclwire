@@ -151,13 +151,11 @@ namespace eval ::tclwire::logger {
                 dict set context $target [dict get $record $source]
             }
         }
-        if {[dict exists $record worker_thread_id]} {
-            set account {}
-            catch {
-                set account [::tclwire::accounting get_thread_account \
-                    [dict get $record worker_thread_id]]
-            }
-            if {$account ne {} && [dict exists $account http_host]} {
+        if {[dict exists $record worker_thread_id] &&
+                [dict get $record worker_thread_id] ne {}} {
+            set account [::tclwire::accounting get_thread_account \
+                [dict get $record worker_thread_id]]
+            if {[dict get $account http_host] ne {}} {
                 dict set context host [dict get $account http_host]
             }
         }

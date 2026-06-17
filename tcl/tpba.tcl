@@ -251,17 +251,15 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     method pool_status {pool_key} {
         set record [my require_pool $pool_key]
         set master [dict get $record thread_master]
-        set stats [dict create \
-            max_threads_number 0 \
-            live_threads_number 0 \
-            per_status_lists {}]
+        set stats [dict create  max_threads_number 0 \
+                                live_threads_number 0 \
+                                per_status_lists {}]
         if {$master ne {}} {
             set stats [$master stats]
         }
 
-        return [dict merge $record [dict create \
-            thread_master {} \
-            stats $stats]]
+        return [dict merge $record [dict create thread_master {} \
+                                                stats         $stats]]
     }
 
     method list_pools {} {

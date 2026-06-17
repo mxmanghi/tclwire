@@ -50,12 +50,12 @@ test thread-registry-1.3 {registration is owned by the accounting API} -body {
         list \
             [dict get $account status] \
             [dict get $account family] \
-            [dict exists $account http_host] \
+            [dict get $account http_host] \
             [dict get $account nruns]
     } finally {
         ::tclwire::accounting remove_thread $thread_id
     }
-} -result {allocated ftp 0 0}
+} -result {allocated ftp {} 0}
 
 test thread-registry-1.4 {TPBA-created workers are registered by ThreadMaster} -body {
     set worker_script [format {
@@ -111,7 +111,7 @@ test thread-registry-1.4.1 {ThreadMaster fails when an owned worker has no accou
         list \
             [catch {$master thread_ids all} message] \
             [string match \
-                "Thread $worker_id is owned by this ThreadMaster but has no accounting entry" \
+                "Thread $worker_id account doesn't exist" \
                 $message]
     } finally {
         if {$worker_id ne {}} {
@@ -205,18 +205,17 @@ test thread-registry-1.8 {closing a connection removes it from shared accounting
             [dict create connection_id 4 protocol ftp service_id ftp:2121]
         set closed [::tclwire::accounting record_connection_closed $connection_key \
             [dict create close_reason client_closed]]
-        set record [::tclwire::accounting get_connection_record $connection_key]
+        set exists [dict exists [::tclwire::accounting get_connections_database] \
+            $connection_key]
         list \
             [dict get $closed status] \
             [dict get $closed close_reason] \
             [expr {[dict get $closed closed_at] > 0}] \
-            $record \
-            [dict exists [::tclwire::accounting get_connections_database] \
-                $connection_key]
+            $exists
     } finally {
-        ::tclwire::accounting remove_connection $connection_key
+        catch {::tclwire::accounting remove_connection $connection_key}
     }
-} -result {closed client_closed 1 {} 0}
+} -result {closed client_closed 1 0}
 
 test thread-registry-1.9 {connection accounting validates status and fields} -body {
     set connection_key bad:1
@@ -232,7 +231,7 @@ test thread-registry-1.9 {connection accounting validates status and fields} -bo
                     [dict create unknown_field value]
             } field_message] $field_message
     } finally {
-        ::tclwire::accounting remove_connection $connection_key
+        catch {::tclwire::accounting remove_connection $connection_key}
     }
 } -result [list \
     1 {Unknown connection status 'invalid'} \
@@ -247,16 +246,59 @@ test thread-registry-1.10 {failed connection close returns final snapshot and re
         set closed [::tclwire::accounting record_connection_closed $connection_key \
             [dict create status failed close_reason write_failed \
                          transport_error write_failed]]
-        set record [::tclwire::accounting get_connection_record $connection_key]
+        set exists [dict exists [::tclwire::accounting get_connections_database] \
+            $connection_key]
         list \
             [dict get $closed status] \
             [dict get $closed close_reason] \
             [dict get $closed transport_error] \
             [expr {[dict get $closed closed_at] > 0}] \
-            $record
+            $exists
     } finally {
-        ::tclwire::accounting remove_connection $connection_key
+        catch {::tclwire::accounting remove_connection $connection_key}
     }
-} -result {failed write_failed write_failed 1 {}}
+} -result {failed write_failed write_failed 1 0}
+
+test thread-registry-1.11 {accounting keyed access rejects missing records} -body {
+    set thread_id registry-missing-thread
+    set connection_key registry:missing
+    catch {::tclwire::accounting remove_thread $thread_id}
+    catch {::tclwire::accounting remove_connection $connection_key}
+
+    list \
+        [catch {::tclwire::accounting get_thread_account $thread_id} thread_get] \
+        $thread_get \
+        [catch {::tclwire::accounting remove_thread $thread_id} thread_remove] \
+        $thread_remove \
+        [catch {::tclwire::accounting get_connection_record $connection_key} connection_get] \
+        $connection_get \
+        [catch {::tclwire::accounting record_connection_closed $connection_key} connection_close] \
+        $connection_close \
+        [catch {::tclwire::accounting remove_connection $connection_key} connection_remove] \
+        $connection_remove
+} -result [list \
+    1 {Thread registry-missing-thread account doesn't exist} \
+    1 {Thread registry-missing-thread account doesn't exist} \
+    1 {Connection registry:missing record doesn't exist} \
+    1 {Connection registry:missing record doesn't exist} \
+    1 {Connection registry:missing record doesn't exist}]
+
+test thread-registry-1.12 {stale predicate requires complete thread accounts} -body {
+    list \
+        [catch {
+            ::tclwire::is_stale registry-malformed \
+                [dict create nruns 0 last_run_end 0] \
+                [clock seconds]
+        } missing_status] \
+        $missing_status \
+        [catch {
+            ::tclwire::is_stale registry-malformed \
+                [dict create status idle nruns 0] \
+                [clock seconds]
+        } missing_last_end] \
+        $missing_last_end
+} -result [list \
+    1 {key "status" not known in dictionary} \
+    1 {key "last_run_end" not known in dictionary}]
 
 cleanupTests

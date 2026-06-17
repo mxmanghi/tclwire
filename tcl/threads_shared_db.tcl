@@ -69,17 +69,14 @@ namespace eval ::tclwire::accounting {
         }
 
         set family [normalize_family $family]
-        set account [dict create \
-            nruns 0 \
-            last_run_start 0 \
-            last_run_end 0 \
-            created_on [clock seconds] \
-            command {} \
-            status $status \
-            family $family]
-        if {$family in {http https}} {
-            dict set account http_host $http_host
-        }
+        set account [dict create nruns      0 \
+                          last_run_start    0 \
+                          last_run_end      0 \
+                          created_on        [clock seconds] \
+                          command           {} \
+                          status            $status \
+                          family            $family \
+                          http_host         $http_host]
         return $account
     }
 
@@ -151,7 +148,7 @@ namespace eval ::tclwire::accounting {
             if {![::tsv::keylget tclwire accounting $tid thread_d]} {
                 error "Thread $tid account doesn't exist"
             }
-            if {![dict exists $thread_d family] || [dict get $thread_d family] ni {http https}} {
+            if {[dict get $thread_d family] ni {http https}} {
                 error "Thread $tid does not belong to the http family"
             }
             dict set thread_d http_host $http_host
@@ -163,20 +160,21 @@ namespace eval ::tclwire::accounting {
     proc remove_thread {tid} {
         initialize
         ::tsv::lock tclwire {
-            if {[::tsv::keylget tclwire accounting $tid thread_d]} {
-                ::tsv::keyldel tclwire accounting $tid
+            if {![::tsv::keylget tclwire accounting $tid thread_d]} {
+                error "Thread $tid account doesn't exist"
             }
+            ::tsv::keyldel tclwire accounting $tid
         }
     }
 
     proc get_thread_account {tid} {
         initialize
         ::tsv::lock tclwire {
-            if {[::tsv::keylget tclwire accounting $tid thread_d]} {
-                return $thread_d
+            if {![::tsv::keylget tclwire accounting $tid thread_d]} {
+                error "Thread $tid account doesn't exist"
             }
+            return $thread_d
         }
-        return ""
     }
 
     proc get_threads_database {} {
@@ -293,7 +291,7 @@ namespace eval ::tclwire::accounting {
         set now [clock seconds]
         ::tsv::lock tclwire {
             if {![::tsv::keylget tclwire connections $connection_key connection_d]} {
-                return {}
+                error "Connection $connection_key record doesn't exist"
             }
             foreach {field value} $fields {
                 dict set connection_d $field $value
@@ -316,9 +314,10 @@ namespace eval ::tclwire::accounting {
     proc remove_connection {connection_key} {
         initialize
         ::tsv::lock tclwire {
-            if {[::tsv::keylget tclwire connections $connection_key connection_d]} {
-                ::tsv::keyldel tclwire connections $connection_key
+            if {![::tsv::keylget tclwire connections $connection_key connection_d]} {
+                error "Connection $connection_key record doesn't exist"
             }
+            ::tsv::keyldel tclwire connections $connection_key
         }
         return
     }
@@ -326,11 +325,11 @@ namespace eval ::tclwire::accounting {
     proc get_connection_record {connection_key} {
         initialize
         ::tsv::lock tclwire {
-            if {[::tsv::keylget tclwire connections $connection_key connection_d]} {
-                return $connection_d
+            if {![::tsv::keylget tclwire connections $connection_key connection_d]} {
+                error "Connection $connection_key record doesn't exist"
             }
+            return $connection_d
         }
-        return ""
     }
 
     proc get_connections_database {} {
@@ -352,8 +351,7 @@ namespace eval ::tclwire::accounting {
         dict for {tid th_d} [get_threads_database] {
             dict with th_d {
                 if {$status ni $valid_thread_statuses} {
-                    dict lappend per_status_db unknown $tid
-                    continue
+                    error "Thread $tid account has unknown status '$status'"
                 }
                 dict lappend per_status_db $status $tid
             }

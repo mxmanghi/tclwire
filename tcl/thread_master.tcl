@@ -26,16 +26,12 @@ namespace eval ::tclwire {}
 # and now is the current epoch timestamp in seconds.
 if {[info commands ::tclwire::is_stale] eq {}} {
     proc ::tclwire::is_stale {thread_id thread_account now} {
-        if {![dict exists $thread_account status] || [dict get $thread_account status] ne "idle"} {
+        if {[dict get $thread_account status] ne "idle"} {
             return false
         }
 
-        if {[dict exists $thread_account nruns] && [dict get $thread_account nruns] > 10} {
+        if {[dict get $thread_account nruns] > 10} {
             return true
-        }
-
-        if {![dict exists $thread_account last_run_end]} {
-            return false
         }
 
         set last_run_end [dict get $thread_account last_run_end]
@@ -71,9 +67,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         set snapshot [dict create]
         foreach thread_id [[self] thread_ids all] {
             set thread_account [$accounting get_thread_account $thread_id]
-            if {$thread_account ne {}} {
-                dict set snapshot $thread_id $thread_account
-            }
+            dict set snapshot $thread_id $thread_account
         }
         return $snapshot
     }
@@ -95,9 +89,6 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         set retained_thread_ids {}
         foreach thread_id $owned_threads {
             set thread_account [$accounting get_thread_account $thread_id]
-            if {$thread_account eq {}} {
-                error "Thread $thread_id is owned by this ThreadMaster but has no accounting entry"
-            }
             lappend retained_thread_ids $thread_id
             if {$filter eq "all" || [dict get $thread_account status] eq $filter} {
                 lappend live_thread_ids $thread_id
@@ -115,9 +106,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         upvar 1 $thread_id_v thread_id
 
         foreach candidate [[self] thread_ids idle] {
-            if {[catch {$accounting change_thread_status $candidate allocated}]} {
-                continue
-            }
+            $accounting change_thread_status $candidate allocated
             set thread_id $candidate
             return true
         }
@@ -146,9 +135,6 @@ if {[info commands ::tclwire::is_stale] eq {}} {
 
     method thread_status {thread_id} {
         set thread_account [[self] thread_account $thread_id]
-        if {$thread_account eq {}} {
-            return ""
-        }
         return [dict get $thread_account status]
     }
 

@@ -155,7 +155,7 @@ oo::class create ::tclwire::TransportReactor {
             }
 
             ::thread::wait
-            catch {::tclwire::accounting remove_thread [::thread::id]}
+            ::tclwire::accounting remove_thread [::thread::id]
         } [list $project_root] [list $agent_package]]
     }
 
@@ -163,9 +163,7 @@ oo::class create ::tclwire::TransportReactor {
         if {!$pool_created} {
             return
         }
-        set response [::tclwire::tpba request [dict create \
-            operation destroy_pool \
-            pool_key $pool_key]]
+        set response [::tclwire::tpba request [dict create operation destroy_pool pool_key $pool_key]]
         set pool_created 0
         if {![dict get $response ok]} {
             error [dict get $response error]
@@ -180,8 +178,7 @@ oo::class create ::tclwire::TransportReactor {
     method dispatch_accept {channel peer_host peer_port} {
         set connection_id [incr next_connection_id]
         set acquire_response [::tclwire::tpba request \
-                                        [dict create operation acquire_worker \
-                                                     pool_key  $pool_key]]
+                                        [dict create operation acquire_worker pool_key $pool_key]]
         if {![dict get $acquire_response ok]} {
             set last_accept_error [dict get $acquire_response error]
             catch {close $channel}
@@ -201,18 +198,17 @@ oo::class create ::tclwire::TransportReactor {
         }]
         catch {
             ::tclwire::accounting record_connection_opened $connection_key \
-                [dict create \
-                    connection_id $connection_id \
-                    protocol $protocol \
-                    service_id $service_id \
-                    listener_host $host \
-                    listener_port $port \
-                    peer_host $peer_host \
-                    peer_port $peer_port \
-                    secure $secure \
-                    pool_key $pool_key \
-                    worker_thread_id $tid \
-                    agent_class $agent_class]
+                [dict create    connection_id   $connection_id \
+                                protocol        $protocol \
+                                service_id      $service_id \
+                                listener_host   $host \
+                                listener_port   $port \
+                                peer_host       $peer_host \
+                                peer_port       $peer_port \
+                                secure          $secure \
+                                pool_key        $pool_key \
+                                worker_thread_id $tid \
+                                agent_class     $agent_class]
         }
         set detached 0
 
