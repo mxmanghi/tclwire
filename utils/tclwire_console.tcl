@@ -16,7 +16,10 @@ package require tclreadline
 
 namespace eval ::tclwire::console_client {
     variable socket_path [file normalize /tmp/tclwire.sock]
-
+    variable cmdcount    0
+    variable timestamp_columns {
+        last_run_start last_run_end created_on opened_at closed_at
+    }
     proc usage {{channel stdout}} {
         puts $channel "Usage: tclsh utils/tclwire_console.tcl ?--unix-socket path? ?--command command? ?command ...?"
         puts $channel ""
@@ -95,12 +98,34 @@ namespace eval ::tclwire::console_client {
         return {}
     }
 
+    proc format_timestamp {value} {
+        if {$value eq {}} {
+            return {}
+        }
+        if {![string is integer -strict $value]} {
+            return $value
+        }
+        if {$value == 0} {
+            return {}
+        }
+        return [clock format $value -format "%d-%m-%Y %H:%M:%S"]
+    }
+
+    proc display_value {row column} {
+        variable timestamp_columns
+        set value [row_value $row $column]
+        if {$column in $timestamp_columns} {
+            return [format_timestamp $value]
+        }
+        return $value
+    }
+
     proc matrix_from_response {response} {
         set columns [dict get $response columns]
         set matrix [list $columns]
         foreach row [dict get $response rows] {
             lappend matrix [lmap column $columns {
-                row_value $row $column
+                display_value $row $column
             }]
         }
         return $matrix
@@ -167,9 +192,10 @@ namespace eval ::tclwire::console_client {
     }
 
     proc interactive {channel} {
+        variable cmdcount
         while 1 {
             if {[catch {
-                ::tclreadline::readline read "tclwire> "
+                ::tclreadline::readline read "tclwire\[$cmdcount\]> "
             } line options]} {
                 if {[eof stdin]} {
                     break
@@ -189,6 +215,7 @@ namespace eval ::tclwire::console_client {
             } message]} {
                 puts stderr $message
             }
+            incr cmdcount
         }
     }
 

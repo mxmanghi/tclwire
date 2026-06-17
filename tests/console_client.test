@@ -46,4 +46,29 @@ test console-client-1.3 {interactive EXIT does not send a server command} -body 
     set result
 } -result ok
 
+test console-client-1.4 {table matrix formats timestamp columns for display} -body {
+    set ts 1717245296
+    set response [dict create \
+        ok true \
+        type table \
+        command PS \
+        columns {thread_id created_on last_run_start last_run_end status} \
+        rows [list [dict create \
+            thread_id tid0x1 \
+            created_on $ts \
+            last_run_start 0 \
+            last_run_end {} \
+            status idle]]]
+    set matrix [::tclwire::console_client::matrix_from_response $response]
+    list \
+        [lindex $matrix 0] \
+        [lindex [lindex $matrix 1] 1] \
+        [lindex [lindex $matrix 1] 2] \
+        [lindex [lindex $matrix 1] 3]
+} -result [list \
+    {thread_id created_on last_run_start last_run_end status} \
+    [clock format 1717245296 -format "%d-%m-%Y %H:%M:%S"] \
+    {} \
+    {}]
+
 cleanupTests

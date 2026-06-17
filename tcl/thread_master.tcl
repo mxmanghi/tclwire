@@ -15,8 +15,6 @@ package require TclOO
 package require Thread
 package require tclwire::accounting 1.2
 
-#source [file join [file dirname [file normalize [info script]]] logger.tcl]
-
 namespace eval ::tclwire {}
 
 # Default stale-thread predicate.
@@ -56,6 +54,15 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     variable thread_family
     variable owned_threads
 
+    constructor {tscript {mtn 100} {family {}}} {
+        set max_threads_number $mtn
+        set accounting ::tclwire::accounting
+        $accounting initialize
+        set thread_script $tscript
+        set thread_family [string tolower [string trim $family]]
+        set owned_threads {}
+    }
+
     # Boundary rule:
     # ::tclwire::accounting is the shared ledger visible to workers and
     # inspectors. ThreadMaster owns pool policy and lifecycle transitions.
@@ -89,7 +96,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         foreach thread_id $owned_threads {
             set thread_account [$accounting get_thread_account $thread_id]
             if {$thread_account eq {}} {
-                continue
+                error "Thread $thread_id is owned by this ThreadMaster but has no accounting entry"
             }
             lappend retained_thread_ids $thread_id
             if {$filter eq "all" || [dict get $thread_account status] eq $filter} {
@@ -158,15 +165,6 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         }
         set max_threads_number $new_max_threads_number
         return $max_threads_number
-    }
-
-    constructor {tscript {mtn 100} {family {}}} {
-        set max_threads_number $mtn
-        set accounting ::tclwire::accounting
-        $accounting initialize
-        set thread_script $tscript
-        set thread_family [string tolower [string trim $family]]
-        set owned_threads {}
     }
 
     # -- start_worker_thread <thread-script>

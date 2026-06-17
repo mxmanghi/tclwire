@@ -89,6 +89,39 @@ test thread-registry-1.4 {TPBA-created workers are registered by ThreadMaster} -
     }
 } -result {1 allocated http {} 1}
 
+test thread-registry-1.4.1 {ThreadMaster fails when an owned worker has no account} -body {
+    set worker_script [format {
+        lappend auto_path %s
+        package require Thread
+        package require tclwire::accounting 1.2
+
+        proc demand_thread_exit {} {
+            ::thread::release [::thread::id]
+        }
+
+        ::thread::wait
+        catch {::tclwire::accounting remove_thread [::thread::id]}
+    } [list $project_root]]
+
+    set master [::tclwire::ThreadMaster new $worker_script 1 http]
+    set worker_id {}
+    try {
+        set worker_id [$master acquire_worker]
+        ::tclwire::accounting remove_thread $worker_id
+        list \
+            [catch {$master thread_ids all} message] \
+            [string match \
+                "Thread $worker_id is owned by this ThreadMaster but has no accounting entry" \
+                $message]
+    } finally {
+        if {$worker_id ne {}} {
+            catch {$master stop_thread $worker_id}
+            catch {::tclwire::accounting remove_thread $worker_id}
+        }
+        $master destroy
+    }
+} -result {1 1}
+
 test thread-registry-1.5 {HTTP host context can be updated} -body {
     set thread_id registry-http-thread
     set https_thread_id registry-https-thread
