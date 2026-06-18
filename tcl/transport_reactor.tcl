@@ -14,6 +14,7 @@ oo::class create ::tclwire::TransportReactor {
     variable listener host port next_connection_id agent_threads agent_connection_keys project_root
     variable last_accept_error pool_key pool_descriptor pool_policy pool_created
     variable agent_class agent_package agent_args transport_config service_id protocol
+    variable pending_connections pending_rescheduler pending_retry_after_ms pending_max_attempts
 
     constructor args {
         array set options {
@@ -26,12 +27,19 @@ oo::class create ::tclwire::TransportReactor {
             -transportconfig {}
             -serviceid {}
             -maxworkers 100
+            -connmaxwait 1000
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
                 error "unknown option: $name"
             }
             set options($name) $value
+        }
+        foreach {name minimum} {-maxworkers 1 -connmaxwait 0} {
+            if {![string is integer -strict $options($name)] ||
+                    $options($name) < $minimum} {
+                error "$name must be an integer greater than or equal to $minimum"
+            }
         }
 
         set listener        {}
@@ -58,6 +66,12 @@ oo::class create ::tclwire::TransportReactor {
                                      maximum_workers $options(-maxworkers)]
         set pool_key {}
         set pool_created 0
+        set pending_connections {}
+        set pending_rescheduler {}
+        set pending_retry_after_ms 100
+        set pending_max_attempts [expr {
+            int(ceil(double($options(-connmaxwait)) / $pending_retry_after_ms))
+        }]
     }
 
     destructor {
@@ -135,6 +149,7 @@ oo::class create ::tclwire::TransportReactor {
         }
         set agent_threads [dict create]
         set agent_connection_keys [dict create]
+        my close_pending_connections reactor_stopped
         catch {my destroy_pool}
         return
     }
@@ -177,6 +192,20 @@ oo::class create ::tclwire::TransportReactor {
 
     method dispatch_accept {channel peer_host peer_port} {
         set connection_id [incr next_connection_id]
+        set descriptor [dict create \
+            channel       $channel \
+            peer_host     $peer_host \
+            peer_port     $peer_port \
+            connection_id $connection_id \
+            attempts      0 \
+            accepted_at   [clock milliseconds]]
+        my dispatch_connection $descriptor
+        return
+    }
+
+    method dispatch_connection {descriptor} {
+        set channel [dict get $descriptor channel]
+        set connection_id [dict get $descriptor connection_id]
         set acquire_response [::tclwire::tpba request \
                                         [dict create operation acquire_worker pool_key $pool_key]]
         if {![dict get $acquire_response ok]} {
@@ -187,9 +216,11 @@ oo::class create ::tclwire::TransportReactor {
         set tid [dict get $acquire_response result]
         if {$tid eq {}} {
             set last_accept_error "connection-agent pool is exhausted: $pool_key"
-            catch {close $channel}
+            my defer_connection $descriptor
             return
         }
+        set peer_host [dict get $descriptor peer_host]
+        set peer_port [dict get $descriptor peer_port]
         set connection_key "$service_id#$connection_id"
         set secure [expr {
             $transport_config ne {} &&
@@ -197,18 +228,18 @@ oo::class create ::tclwire::TransportReactor {
             [dict get $transport_config secure]
         }]
         catch {
-            ::tclwire::accounting record_connection_opened $connection_key \
-                [dict create    connection_id       $connection_id \
-                                protocol            $protocol \
-                                service_id          $service_id \
-                                listener_host       $host \
-                                listener_port       $port \
-                                peer_host           $peer_host \
-                                peer_port           $peer_port \
-                                secure              $secure \
-                                pool_key            $pool_key \
-                                worker_thread_id    $tid \
-                                agent_class         $agent_class]
+            ::tclwire::accounting record_connection_opened  $connection_key \
+                        [dict create    connection_id       $connection_id  \
+                                        protocol            $protocol       \
+                                        service_id          $service_id     \
+                                        listener_host       $host           \
+                                        listener_port       $port           \
+                                        peer_host           $peer_host      \
+                                        peer_port           $peer_port      \
+                                        secure              $secure         \
+                                        pool_key            $pool_key       \
+                                        worker_thread_id    $tid            \
+                                        agent_class         $agent_class]
         }
         set detached 0
 
@@ -247,6 +278,80 @@ oo::class create ::tclwire::TransportReactor {
                                                         worker_id $tid]}
             return
         }
+        if {[dict get $descriptor attempts] > 0} {
+            my log_deferred_connection dispatched $descriptor $tid
+        }
+        return
+    }
+
+    method defer_connection {descriptor} {
+        set attempts [expr {[dict get $descriptor attempts] + 1}]
+        dict set descriptor attempts $attempts
+        if {$attempts > $pending_max_attempts} {
+            set last_accept_error \
+                "connection-agent pool is exhausted after $pending_max_attempts attempts: $pool_key"
+            my log_deferred_connection closed $descriptor {} crit \
+                deferred_attempts_exhausted
+            catch {close [dict get $descriptor channel]}
+            return
+        }
+        lappend pending_connections $descriptor
+        my log_deferred_connection queued $descriptor {} debug {}
+        my schedule_pending_connections
+        return
+    }
+
+    method log_deferred_connection {event descriptor worker_id {level debug} {reason {}}} {
+        set fields [list \
+            "event=connection_$event" \
+            "connection_id=[dict get $descriptor connection_id]" \
+            "service=[::tclwire::logger log_value $service_id]" \
+            "remote=[::tclwire::logger log_value [dict get $descriptor peer_host]]" \
+            "remote_port=[dict get $descriptor peer_port]" \
+            "attempts=[dict get $descriptor attempts]" \
+            "queue_depth=[llength $pending_connections]"]
+        if {$worker_id ne {}} {
+            lappend fields "worker_thread_id=[::tclwire::logger log_value $worker_id]"
+        }
+        if {$reason ne {}} {
+            lappend fields "reason=[::tclwire::logger log_value $reason]"
+        }
+        catch {
+            ::tclwire::logger log_error transport [join $fields " "] $level \
+                [dict create service_id $service_id]
+        }
+        return
+    }
+
+    method schedule_pending_connections {} {
+        if {$pending_rescheduler ne {} || [llength $pending_connections] == 0} {
+            return
+        }
+        set pending_rescheduler [after $pending_retry_after_ms \
+            [list [self] reschedule_pending_connections]]
+        return
+    }
+
+    method reschedule_pending_connections {} {
+        set pending_rescheduler {}
+        set queue $pending_connections
+        set pending_connections {}
+        foreach descriptor $queue {
+            my dispatch_connection $descriptor
+        }
+        my schedule_pending_connections
+        return
+    }
+
+    method close_pending_connections {reason} {
+        if {$pending_rescheduler ne {}} {
+            after cancel $pending_rescheduler
+            set pending_rescheduler {}
+        }
+        foreach descriptor $pending_connections {
+            catch {close [dict get $descriptor channel]}
+        }
+        set pending_connections {}
         return
     }
 
@@ -302,7 +407,21 @@ oo::class create ::tclwire::TransportReactor {
         return $pool_key
     }
 
-    unexport validate_transport_config
+    method pending_connections {} {
+        return $pending_connections
+    }
+
+    method pending_retry_after_ms {} {
+        return $pending_retry_after_ms
+    }
+
+    method pending_max_attempts {} {
+        return $pending_max_attempts
+    }
+
+    unexport validate_transport_config dispatch_connection defer_connection \
+        schedule_pending_connections close_pending_connections \
+        log_deferred_connection
 }
 
 package provide tclwire::transport_reactor 0.1

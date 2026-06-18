@@ -13,16 +13,29 @@ package require tclwire::http::connection_agent 0.1
 
 namespace eval ::tclwire::http_connection_test {
     variable logfile [file join [temporaryDirectory] tclwire-http-[pid].log]
+    variable logerr [file join [temporaryDirectory] tclwire-http-[pid].err]
 
     proc cleanup {} {
         variable logfile
+        variable logerr
         catch {::tclwire::runtime stop}
         catch {file delete -force $logfile}
+        catch {file delete -force $logerr}
     }
 
     proc log_contents {} {
         variable logfile
         set channel [open $logfile r]
+        try {
+            return [read $channel]
+        } finally {
+            close $channel
+        }
+    }
+
+    proc error_log_contents {} {
+        variable logerr
+        set channel [open $logerr r]
         try {
             return [read $channel]
         } finally {
@@ -395,6 +408,187 @@ test http-connection-1.5 {sequential connections reuse a TPBA pool worker} -body
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
 } -result {connection:http:8990 1 1}
+
+test http-connection-1.5a {deferred connections are logged at debug severity} -setup {
+    set slow_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::SlowApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request_descriptor} {
+        after 500
+        ::tclwire::io response 200 OK \
+            [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+        ::tclwire::io out slow-ok
+    }
+}
+} slow-application.tcl]
+    set slow_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+logerr = "%s"
+log_level = "debug"
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::SlowApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $::tclwire::http_connection_test::logerr \
+   $slow_application \
+   $project_root] slow-config.toml]
+} -body {
+    ::tclwire::runtime start [list \
+        --config $slow_config \
+        --conn-max-workers 1 \
+        --conn-max-wait 1000]
+
+    set first [socket 127.0.0.1 8990]
+    chan configure $first -blocking 0 -buffering none -translation binary
+    puts -nonewline $first \
+        "GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $first
+
+    after 50
+    update
+
+    set second [socket 127.0.0.1 8990]
+    chan configure $second -blocking 0 -buffering none -translation binary
+    puts -nonewline $second \
+        "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $second
+
+    set responses [dict create $first {} $second {}]
+    set deadline [expr {[clock milliseconds] + 5000}]
+    while {[clock milliseconds] < $deadline &&
+            (! [eof $first] || ! [eof $second])} {
+        update
+        foreach channel [list $first $second] {
+            if {![eof $channel]} {
+                dict append responses $channel [read $channel]
+            }
+        }
+        after 5
+    }
+    foreach channel [list $first $second] {
+        dict append responses $channel [read $channel]
+        catch {close $channel}
+    }
+
+    ::tclwire::runtime stop
+    set log [::tclwire::http_connection_test::error_log_contents]
+    list \
+        [string match "HTTP/1.1 200 OK*" [dict get $responses $first]] \
+        [string match "*slow-ok" [dict get $responses $first]] \
+        [string match "HTTP/1.1 200 OK*" [dict get $responses $second]] \
+        [string match "*slow-ok" [dict get $responses $second]] \
+        [string match {*transport level=debug event=connection_queued*attempts=1*} $log] \
+        [string match {*transport level=debug event=connection_dispatched*worker_thread_id=*} $log]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $slow_config
+    removeFile $slow_application
+} -result {1 1 1 1 1 1}
+
+test http-connection-1.5b {deferred connection timeout close is logged at crit severity} -setup {
+    set slow_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::SlowCloseApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request_descriptor} {
+        after 500
+        ::tclwire::io response 200 OK \
+            [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+        ::tclwire::io out slow-ok
+    }
+}
+} slow-close-application.tcl]
+    set slow_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+logerr = "%s"
+log_level = "info"
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::SlowCloseApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $::tclwire::http_connection_test::logerr \
+   $slow_application \
+   $project_root] slow-close-config.toml]
+} -body {
+    ::tclwire::runtime start [list \
+        --config $slow_config \
+        --conn-max-workers 1 \
+        --conn-max-wait 0]
+
+    set first [socket 127.0.0.1 8990]
+    chan configure $first -blocking 0 -buffering none -translation binary
+    puts -nonewline $first \
+        "GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $first
+
+    after 50
+    update
+
+    set second [socket 127.0.0.1 8990]
+    chan configure $second -blocking 0 -buffering none -translation binary
+    puts -nonewline $second \
+        "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $second
+
+    set second_response {}
+    set deadline [expr {[clock milliseconds] + 1000}]
+    while {[clock milliseconds] < $deadline && ![eof $second]} {
+        update
+        append second_response [read $second]
+        after 5
+    }
+    append second_response [read $second]
+    set second_closed [eof $second]
+    catch {close $second}
+
+    set first_response {}
+    set deadline [expr {[clock milliseconds] + 3000}]
+    while {[clock milliseconds] < $deadline && ![eof $first]} {
+        update
+        append first_response [read $first]
+        after 5
+    }
+    append first_response [read $first]
+    catch {close $first}
+
+    ::tclwire::runtime stop
+    set log [::tclwire::http_connection_test::error_log_contents]
+    list [string match "HTTP/1.1 200 OK*" $first_response] \
+         $second_closed \
+         $second_response \
+         [string match {*transport level=crit event=connection_closed*reason=deferred_attempts_exhausted*} $log]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $slow_config
+    removeFile $slow_application
+} -result {1 1 {} 1}
 
 test http-connection-1.6 {a request without Host uses the default application} -body {
     ::tclwire::runtime start [list \

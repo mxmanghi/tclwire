@@ -54,6 +54,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config logfile] \
         [dict get $config logerr] \
         [dict get $config unix_socket] \
+        [dict get $config conn_max_wait] \
+        [dict get $config conn_max_workers] \
         [dict get $config help]
 } -result [list \
     127.0.0.1 \
@@ -68,6 +70,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     [file normalize /tmp/tclwire.log] \
     [file normalize /tmp/tclwire-err.log] \
     [file normalize /tmp/tclwire.sock] \
+    1000 \
+    100 \
     0]
 
 test runtime-1.2 {legacy service options are normalized without starting services} -body {
@@ -126,6 +130,15 @@ test runtime-1.2a {protocol descriptors share connection-agent classes by family
     ::tclwire::ProxyConnectionAgent \
     1 \
     1]
+
+test runtime-1.2b {connection queue limits are parsed from CLI aliases} -body {
+    set config [::tclwire::runtime parse_args [list \
+        --conn-max-wait 250 \
+        --conn_max_workers 3]]
+    list \
+        [dict get $config conn_max_wait] \
+        [dict get $config conn_max_workers]
+} -result {250 3}
 
 test runtime-1.3 {invalid arguments fail before internal agents start} -body {
     set status [catch {
@@ -198,6 +211,23 @@ test runtime-1.5b {existing document root is not seeded or overwritten} -body {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $docroot}
 } -result {custom 0}
+
+test runtime-1.5c {connection queue limits configure reactor and pool policy} -body {
+    ::tclwire::runtime start [list \
+        --conn-max-wait 250 \
+        --conn-max-workers 3 \
+        --logfile $::tclwire::runtime_test::logfile]
+    set reactor [::tclwire::runtime transport_reactor]
+    set status [::tclwire::tpba request [dict create \
+        operation pool_status \
+        pool_key [$reactor pool_key]]]
+    list \
+        [$reactor pending_retry_after_ms] \
+        [$reactor pending_max_attempts] \
+        [dict get $status result policy maximum_workers]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {100 3 3}
 
 test runtime-1.6 {the runtime TPBA accepts broker requests} -body {
     ::tclwire::runtime start [list \
@@ -327,6 +357,8 @@ libdir = "lib"
 certfile = "tls/default.crt"
 keyfile = "tls/default.key"
 ftp_user_check = false
+conn_max_wait = 750
+conn_max_workers = 8
 default_application = "site.example.test"
 
 [http]
@@ -370,6 +402,8 @@ port = 8081
         [dict get $config certfile] \
         [dict get $config keyfile] \
         [dict get $config ftp_user_check] \
+        [dict get $config conn_max_wait] \
+        [dict get $config conn_max_workers] \
         [dict get $config startservers] \
         [dict get $config services] \
         [dict get $config default_application] \
@@ -386,6 +420,8 @@ port = 8081
     [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.crt]] \
     [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.key]] \
     1 \
+    750 \
+    8 \
     {https ftp} \
     [list \
         [dict create protocol https port 8443 id https:8443 secure 1 \

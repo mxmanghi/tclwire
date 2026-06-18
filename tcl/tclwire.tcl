@@ -115,6 +115,10 @@ namespace eval ::tclwire::runtime {
         puts $channel "  --logfile <path>    Access log. Default: /tmp/tclwire.log"
         puts $channel "  --logerr <path>     Error log. Default: /tmp/tclwire-err.log"
         puts $channel "  --log-level <level> Global logging threshold. Default: info"
+        puts $channel "  --conn-max-wait <ms>"
+        puts $channel "      Maximum accepted-socket wait for a connection worker. Default: 1000"
+        puts $channel "  --conn-max-workers <count>"
+        puts $channel "      Maximum connection-agent workers per service. Default: 100"
         puts $channel "  --unix-socket <path> Console socket. Default: /tmp/tclwire.sock"
         puts $channel "  --quiet"
         puts $channel "  --debug"
@@ -130,6 +134,13 @@ namespace eval ::tclwire::runtime {
 
     proc parse_port_value {option value} {
         if {![string is integer -strict $value] || $value < 1 || $value > 65535} {
+            error "invalid value for $option: $value"
+        }
+        return $value
+    }
+
+    proc parse_integer_min {option value minimum} {
+        if {![string is integer -strict $value] || $value < $minimum} {
             error "invalid value for $option: $value"
         }
         return $value
@@ -243,6 +254,8 @@ namespace eval ::tclwire::runtime {
         set logfile [file normalize /tmp/tclwire.log]
         set logerr [file normalize /tmp/tclwire-err.log]
         set log_level info
+        set conn_max_wait 1000
+        set conn_max_workers 100
         set unix_socket [file normalize /tmp/tclwire.sock]
         set ftp_user_check 1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
@@ -276,6 +289,8 @@ namespace eval ::tclwire::runtime {
                             logfile      $logfile \
                             logerr       $logerr \
                             log_level    $log_level \
+                            conn_max_wait $conn_max_wait \
+                            conn_max_workers $conn_max_workers \
                             unix_socket  $unix_socket \
                             startservers $startservers \
                             services     $services \
@@ -344,6 +359,12 @@ namespace eval ::tclwire::runtime {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
+            foreach {field minimum} {conn_max_wait 0 conn_max_workers 1} {
+                if {[dict exists $global $field]} {
+                    dict set config $field [parse_integer_min \
+                        "tclwire.$field" [dict get $global $field] $minimum]
+                }
+            }
 
             if {[dict exists $global docroot] &&
                     ![dict exists $global ftproot]} {
@@ -577,6 +598,16 @@ namespace eval ::tclwire::runtime {
                     dict set config log_level [normalize_log_level $option \
                         [require_value $argv [incr i] $option]]
                 }
+                --conn-max-wait -
+                --conn_max_wait {
+                    dict set config conn_max_wait [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 0]
+                }
+                --conn-max-workers -
+                --conn_max_workers {
+                    dict set config conn_max_workers [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 1]
+                }
                 --unix-socket {
                     dict set config unix_socket [file normalize \
                         [require_value $argv [incr i] $option]]
@@ -758,7 +789,9 @@ namespace eval ::tclwire::runtime {
             -transportconfig [service_transport_config $service] \
             -agentclass [dict get $descriptor agent_class] \
             -agentpackage [dict get $descriptor agent_package] \
-            -agentargs $agent_args]
+            -agentargs $agent_args \
+            -maxworkers [dict get $config conn_max_workers] \
+            -connmaxwait [dict get $config conn_max_wait]]
     }
 
     proc start {argv} {

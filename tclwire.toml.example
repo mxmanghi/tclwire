@@ -26,6 +26,8 @@ logfile = "/tmp/tclwire.log"
 logerr = "/tmp/tclwire-err.log"
 log_level = "info"
 unix_socket = "/tmp/tclwire.sock"
+conn_max_wait = 1000
+conn_max_workers = 100
 
 # Optional directory containing application class files. An application's
 # libdir overrides this value. The application docroot still has precedence.
