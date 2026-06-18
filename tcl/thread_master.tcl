@@ -30,10 +30,6 @@ if {[info commands ::tclwire::is_stale] eq {}} {
             return false
         }
 
-        if {[dict get $thread_account nruns] > 10} {
-            return true
-        }
-
         set last_run_end [dict get $thread_account last_run_end]
         if {$last_run_end <= 0} {
             return false

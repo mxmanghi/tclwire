@@ -15,7 +15,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
 
     variable channel closed protocol_session command_buffer ftp_root connection_key
     variable ftp_user_check bind_host session secure_transport
-    variable tls_certfile tls_keyfile log_protocol
+    variable tls_certfile tls_keyfile log_protocol timeout_id
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -64,11 +64,19 @@ oo::class create ::tclwire::FtpConnectionAgent {
             passive_listener {} \
             data_channel {} \
             pending_action {} \
+            upload_file_channel {} \
+            upload_action {} \
+            upload_argument {} \
+            upload_bytes 0 \
             restart_offset 0 \
             rename_from {} \
             username {} \
             authenticated 0 \
             data_protection [expr {$secure_transport ? "P" : "C"}]]
+        catch {
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create request_count 0 current_command {}]
+        }
 
         my send_reply 220 "TclWire FTP server ready"
         my start
@@ -105,14 +113,10 @@ oo::class create ::tclwire::FtpConnectionAgent {
             dict set session current_argument \
                 [dict get $command_descriptor argument]
             catch {
-                set record [::tclwire::accounting get_connection_record $connection_key]
-                set request_count [expr {
-                    $record eq {} ? 1 : [dict get $record request_count] + 1
-                }]
-                ::tclwire::accounting update_connection $connection_key \
+                ::tclwire::accounting increment_connection_request_count \
+                    $connection_key \
                     [dict create \
-                        current_command [dict get $command_descriptor command] \
-                        request_count $request_count]
+                        current_command [dict get $command_descriptor command]]
             }
             if {[catch {
                 my execute_command \
@@ -147,6 +151,22 @@ oo::class create ::tclwire::FtpConnectionAgent {
         my send_control \
             "211-Features\r\n EPSV\r\n PASV\r\n SIZE\r\n MDTM\r\n REST STREAM\r\n211 End\r\n"
         my log_command 211
+    }
+
+    method refresh_timeout {} {
+        if {$timeout_id ne {}} {
+            after cancel $timeout_id
+        }
+        set timeout_id [after 900000 [list [self] timeout]]
+        return
+    }
+
+    method timeout {} {
+        set timeout_id {}
+        my send_control [$protocol_session format_reply 421 \
+            "Control connection timed out"]
+        my close
+        return
     }
 
     method command_requires_login {command} {
@@ -482,6 +502,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
         set argument [dict get $pending argument]
         set restart_offset [dict get $session restart_offset]
         set transferred_bytes 0
+        set async_transfer 0
         dict set session pending_action {}
         dict set session restart_offset 0
 
@@ -517,23 +538,18 @@ oo::class create ::tclwire::FtpConnectionAgent {
                     }
                 }
                 STOR {
-                    set fs_path [my resolve_path $argument]
-                    if {![file isdirectory [file dirname $fs_path]]} {
-                        error "missing directory"
-                    }
-                    set file_channel [open $fs_path wb]
-                    try {
-                        set payload [read $data_channel]
-                        set transferred_bytes [string length $payload]
-                        puts -nonewline $file_channel $payload
-                    } finally {
-                        close $file_channel
-                    }
+                    my start_upload $action $argument $data_channel
+                    set async_transfer 1
                 }
             }
-            flush $data_channel
+            if {!$async_transfer} {
+                flush $data_channel
+            }
         }]
 
+        if {!$status && $async_transfer} {
+            return
+        }
         my reset_passive_state
         if {$status} {
             my send_reply 550 "Transfer failed"
@@ -541,6 +557,87 @@ oo::class create ::tclwire::FtpConnectionAgent {
         } else {
             my send_reply 226 "Transfer complete"
             my log_transfer $action $argument 226 $transferred_bytes
+        }
+        return
+    }
+
+    method start_upload {action argument data_channel} {
+        set fs_path [my resolve_path $argument]
+        if {![file isdirectory [file dirname $fs_path]]} {
+            error "missing directory"
+        }
+
+        set file_channel [open $fs_path wb]
+        chan configure $file_channel \
+            -buffering none -translation binary
+        chan configure $data_channel \
+            -blocking 0 -buffering none -translation binary
+        dict set session upload_file_channel $file_channel
+        dict set session upload_action $action
+        dict set session upload_argument $argument
+        dict set session upload_bytes 0
+        chan event $data_channel readable [list [self] upload_readable]
+        my upload_readable
+        return
+    }
+
+    method upload_readable {} {
+        set data_channel [dict get $session data_channel]
+        set file_channel [dict get $session upload_file_channel]
+        if {$data_channel eq {} || $file_channel eq {}} {
+            return
+        }
+
+        if {[catch {set chunk [read $data_channel]} error]} {
+            my finish_upload 0 $error
+            return
+        }
+        if {$chunk ne {}} {
+            if {[catch {
+                puts -nonewline $file_channel $chunk
+            } error]} {
+                my finish_upload 0 $error
+                return
+            }
+            dict set session upload_bytes [expr {
+                [dict get $session upload_bytes] + [string length $chunk]
+            }]
+            my refresh_timeout
+        }
+        if {[eof $data_channel]} {
+            my finish_upload 1
+        }
+        return
+    }
+
+    method finish_upload {ok {error {}}} {
+        set action [dict get $session upload_action]
+        set argument [dict get $session upload_argument]
+        set transferred_bytes [dict get $session upload_bytes]
+        set file_channel [dict get $session upload_file_channel]
+        set data_channel [dict get $session data_channel]
+
+        if {$data_channel ne {}} {
+            catch {chan event $data_channel readable {}}
+        }
+        if {$file_channel ne {}} {
+            if {$ok && [catch {flush $file_channel} error]} {
+                set ok 0
+            }
+            catch {close $file_channel}
+        }
+        dict set session upload_file_channel {}
+        dict set session upload_action {}
+        dict set session upload_argument {}
+        dict set session upload_bytes 0
+
+        my reset_passive_state
+        if {$ok} {
+            my send_reply 226 "Transfer complete"
+            my log_transfer $action $argument 226 $transferred_bytes
+        } else {
+            my send_reply 550 "Transfer failed"
+            my log_transfer $action $argument 550 0
         }
         return
     }
@@ -646,9 +743,19 @@ oo::class create ::tclwire::FtpConnectionAgent {
         if {![info exists session] || $session eq {}} {
             return
         }
+        set upload_file_channel [dict get $session upload_file_channel]
+        if {$upload_file_channel ne {}} {
+            catch {close $upload_file_channel}
+        }
+        dict set session upload_file_channel {}
+        dict set session upload_action {}
+        dict set session upload_argument {}
+        dict set session upload_bytes 0
+
         foreach field {passive_listener data_channel} {
             set data [dict get $session $field]
             if {$data ne {}} {
+                catch {chan event $data readable {}}
                 catch {close $data}
             }
             dict set session $field {}
@@ -663,9 +770,10 @@ oo::class create ::tclwire::FtpConnectionAgent {
     }
 
     unexport authenticate_user begin_transfer command_requires_login \
-        execute_site_command open_passive_listener perform_pending_action \
-        reset_passive_state resolve_path send_control transfer_path virtual_to_fs \
-        log_command log_transfer
+        execute_site_command finish_upload open_passive_listener \
+        perform_pending_action reset_passive_state resolve_path send_control \
+        start_upload transfer_path virtual_to_fs log_command \
+        log_transfer
 }
 
 package provide tclwire::ftp::connection_agent 0.1

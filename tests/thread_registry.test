@@ -51,7 +51,7 @@ test thread-registry-1.3 {registration is owned by the accounting API} -body {
             [dict get $account status] \
             [dict get $account family] \
             [dict get $account http_host] \
-            [dict get $account nruns]
+            [dict exists $account nruns]
     } finally {
         ::tclwire::accounting remove_thread $thread_id
     }
@@ -177,10 +177,13 @@ test thread-registry-1.7 {connection records are created and updated by accounti
                 agent_class ::tclwire::HttpConnectionAgent]
         ::tclwire::accounting update_connection $connection_key \
             [dict create status open current_transaction_id 7 \
-                         current_command GET request_count 1 \
+                         current_command GET \
                          bytes_in 45 bytes_out 120]
+        set count [::tclwire::accounting increment_connection_request_count \
+            $connection_key [dict create current_command POST]]
         set record [::tclwire::accounting get_connection_record $connection_key]
         list \
+            $count \
             [dict get $record connection_key] \
             [dict get $record status] \
             [dict get $record protocol] \
@@ -195,7 +198,7 @@ test thread-registry-1.7 {connection records are created and updated by accounti
     } finally {
         ::tclwire::accounting remove_connection $connection_key
     }
-} -result {http:8990#1 open http http:8990 7 GET 1 45 120 1 1}
+} -result {1 http:8990#1 open http http:8990 7 POST 1 45 120 1 1}
 
 test thread-registry-1.8 {closing a connection removes it from shared accounting} -body {
     set connection_key ftp:2121#4
@@ -287,13 +290,13 @@ test thread-registry-1.12 {stale predicate requires complete thread accounts} -b
     list \
         [catch {
             ::tclwire::is_stale registry-malformed \
-                [dict create nruns 0 last_run_end 0] \
+                [dict create last_run_end 0] \
                 [clock seconds]
         } missing_status] \
         $missing_status \
         [catch {
             ::tclwire::is_stale registry-malformed \
-                [dict create status idle nruns 0] \
+                [dict create status idle] \
                 [clock seconds]
         } missing_last_end] \
         $missing_last_end

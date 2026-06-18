@@ -128,15 +128,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
         dict set request_d connection_thread_id [::thread::id]
         dict set request_d connection_agent_id  [self]
         catch {
-            set record [::tclwire::accounting get_connection_record $connection_key]
-            set request_count [expr {
-                $record eq {} ? 1 : [dict get $record request_count] + 1
-            }]
-            ::tclwire::accounting update_connection $connection_key \
+            ::tclwire::accounting increment_connection_request_count \
+                $connection_key \
                 [dict create \
                     current_transaction_id $transaction_id \
-                    current_command [dict get $request_d method] \
-                    request_count $request_count]
+                    current_command [dict get $request_d method]]
         }
 
         my begin_transaction $transaction_id $request_d

@@ -22,7 +22,6 @@
 #
 #   A dictionary having the following keys
 #
-#	- nruns: number of tasks carried out by the thread
 #	- last_run_start: initial time of the last run performed
 #	- last_run_end: ending time of the last run performed
 #	- created_on: timestamp at which the accounting entry was created
@@ -69,7 +68,7 @@ namespace eval ::tclwire::accounting {
         }
 
         set family [normalize_family $family]
-        set account [dict create nruns      0 \
+        set account [dict create \
                           last_run_start    0 \
                           last_run_end      0 \
                           created_on        [clock seconds] \
@@ -125,7 +124,6 @@ namespace eval ::tclwire::accounting {
             }
 
             dict with thread_d {
-                set current_status $status
                 set status $newstatus
                 switch $newstatus {
                     running {
@@ -134,7 +132,6 @@ namespace eval ::tclwire::accounting {
                     }
                     idle {
                         set last_run_end [clock seconds]
-                        if {$current_status == "running"} { incr nruns }
                     }
                 }
             }
@@ -283,6 +280,30 @@ namespace eval ::tclwire::accounting {
             ::tsv::keylset tclwire connections $connection_key $connection_d
         }
         return $connection_key
+    }
+
+    proc increment_connection_request_count {connection_key {fields {}}} {
+        initialize
+        validate_connection_update $fields
+        if {[dict exists $fields request_count]} {
+            error "request_count is managed by increment_connection_request_count"
+        }
+        ::tsv::lock tclwire {
+            if {![::tsv::keylget tclwire connections $connection_key connection_d]} {
+                error "Connection $connection_key record doesn't exist"
+            }
+            dict set connection_d request_count \
+                [expr {[dict get $connection_d request_count] + 1}]
+            foreach {field value} $fields {
+                dict set connection_d $field $value
+            }
+            if {![dict exists $fields last_activity_at] &&
+                    [dict get $connection_d status] ni {closed failed}} {
+                dict set connection_d last_activity_at [clock seconds]
+            }
+            ::tsv::keylset tclwire connections $connection_key $connection_d
+            return [dict get $connection_d request_count]
+        }
     }
 
     proc record_connection_closed {connection_key {fields {}}} {

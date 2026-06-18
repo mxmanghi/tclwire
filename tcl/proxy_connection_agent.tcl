@@ -87,13 +87,8 @@ oo::class create ::tclwire::ProxyConnectionAgent {
         set method [dict get $descriptor method]
         set target [dict get $descriptor target]
         catch {
-            set record [::tclwire::accounting get_connection_record $connection_key]
-            set request_count [expr {
-                $record eq {} ? 1 : [dict get $record request_count] + 1
-            }]
-            ::tclwire::accounting update_connection $connection_key \
-                [dict create current_command $method \
-                             request_count $request_count]
+            ::tclwire::accounting increment_connection_request_count \
+                $connection_key [dict create current_command $method]
         }
         if {$method eq "CONNECT"} {
             if {[catch {

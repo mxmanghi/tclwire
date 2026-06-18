@@ -87,6 +87,15 @@ namespace eval ::tclwire::ftp_connection_test {
         error "timed out waiting for FTP data"
     }
 
+    proc write_data {channel data} {
+        chan configure $channel \
+            -blocking 1 -buffering none -translation binary
+        puts -nonewline $channel $data
+        flush $channel
+        close $channel
+        return
+    }
+
     proc open_passive_data_channel {control_channel} {
         set reply [send_command $control_channel EPSV]
         if {![regexp {^229 .*\(\|\|\|([0-9]+)\|\)$} $reply -> port]} {
@@ -198,6 +207,52 @@ test ftp-connection-1.1 {
     catch {file delete -force $ftp_root}
     catch {file delete -force $outside_root}
 } -result {1 1 1 1 1 1 1 1 1 1 1 1 1 1 ftp:8991 connection:ftp:8991 1 1 1}
+
+test ftp-connection-1.2 {
+    FTP passive upload stores binary payloads through STOR
+} -body {
+    set ftp_root [file normalize \
+        [file join [temporaryDirectory] tclwire-ftpupload-[pid]]]
+    ::tclwire::runtime start [list \
+        --startservers ftp \
+        --ftpport 8991 \
+        --ftproot $ftp_root \
+        --noftp-user-check \
+        --logfile $::tclwire::ftp_connection_test::logfile]
+
+    set control [::tclwire::ftp_connection_test::connect]
+    set greeting [::tclwire::ftp_connection_test::read_line $control]
+    set user_reply [::tclwire::ftp_connection_test::send_command \
+        $control "USER anonymous"]
+    set pass_reply [::tclwire::ftp_connection_test::send_command \
+        $control "PASS test@example.invalid"]
+    set payload "hello\0upload\r\npayload"
+    set data_channel \
+        [::tclwire::ftp_connection_test::open_passive_data_channel $control]
+    set transfer_start [::tclwire::ftp_connection_test::send_command \
+        $control "STOR incoming.bin"]
+    ::tclwire::ftp_connection_test::write_data $data_channel $payload
+    set transfer_end [::tclwire::ftp_connection_test::read_line $control]
+    set quit_reply [::tclwire::ftp_connection_test::send_command $control QUIT]
+    catch {close $control}
+
+    set stored [::fileutil::cat -translation binary \
+        [file join $ftp_root incoming.bin]]
+    ::tclwire::runtime stop
+    set log [::tclwire::ftp_connection_test::log_contents]
+    list \
+        [string match "220 *" $greeting] \
+        [string match "331 *" $user_reply] \
+        [string match "230 *" $pass_reply] \
+        [string match "150 *" $transfer_start] \
+        [string match "226 *" $transfer_end] \
+        [string match "221 *" $quit_reply] \
+        [expr {$stored eq $payload}] \
+        [regexp "ftp transfer=STOR path=incoming.bin status=226 bytes=[string length $payload]" $log]
+} -cleanup {
+    ::tclwire::ftp_connection_test::cleanup
+    catch {file delete -force $ftp_root}
+} -result {1 1 1 1 1 1 1 1}
 
 ::tclwire::ftp_connection_test::cleanup
 cleanupTests

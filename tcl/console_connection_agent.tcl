@@ -74,14 +74,10 @@ oo::class create ::tclwire::ConsoleConnectionAgent {
         set words [regexp -all -inline {\S+} [string trim $line]]
         if {[llength $words] > 0} {
             catch {
-                set record [::tclwire::accounting get_connection_record $connection_key]
-                set request_count [expr {
-                    $record eq {} ? 1 : [dict get $record request_count] + 1
-                }]
-                ::tclwire::accounting update_connection $connection_key \
+                ::tclwire::accounting increment_connection_request_count \
+                    $connection_key \
                     [dict create \
-                        current_command [string toupper [lindex $words 0]] \
-                        request_count $request_count]
+                        current_command [string toupper [lindex $words 0]]]
             }
         }
         set response [::tclwire::console dispatch $line]

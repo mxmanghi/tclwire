@@ -9,7 +9,7 @@ package require tclwire::logger::control 0.1
 
 namespace eval ::tclwire::console {
     variable ps_columns {
-        thread_id status family nruns last_run_start last_run_end created_on command http_host
+        thread_id status family last_run_start last_run_end created_on command http_host
     }
     variable connection_columns {
         connection_key status protocol service_id listener_port peer_host peer_port
