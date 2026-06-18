@@ -33,26 +33,23 @@ oo::class create ::tclwire::ApplicationDispatcher {
             error "default application is not registered: $default_application"
         }
         set default_descriptor [dict get $applications $default_application]
-        dict for {application_id descriptor} $applications {
-            if {$application_id eq $default_application} {
-                continue
-            }
-            if {[dict exists $default_descriptor pool_policy] &&
-                [dict exists $descriptor pool_policy]} {
+        dict for {application_id original_descriptor} $applications {
+            set descriptor $original_descriptor
+            set had_hosts [dict exists $original_descriptor hosts]
+            if {$application_id ne $default_application} {
+                if {[dict exists $default_descriptor pool_policy] &&
+                    [dict exists $descriptor pool_policy]} {
 
-                dict set descriptor pool_policy [dict merge \
-                    [dict get $default_descriptor pool_policy] \
-                    [dict get $descriptor pool_policy]]
+                    dict set descriptor pool_policy [dict merge \
+                        [dict get $default_descriptor pool_policy] \
+                        [dict get $descriptor pool_policy]]
 
+                }
+                set descriptor [dict merge $default_descriptor $descriptor]
+                if {!$had_hosts} {
+                    dict set descriptor hosts [list $application_id]
+                }
             }
-            set descriptor [dict merge $default_descriptor $descriptor]
-            if {![dict exists [dict get $applications $application_id] hosts]} {
-                dict set descriptor hosts [list $application_id]
-            }
-            dict set applications $application_id $descriptor
-        }
-
-        dict for {application_id descriptor} $applications {
             if {![dict exists $descriptor docroot]} {
                 if {$default_docroot eq {}} {
                     error "application '$application_id' is missing docroot"
@@ -79,13 +76,15 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
                 dict set descriptor encoding $default_encoding
             }
+            dict set descriptor application_paths \
+                [my application_paths $descriptor]
             if {[dict exists $descriptor file]} {
                 dict set descriptor file \
                     [my resolve_application_file $application_id $descriptor]
             }
+            my validate_descriptor $application_id $descriptor
             dict set applications $application_id $descriptor
         }
-        my validate
     }
 
     destructor {
@@ -98,12 +97,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             return [file normalize $application_file]
         }
 
-        set search_directories [list [dict get $descriptor docroot]]
-        if {[dict exists $descriptor libdir] &&
-                [dict get $descriptor libdir] ne {}} {
-            lappend search_directories [dict get $descriptor libdir]
-        }
-        lappend search_directories $project_root
+        set search_directories [dict get $descriptor application_paths]
 
         set searched {}
         foreach directory $search_directories {
@@ -119,24 +113,38 @@ oo::class create ::tclwire::ApplicationDispatcher {
         error "application '$application_id' file '$application_file' was not found; searched: [join $searched {, }]"
     }
 
-    method validate {} {
-        dict for {application_id descriptor} $applications {
-            foreach field {class hosts docroot encoding} {
-                if {![dict exists $descriptor $field]} {
-                    error "application '$application_id' is missing $field"
-                }
+    method application_paths {descriptor} {
+        set paths [list [dict get $descriptor docroot]]
+        if {[dict exists $descriptor libdir]} {
+            lappend paths [dict get $descriptor libdir]
+        }
+        lappend paths $project_root
+
+        set unique_paths {}
+        foreach directory $paths {
+            if {$directory ni $unique_paths} {
+                lappend unique_paths $directory
             }
-            if {![dict exists $descriptor package] &&
-                    ![dict exists $descriptor file]} {
-                error "application '$application_id' must define package or file"
+        }
+        return $unique_paths
+    }
+
+    method validate_descriptor {application_id descriptor} {
+        foreach field {class hosts docroot encoding application_paths} {
+            if {![dict exists $descriptor $field]} {
+                error "application '$application_id' is missing $field"
             }
-            if {[dict exists $descriptor file] &&
-                    ![file isfile [dict get $descriptor file]]} {
-                error "application '$application_id' file does not exist: [dict get $descriptor file]"
-            }
-            if {[dict get $descriptor encoding] ni [encoding names]} {
-                error "application '$application_id' has an unknown encoding: [dict get $descriptor encoding]"
-            }
+        }
+        if {![dict exists $descriptor package] &&
+                ![dict exists $descriptor file]} {
+            error "application '$application_id' must define package or file"
+        }
+        if {[dict exists $descriptor file] &&
+                ![file isfile [dict get $descriptor file]]} {
+            error "application '$application_id' file does not exist: [dict get $descriptor file]"
+        }
+        if {[dict get $descriptor encoding] ni [encoding names]} {
+            error "application '$application_id' has an unknown encoding: [dict get $descriptor encoding]"
         }
         return
     }
@@ -190,21 +198,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
     }
 
     method worker_script {application_descriptor} {
-        set application_paths {}
-        if {[dict exists $application_descriptor docroot]} {
-            lappend application_paths [dict get $application_descriptor docroot]
-        }
-        if {[dict exists $application_descriptor libdir]} {
-            lappend application_paths [dict get $application_descriptor libdir]
-        }
-        lappend application_paths $project_root
-        set unique_paths {}
-        foreach directory $application_paths {
-            if {$directory ni $unique_paths} {
-                lappend unique_paths $directory
-            }
-        }
-        set application_paths $unique_paths
+        set application_paths [dict get $application_descriptor application_paths]
 
         set loader {}
         if {[dict exists $application_descriptor file]} {

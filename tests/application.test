@@ -275,8 +275,7 @@ oo::class create ::example::Application {
         encoding utf-8]
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
-        set script [$dispatcher worker_script \
-            [dict get $config applications default]]
+        set script [$dispatcher worker_script [$dispatcher application default]]
         list \
             [expr {[string first [list source $application_file] $script] >= 0}] \
             [expr {[string first {package require tclwire::application 0.1} \
@@ -291,7 +290,7 @@ oo::class create ::example::Application {
 test application-dispatcher-1.9 {package-backed applications remain supported} -body {
     set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
     try {
-        set descriptor [dict get $application_config applications default]
+        set descriptor [$dispatcher application default]
         expr {[string first \
             {package require tclwire::application 0.1} \
             [$dispatcher worker_script $descriptor]] >= 0}
@@ -324,6 +323,25 @@ test application-dispatcher-1.9a {
         $dispatcher destroy
     }
 } -result {1 1 1}
+
+test application-dispatcher-1.9b {
+    application descriptors include worker application paths
+} -body {
+    set config $application_config
+    set docroot [file normalize /tmp/tclwire-package-docroot]
+    set libdir [file normalize /tmp/tclwire-package-libdir]
+    dict set config applications default docroot $docroot
+    dict set config applications default libdir $libdir
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        dict get [$dispatcher application default] application_paths
+    } finally {
+        $dispatcher destroy
+    }
+} -result [list \
+    [file normalize /tmp/tclwire-package-docroot] \
+    [file normalize /tmp/tclwire-package-libdir] \
+    $project_root]
 
 test application-dispatcher-1.10 {relative application files prefer docroot} -setup {
     set root [file join [temporaryDirectory] tclwire-app-files-[pid]]

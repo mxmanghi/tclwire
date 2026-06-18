@@ -198,17 +198,17 @@ oo::class create ::tclwire::TransportReactor {
         }]
         catch {
             ::tclwire::accounting record_connection_opened $connection_key \
-                [dict create    connection_id   $connection_id \
-                                protocol        $protocol \
-                                service_id      $service_id \
-                                listener_host   $host \
-                                listener_port   $port \
-                                peer_host       $peer_host \
-                                peer_port       $peer_port \
-                                secure          $secure \
-                                pool_key        $pool_key \
-                                worker_thread_id $tid \
-                                agent_class     $agent_class]
+                [dict create    connection_id       $connection_id \
+                                protocol            $protocol \
+                                service_id          $service_id \
+                                listener_host       $host \
+                                listener_port       $port \
+                                peer_host           $peer_host \
+                                peer_port           $peer_port \
+                                secure              $secure \
+                                pool_key            $pool_key \
+                                worker_thread_id    $tid \
+                                agent_class         $agent_class]
         }
         set detached 0
 
@@ -218,11 +218,11 @@ oo::class create ::tclwire::TransportReactor {
             ::thread::send $tid [list ::thread::attach $channel]
             dict set agent_threads $tid $connection_id
             dict set agent_connection_keys $tid $connection_key
-            ::thread::send -async $tid [list ::tclwire::start_connection_agent \
-                                             $agent_class $channel $connection_id $connection_key \
-                                             $peer_host $peer_port \
-                                             [::thread::id] [list [self] connection_finished $pool_key] \
-                                             $agent_args $transport_config]
+            ::thread::send -async $tid [list ::tclwire::start_connection_agent $agent_class $channel \
+                                                                               $connection_id $connection_key \
+                                                                               $peer_host $peer_port \
+                                                                               [::thread::id] [list [self] connection_finished $pool_key] \
+                                                                               $agent_args $transport_config]
         } error options]} {
             set last_accept_error $error
             if {$detached} {
@@ -255,19 +255,19 @@ oo::class create ::tclwire::TransportReactor {
             set connection_key [dict get $agent_connection_keys $worker_id]
             dict unset agent_connection_keys $worker_id
             catch {
-                set close_record [::tclwire::accounting record_connection_closed \
-                    $connection_key [dict create close_reason finished]]
+                set close_record \
+                    [::tclwire::accounting record_connection_closed $connection_key [dict create close_reason finished]]
                 ::tclwire::logger log_connection_closed $close_record
             }
         }
         if {[dict exists $agent_threads $worker_id]} {
             dict unset agent_threads $worker_id
         }
-        if {$pool_created && $finished_pool_key eq $pool_key} {
-            set response [::tclwire::tpba request [dict create \
-                operation release_worker \
-                pool_key $pool_key \
-                worker_id $worker_id]]
+        if {$pool_created && ($finished_pool_key eq $pool_key)} {
+            set response [::tclwire::tpba request                           \
+                                    [dict create operation  release_worker  \
+                                                 pool_key   $pool_key       \
+                                                 worker_id  $worker_id]]
             if {![dict get $response ok]} {
                 set last_accept_error [dict get $response error]
             }
