@@ -25,10 +25,10 @@ The relevant flow is:
 
 Relevant code:
 
-- [http_connection_agent.tcl](../tcl/http_connection_agent.tcl)
-- [http_protocol.tcl](../tcl/http_protocol.tcl)
-- [content_generator_agent.tcl](../tcl/content_generator_agent.tcl)
-- [http_request.tcl](../tcl/http_request.tcl)
+- [`http_connection_agent.tcl`](../tcl/http_connection_agent.tcl)
+- [`http_protocol.tcl`](../tcl/http_protocol.tcl)
+- [`content_generator_agent.tcl`](../tcl/content_generator_agent.tcl)
+- [`http_request.tcl`](../tcl/http_request.tcl)
 
 ### Fixed-Length Bodies
 

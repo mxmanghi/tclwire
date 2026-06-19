@@ -269,7 +269,7 @@ oo::class create ::tclwire::TransportReactor {
             }
             catch {
 
-                set close_status [dict create status failed close_reason dispatch_failed transport_error $error]]
+                set close_status [dict create status failed close_reason dispatch_failed transport_error $error]
                 set close_record [::tclwire::accounting record_connection_closed $connection_key \
                                                                                  ::tclwire::logger \
                                                                                  log_connection_closed \
@@ -306,14 +306,15 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method log_deferred_connection {event descriptor worker_id {level debug} {reason {}}} {
-        set fields [list \
-            "event=connection_$event" \
-            "connection_id=[dict get $descriptor connection_id]" \
-            "service=[::tclwire::logger log_value $service_id]" \
-            "remote=[::tclwire::logger log_value [dict get $descriptor peer_host]]" \
-            "remote_port=[dict get $descriptor peer_port]" \
-            "attempts=[dict get $descriptor attempts]" \
-            "queue_depth=[llength $pending_connections]"]
+
+        set fields [list    "event=connection_$event" \
+                            "connection_id=[dict get $descriptor connection_id]" \
+                            "service=[::tclwire::logger log_value $service_id]" \
+                            "remote=[::tclwire::logger log_value [dict get $descriptor peer_host]]" \
+                            "remote_port=[dict get $descriptor peer_port]" \
+                            "attempts=[dict get $descriptor attempts]" \
+                            "queue_depth=[llength $pending_connections]"]
+
         if {$worker_id ne {}} {
             lappend fields "worker_thread_id=[::tclwire::logger log_value $worker_id]"
         }
@@ -325,14 +326,15 @@ oo::class create ::tclwire::TransportReactor {
                 [dict create service_id $service_id]
         }
         return
+
     }
 
     method schedule_pending_connections {} {
         if {$pending_rescheduler ne {} || [llength $pending_connections] == 0} {
             return
         }
-        set pending_rescheduler [after $pending_retry_after_ms \
-            [list [self] reschedule_pending_connections]]
+        set pending_rescheduler \
+                [after $pending_retry_after_ms [list [self] reschedule_pending_connections]]
         return
     }
 

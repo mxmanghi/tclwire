@@ -24,6 +24,7 @@ namespace eval ::tclwire {}
 #
 # thread_id is the Tcl thread id, thread_account is the accounting dictionary,
 # and now is the current epoch timestamp in seconds.
+
 if {[info commands ::tclwire::is_stale] eq {}} {
     proc ::tclwire::is_stale {thread_id thread_account now} {
         if {[dict get $thread_account status] ne "idle"} {
@@ -192,9 +193,7 @@ if {[info commands ::tclwire::is_stale] eq {}} {
 
     method acquire_worker {} {
         set thread_id ""
-        if {![[self] allocate_thread thread_id]} {
-            return ""
-        }
+        if {![[self] allocate_thread thread_id]} { return "" }
         return $thread_id
     }
 
