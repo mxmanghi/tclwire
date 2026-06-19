@@ -268,10 +268,14 @@ oo::class create ::tclwire::TransportReactor {
                 dict unset agent_connection_keys $tid
             }
             catch {
+
+                set close_status [dict create status failed close_reason dispatch_failed transport_error $error]]
                 set close_record [::tclwire::accounting record_connection_closed $connection_key \
-                    [dict create status failed close_reason dispatch_failed \
-                                  transport_error $error]]
-                ::tclwire::logger log_connection_closed $close_record
+                                                                                 ::tclwire::logger \
+                                                                                 log_connection_closed \
+                                                                                 $close_record \
+                                                                                 $close_status]
+
             }
             catch {::tclwire::tpba request [dict create operation release_worker \
                                                         pool_key  $pool_key \

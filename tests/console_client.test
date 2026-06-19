@@ -46,6 +46,53 @@ test console-client-1.3 {interactive EXIT does not send a server command} -body 
     set result
 } -result ok
 
+test console-client-1.3a {interactive Ctrl-D EOF exits without sending a command} -body {
+    rename ::tclreadline::readline ::tclreadline::readline.real
+    namespace eval ::tclwire::console_client_test {
+        variable eof_script {}
+    }
+    proc ::tclreadline::readline {subcommand args} {
+        variable ::tclwire::console_client_test::eof_script
+        switch -exact -- $subcommand {
+            eofchar {
+                if {[llength $args] == 0} {
+                    return $eof_script
+                }
+                set eof_script [lindex $args 0]
+                return $eof_script
+            }
+            read {
+                uplevel #0 $eof_script
+                return {}
+            }
+            add -
+            write {
+                error "unexpected readline $subcommand"
+            }
+            default {
+                return {}
+            }
+        }
+    }
+    proc test_send_command {channel command} {
+        error "unexpected send: $command"
+    }
+    rename ::tclwire::console_client::send_command \
+        ::tclwire::console_client::send_command.real
+    rename test_send_command ::tclwire::console_client::send_command
+    try {
+        ::tclwire::console_client::interactive fake-channel
+        list ok $::tclwire::console_client_test::eof_script
+    } finally {
+        rename ::tclwire::console_client::send_command {}
+        rename ::tclwire::console_client::send_command.real \
+            ::tclwire::console_client::send_command
+        rename ::tclreadline::readline {}
+        rename ::tclreadline::readline.real ::tclreadline::readline
+        namespace delete ::tclwire::console_client_test
+    }
+} -result {ok {}}
+
 test console-client-1.4 {table matrix formats timestamp columns for display} -body {
     set ts 1717245296
     set response [dict create \
@@ -70,5 +117,51 @@ test console-client-1.4 {table matrix formats timestamp columns for display} -bo
     [clock format 1717245296 -format "%d-%m-%Y %H:%M:%S"] \
     {} \
     {}]
+
+test console-client-1.5 {table output uses CRT-style borders and header separator} -body {
+    set matrix [list \
+        {scope name value} \
+        {global debug_connection false} \
+        {service:http:8990 protocol http}]
+    ::tclwire::console_client::fallback_table $matrix
+} -result [join [list \
+    "+-------------------+------------------+-------+" \
+    "| scope             | name             | value |" \
+    "+-------------------+------------------+-------+" \
+    "| global            | debug_connection | false |" \
+    "| service:http:8990 | protocol         | http  |" \
+    "+-------------------+------------------+-------+"] "\n"]
+
+test console-client-1.6 {history file is trimmed to the configured limit} -body {
+    set old_file $::tclwire::console_client::history_file
+    set old_limit $::tclwire::console_client::history_limit
+    set history_file [file join [temporaryDirectory] tclwire-history-[pid]]
+    set channel [open $history_file w]
+    try {
+        chan configure $channel -encoding utf-8 -translation lf
+        for {set i 1} {$i <= 205} {incr i} {
+            puts $channel "command-$i"
+        }
+    } finally {
+        close $channel
+    }
+    try {
+        set ::tclwire::console_client::history_file $history_file
+        set ::tclwire::console_client::history_limit 200
+        ::tclwire::console_client::trim_history_file
+        set channel [open $history_file r]
+        try {
+            chan configure $channel -encoding utf-8 -translation lf
+            set lines [split [string trimright [read $channel] "\n"] "\n"]
+        } finally {
+            close $channel
+        }
+        list [llength $lines] [lindex $lines 0] [lindex $lines end]
+    } finally {
+        set ::tclwire::console_client::history_file $old_file
+        set ::tclwire::console_client::history_limit $old_limit
+        catch {file delete -force $history_file}
+    }
+} -result {200 command-6 command-205}
 
 cleanupTests

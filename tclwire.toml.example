@@ -18,6 +18,7 @@
 host = "127.0.0.1"
 quiet = false
 debug = false
+debug_connection = false
 encoding = "utf-8"
 docroot = "/tmp/tclwire"
 ftproot = "/tmp/tclwire"
@@ -28,6 +29,10 @@ log_level = "info"
 unix_socket = "/tmp/tclwire.sock"
 conn_max_wait = 1000
 conn_max_workers = 100
+
+# When true, closed connection records remain in the shared accounting store
+# and CONN includes close diagnostics.
+# debug_connection = true
 
 # Optional directory containing application class files. An application's
 # libdir overrides this value. The application docroot still has precedence.

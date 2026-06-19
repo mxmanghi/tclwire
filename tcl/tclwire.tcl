@@ -246,6 +246,7 @@ namespace eval ::tclwire::runtime {
         set host 127.0.0.1
         set quiet 0
         set debug 0
+        set debug_connection 0
         set help 0
         set docroot [::tclwire::support default_doc_root]
         set ftproot [::tclwire::support default_ftp_root]
@@ -280,6 +281,7 @@ namespace eval ::tclwire::runtime {
                             host         $host \
                             quiet        $quiet \
                             debug        $debug \
+                            debug_connection $debug_connection \
                             encoding     $default_encoding \
                             docroot      $docroot \
                             ftproot      $ftproot \
@@ -349,7 +351,8 @@ namespace eval ::tclwire::runtime {
             # validates and replaces their values. The later merge applies
             # the transformed values without exposing unrelated TOML keys.
             set booleans [dict map {field value} \
-                    [dict filter $global key quiet debug ftp_user_check] {
+                    [dict filter $global key \
+                        quiet debug debug_connection ftp_user_check] {
                 parse_boolean "tclwire.$field" $value
             }]
             set paths [dict map {field value} \
@@ -728,6 +731,9 @@ namespace eval ::tclwire::runtime {
     proc prepare_config {argv} {
         set config [parse_args $argv]
         ::tclwire::support configure_debug [dict get $config debug]
+        ::tclwire::accounting configure_debug_connection \
+            [dict get $config debug_connection]
+        ::tclwire::console configure $config
         return $config
     }
 

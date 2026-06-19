@@ -3,6 +3,9 @@
 TclWire starts a Unix-domain console socket for runtime inspection and control.
 The global configuration key is `unix_socket`; it defaults to
 `/tmp/tclwire.sock`.
+The global configuration key `debug_connection` defaults to `false`. When it
+is `true`, closed connection records are retained in the shared accounting
+store for diagnostic console output.
 
 The same value can be set from the command line:
 
@@ -24,14 +27,28 @@ Arguments: none.
 ### `CONN`
 
 Returns active connection accounting data from the shared connection store.
-Closed connections are removed from this store. Console socket connections are
-recorded with protocol `console`, so they appear in this output while active.
+Closed connections are removed from this store unless `debug_connection` is
+enabled. Console socket connections are recorded with protocol `console`, so
+they appear in this output while active.
 
 Arguments:
 
 - none: return all connection records;
 - `-port <portn>`: return connections for a listener port;
 - `-remote <remote-ip>`: return connections for a remote address.
+
+When `debug_connection` is enabled by configuration, the response includes
+retained closed or failed rows and the close diagnostics `closed_at`,
+`close_reason`, and `transport_error`. Table responses also include a
+`configuration` object containing `debug_connection`, so clients can infer the
+shape from the server-provided configuration metadata.
+
+### `CONF`
+
+Returns the effective runtime configuration as a table. Rows use `scope` to
+separate global values from `service:<id>` and `host:<host>` values.
+
+Arguments: none.
 
 ### `LOGROTATE`
 
@@ -96,7 +113,10 @@ The interactive client is:
 tclsh utils/tclwire_console.tcl --unix-socket /tmp/tclwire.sock
 ```
 
-It uses `tclreadline` for the prompt and Tcllib `report` for tabular output.
+It uses `tclreadline` for the prompt and renders tabular output with
+CRT-style ASCII borders.
+Interactive command history is loaded from and saved to `~/.tclwire-history`;
+the file is trimmed to the most recent 200 commands.
 Use `EXIT` or Ctrl-D to leave the interactive client.
 Single commands can be sent non-interactively:
 

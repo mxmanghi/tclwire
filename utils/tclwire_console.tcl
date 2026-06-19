@@ -11,12 +11,14 @@ if {$project_root ni $::auto_path} {
 
 package require unix_sockets
 package require json
-package require report
 package require tclreadline
 
 namespace eval ::tclwire::console_client {
     variable socket_path [file normalize /tmp/tclwire.sock]
     variable cmdcount    0
+    variable history_file [file normalize ~/.tclwire-history]
+    variable history_limit 200
+    variable readline_eof 0
     variable timestamp_columns {
         last_run_start last_run_end created_on opened_at closed_at
     }
@@ -26,6 +28,7 @@ namespace eval ::tclwire::console_client {
         puts $channel "Commands:"
         puts $channel "  PS"
         puts $channel "  CONN ?-port portn|-remote remote-ip?"
+        puts $channel "  CONF"
         puts $channel "  LOGROTATE"
         puts $channel "  SHUT"
         puts $channel "  EXIT"
@@ -144,30 +147,31 @@ namespace eval ::tclwire::console_client {
                 }
             }
         }
+        set border +
+        foreach width $widths {
+            append border [string repeat - [expr {$width + 2}]] +
+        }
         set lines {}
+        lappend lines $border
+        set row_index 0
         foreach row $matrix {
             set cells {}
             for {set i 0} {$i < [llength $row]} {incr i} {
                 set value [lindex $row $i]
-                lappend cells [format "%-*s" [lindex $widths $i] $value]
+                lappend cells " [format "%-*s" [lindex $widths $i] $value] "
             }
-            lappend lines [join $cells "  "]
+            lappend lines "|[join $cells |]|"
+            if {$row_index == 0} {
+                lappend lines $border
+            }
+            incr row_index
         }
+        lappend lines $border
         return [join $lines "\n"]
     }
 
     proc print_table {response} {
         set matrix [matrix_from_response $response]
-        set columns [llength [lindex $matrix 0]]
-        if {![catch {
-            ::report::report console_report $columns
-            set rendered [console_report printmatrix $matrix]
-            console_report destroy
-        }]} {
-            puts $rendered
-            return
-        }
-        catch {console_report destroy}
         puts [fallback_table $matrix]
     }
 
@@ -191,31 +195,89 @@ namespace eval ::tclwire::console_client {
         return 0
     }
 
+    proc trim_history_file {} {
+        variable history_file
+        variable history_limit
+
+        if {![file exists $history_file]} {
+            return
+        }
+        set channel [open $history_file r]
+        try {
+            chan configure $channel -encoding utf-8 -translation lf
+            set lines [split [read $channel] "\n"]
+        } finally {
+            close $channel
+        }
+        if {[llength $lines] > 0 && [lindex $lines end] eq {}} {
+            set lines [lrange $lines 0 end-1]
+        }
+        if {[llength $lines] > $history_limit} {
+            set lines [lrange $lines end-[expr {$history_limit - 1}] end]
+        }
+        set channel [open $history_file w]
+        try {
+            chan configure $channel -encoding utf-8 -translation lf
+            puts $channel [join $lines "\n"]
+        } finally {
+            close $channel
+        }
+        return
+    }
+
+    proc load_history {} {
+        variable history_file
+        variable history_limit
+        set ::tclreadline::historyLength $history_limit
+        catch {::tclreadline::readline read $history_file}
+        return
+    }
+
+    proc save_history {} {
+        variable history_file
+        variable history_limit
+        set ::tclreadline::historyLength $history_limit
+        catch {::tclreadline::readline write $history_file}
+        catch {trim_history_file}
+        return
+    }
+
     proc interactive {channel} {
         variable cmdcount
-        while 1 {
-            if {[catch {
-                ::tclreadline::readline read "tclwire\[$cmdcount\]> "
-            } line options]} {
-                if {[eof stdin]} {
+        variable readline_eof
+        load_history
+        set readline_eof 0
+        set previous_eofchar [::tclreadline::readline eofchar]
+        ::tclreadline::readline eofchar \
+            [list set ::tclwire::console_client::readline_eof 1]
+        try {
+            while 1 {
+                if {[catch {
+                    ::tclreadline::readline read "tclwire\[$cmdcount\]> "
+                } line options]} {
+                    if {[eof stdin]} {
+                        break
+                    }
+                    return -options $options $line
+                }
+                if {$readline_eof || [eof stdin] || [is_exit_command $line]} {
                     break
                 }
-                return -options $options $line
+                if {[string trim $line] eq {}} {
+                    continue
+                }
+                ::tclreadline::readline add $line
+                if {[catch {
+                    set response [send_command $channel $line]
+                    print_response $response
+                } message]} {
+                    puts stderr $message
+                }
+                incr cmdcount
             }
-            if {[eof stdin] || [is_exit_command $line]} {
-                break
-            }
-            if {[string trim $line] eq {}} {
-                continue
-            }
-            ::tclreadline::readline add $line
-            if {[catch {
-                set response [send_command $channel $line]
-                print_response $response
-            } message]} {
-                puts stderr $message
-            }
-            incr cmdcount
+        } finally {
+            catch {::tclreadline::readline eofchar $previous_eofchar}
+            save_history
         }
     }
 

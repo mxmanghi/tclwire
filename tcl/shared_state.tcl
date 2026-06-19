@@ -9,6 +9,7 @@ namespace eval ::tclwire::shared_state {
         timestamp
         accounting
         connections
+        debug_connection
         tpba_thread_id
         logger_thread_id
         logger_levels
@@ -21,6 +22,9 @@ namespace eval ::tclwire::shared_state {
                 if {![::tsv::exists tclwire $key]} {
                     ::tsv::set tclwire $key {}
                 }
+            }
+            if {[::tsv::get tclwire debug_connection] eq {}} {
+                ::tsv::set tclwire debug_connection 0
             }
         }
         return
@@ -42,7 +46,11 @@ namespace eval ::tclwire::shared_state {
         variable catalog_keys
         ::tsv::lock tclwire {
             foreach key $catalog_keys {
-                ::tsv::set tclwire $key {}
+                if {$key eq "debug_connection"} {
+                    ::tsv::set tclwire $key 0
+                } else {
+                    ::tsv::set tclwire $key {}
+                }
             }
         }
         return

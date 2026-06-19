@@ -385,182 +385,72 @@ proc ::mk2html::copy_logo {repository output_directory} {
     }
 }
 
-proc ::mk2html::page_template {title body navigation} {
+proc ::mk2html::copy_favicons {repository output_directory} {
+    set favicon_directory [file join $repository doc favicon]
+    if {![file isdirectory $favicon_directory]} {
+        return
+    }
+
+    foreach favicon [glob -nocomplain -directory $favicon_directory *] {
+        if {![file isfile $favicon]} {
+            continue
+        }
+
+        set target [file join $output_directory [file tail $favicon]]
+        file mkdir [file dirname $target]
+        file copy -force $favicon $target
+        puts "copied $target"
+    }
+}
+
+proc ::mk2html::copy_stylesheet {repository output_directory} {
+    set stylesheet [file join $repository doc tclwire.css]
+    if {![file isfile $stylesheet]} {
+        return
+    }
+
+    set target [file join $output_directory tclwire.css]
+    file copy -force $stylesheet $target
+    puts "copied $target"
+}
+
+proc ::mk2html::copy_assets {repository output_directory} {
+    copy_logo $repository $output_directory
+    copy_favicons $repository $output_directory
+    copy_stylesheet $repository $output_directory
+}
+
+proc ::mk2html::favicon_links {current_output} {
+    set apple_icon [relative_url $current_output apple-touch-icon.png]
+    set favicon_32 [relative_url $current_output favicon-32x32.png]
+    set favicon_16 [relative_url $current_output favicon-16x16.png]
+    set manifest [relative_url $current_output site.webmanifest]
+    set ico [relative_url $current_output favicon.ico]
+
+    return [string map [list \
+        @APPLE_ICON@ $apple_icon \
+        @FAVICON_32@ $favicon_32 \
+        @FAVICON_16@ $favicon_16 \
+        @MANIFEST@ $manifest \
+        @ICO@ $ico] {  <link rel="apple-touch-icon" sizes="180x180" href="@APPLE_ICON@">
+  <link rel="icon" type="image/png" sizes="32x32" href="@FAVICON_32@">
+  <link rel="icon" type="image/png" sizes="16x16" href="@FAVICON_16@">
+  <link rel="manifest" href="@MANIFEST@">
+  <link rel="shortcut icon" href="@ICO@">}]
+}
+
+proc ::mk2html::page_template {title body navigation {current_output index.html}} {
     set escaped_title [html_escape $title]
+    set favicon_links [favicon_links $current_output]
+    set stylesheet [relative_url $current_output tclwire.css]
     set template {<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>@TITLE@</title>
-  <style>
-    :root {
-      color-scheme: light dark;
-      --bg: #ffffff;
-      --fg: #1f2328;
-      --muted: #59636e;
-      --border: #d1d9e0;
-      --link: #0969da;
-      --code-bg: #f6f8fa;
-      --quote: #656d76;
-      --table-alt: #f6f8fa;
-      --nav-bg: #f6f8fa;
-      --nav-active: #ddf4ff;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0d1117;
-        --fg: #e6edf3;
-        --muted: #9198a1;
-        --border: #3d444d;
-        --link: #4493f8;
-        --code-bg: #151b23;
-        --quote: #9198a1;
-        --table-alt: #151b23;
-        --nav-bg: #151b23;
-        --nav-active: #1f3a5f;
-      }
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--fg);
-      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    .page {
-      display: grid;
-      grid-template-columns: 300px minmax(0, 1012px);
-      justify-content: center;
-      min-height: 100vh;
-    }
-    nav {
-      position: sticky;
-      top: 0;
-      align-self: start;
-      height: 100vh;
-      padding: 24px 16px;
-      overflow-y: auto;
-      background: var(--nav-bg);
-      border-right: 1px solid var(--border);
-    }
-    .site-logo {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 12px 18px;
-      color: var(--fg);
-      text-decoration: none;
-    }
-    .site-logo:hover { text-decoration: none; }
-    .site-logo img {
-      display: block;
-      width: min(220px, 100%);
-      height: auto;
-      object-fit: contain;
-    }
-    nav ul { padding: 0; margin: 0; list-style: none; }
-    nav li { margin-bottom: 4px; padding: 8px 12px; border-radius: 6px; }
-    nav li.active { background: var(--nav-active); }
-    nav a { display: block; font-weight: 600; }
-    nav span {
-      display: block;
-      margin-top: 3px;
-      color: var(--muted);
-      font-size: .78em;
-      line-height: 1.35;
-    }
-    main {
-      width: 100%;
-      padding: 32px;
-      overflow-wrap: break-word;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      margin-top: 24px;
-      margin-bottom: 16px;
-      line-height: 1.25;
-      font-weight: 600;
-    }
-    h1, h2 {
-      padding-bottom: .3em;
-      border-bottom: 1px solid var(--border);
-    }
-    h1 { font-size: 2em; }
-    h2 { font-size: 1.5em; }
-    h3 { font-size: 1.25em; }
-    p, blockquote, ul, ol, dl, table, pre { margin: 0 0 16px; }
-    a { color: var(--link); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .document-index {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 16px;
-    }
-    .document-index article {
-      padding: 16px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-    }
-    .document-index h2 {
-      margin-top: 0;
-      font-size: 1.15em;
-    }
-    .document-index p { margin-bottom: 0; color: var(--muted); }
-    blockquote {
-      padding: 0 1em;
-      color: var(--quote);
-      border-left: .25em solid var(--border);
-    }
-    code, kbd, pre {
-      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    }
-    code {
-      padding: .2em .4em;
-      margin: 0;
-      font-size: 85%;
-      background: var(--code-bg);
-      border-radius: 6px;
-    }
-    pre {
-      padding: 16px;
-      overflow: auto;
-      font-size: 85%;
-      line-height: 1.45;
-      background: var(--code-bg);
-      border-radius: 6px;
-    }
-    pre code { padding: 0; background: transparent; border-radius: 0; }
-    table {
-      display: block;
-      width: max-content;
-      max-width: 100%;
-      overflow: auto;
-      border-spacing: 0;
-      border-collapse: collapse;
-    }
-    th, td { padding: 6px 13px; border: 1px solid var(--border); }
-    tr:nth-child(2n) { background: var(--table-alt); }
-    img { max-width: 100%; }
-    hr {
-      height: .25em;
-      padding: 0;
-      margin: 24px 0;
-      background: var(--border);
-      border: 0;
-    }
-    @media (max-width: 767px) {
-      .page { display: block; }
-      nav {
-        position: static;
-        width: 100%;
-        height: auto;
-        max-height: 45vh;
-        border-right: 0;
-        border-bottom: 1px solid var(--border);
-      }
-      main { padding: 16px; }
-    }
-  </style>
+@FAVICON_LINKS@
+  <link rel="stylesheet" href="@STYLESHEET@">
 </head>
 <body>
   <div class="page">
@@ -574,6 +464,8 @@ proc ::mk2html::page_template {title body navigation} {
 }
     return [string map [list \
         @TITLE@ $escaped_title \
+        @FAVICON_LINKS@ $favicon_links \
+        @STYLESHEET@ $stylesheet \
         @NAVIGATION@ $navigation \
         @BODY@ $body] $template]
 }
@@ -587,12 +479,13 @@ proc ::mk2html::build_directory {source_directory output_directory repository} {
     set documents [collect_documents $sources $source_directory]
     set source_mapping [source_output_map $documents]
     file mkdir $output_directory
-    copy_logo $repository $output_directory
+    copy_assets $repository $output_directory
 
     write_page $output_directory index.html [page_template \
         "TclWire Documentation" \
         [index_body $documents] \
-        [navigation $documents index.html]]
+        [navigation $documents index.html] \
+        index.html]
 
     foreach document $documents {
         set source [dict get $document source]
@@ -603,7 +496,8 @@ proc ::mk2html::build_directory {source_directory output_directory repository} {
             $source $output_name $source_mapping]
         write_page $output_directory $output_name \
             [page_template $title $body \
-                [navigation $documents $output_name]]
+                [navigation $documents $output_name] \
+                $output_name]
     }
 }
 
@@ -622,11 +516,12 @@ proc ::mk2html::build_file {source output_directory repository} {
         $source $output_name $source_mapping]
 
     file mkdir $output_directory
-    copy_logo $repository $output_directory
+    copy_assets $repository $output_directory
     write_page $output_directory $output_name [page_template \
         [dict get $document title] \
         $body \
-        [existing_navigation $output_directory]]
+        [existing_navigation $output_directory] \
+        $output_name]
 }
 
 proc ::mk2html::run {arguments} {

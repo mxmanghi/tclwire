@@ -262,6 +262,28 @@ test thread-registry-1.10 {failed connection close returns final snapshot and re
     }
 } -result {failed write_failed write_failed 1 0}
 
+test thread-registry-1.10a {debug connection accounting retains closed records} -body {
+    set connection_key http:8990#debug-close
+    catch {::tclwire::accounting remove_connection $connection_key}
+    ::tclwire::accounting configure_debug_connection 1
+    try {
+        ::tclwire::accounting record_connection_opened $connection_key \
+            [dict create connection_id 6 protocol http service_id http:8990]
+        set closed [::tclwire::accounting record_connection_closed $connection_key \
+            [dict create close_reason debug_closed]]
+        set record [::tclwire::accounting get_connection_record $connection_key]
+        list \
+            [::tclwire::accounting debug_connection_enabled] \
+            [dict get $closed status] \
+            [dict get $record status] \
+            [dict get $record close_reason] \
+            [expr {[dict get $record closed_at] > 0}]
+    } finally {
+        catch {::tclwire::accounting remove_connection $connection_key}
+        ::tclwire::accounting configure_debug_connection 0
+    }
+} -result {1 closed closed debug_closed 1}
+
 test thread-registry-1.11 {accounting keyed access rejects missing records} -body {
     set thread_id registry-missing-thread
     set connection_key registry:missing

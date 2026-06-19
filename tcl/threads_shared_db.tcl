@@ -32,10 +32,10 @@
 #
 #  connection accounting:
 #
-#   A dictionary keyed by connection_key. Each value describes one active
-#   accepted client connection. Closed connections are removed from this store;
-#   callers that need historical data must log the close snapshot returned by
-#   record_connection_closed.
+#   A dictionary keyed by connection_key. Each value describes one accepted
+#   client connection. Closed connections are removed unless debug_connection is
+#   enabled; callers that need production historical data must log the close
+#   snapshot returned by record_connection_closed.
 #
 
 package require Thread
@@ -55,6 +55,21 @@ namespace eval ::tclwire::accounting {
 
     proc reset {} {
         return [::tclwire::shared_state reset]
+    }
+
+    proc configure_debug_connection {enabled} {
+        initialize
+        ::tsv::lock tclwire {
+            ::tsv::set tclwire debug_connection [expr {$enabled ? 1 : 0}]
+        }
+        return [debug_connection_enabled]
+    }
+
+    proc debug_connection_enabled {} {
+        initialize
+        ::tsv::lock tclwire {
+            return [expr {[::tsv::get tclwire debug_connection] ? 1 : 0}]
+        }
     }
 
     proc normalize_family {family} {
@@ -327,7 +342,11 @@ namespace eval ::tclwire::accounting {
             if {![dict exists $fields last_activity_at]} {
                 dict set connection_d last_activity_at $now
             }
-            ::tsv::keyldel tclwire connections $connection_key
+            if {[::tsv::get tclwire debug_connection]} {
+                ::tsv::keylset tclwire connections $connection_key $connection_d
+            } else {
+                ::tsv::keyldel tclwire connections $connection_key
+            }
             return $connection_d
         }
     }
