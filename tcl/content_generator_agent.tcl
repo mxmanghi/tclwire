@@ -5,6 +5,7 @@
 package require Thread
 package require tclwire::accounting 1.2
 package require tclwire::application::io 0.1
+package require tclwire::application::tools 0.1
 package require tclwire::http::request 0.1
 package require tclwire::tpba::control 0.1
 
@@ -26,6 +27,7 @@ namespace eval ::tclwire::cga {
                 [dict get $request_descriptor connection_thread_id] \
                 [dict get $request_descriptor connection_agent_id] \
                 [dict get $request_descriptor transaction_id]
+            ::tclwire::tools::begin $request_descriptor
             set request [::tclwire::HttpRequest new $request_descriptor]
             $application handle_request $request
             if {[::tclwire::io::accepting_output]} {
@@ -34,6 +36,7 @@ namespace eval ::tclwire::cga {
         } on error {message options} {
             catch {::tclwire::io fail $message}
         } finally {
+            ::tclwire::tools::end
             ::tclwire::io end
             if {$request ne {}} {
                 catch {$request destroy}

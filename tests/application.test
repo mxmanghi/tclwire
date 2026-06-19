@@ -7,6 +7,7 @@ lappend auto_path $project_root
 package require Thread
 package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
+package require tclwire::application::tools 0.1
 package require tclwire::http::range 0.1
 package require tclwire::http::redirect 0.1
 package require tclwire::http::request 0.1
@@ -163,6 +164,97 @@ test http-request-1.4 {multipart requests require a boundary parameter} -body {
         $request destroy
     }
 } -result {multipart Content-Type is missing boundary}
+
+test application-tools-1.1 {makeurl builds URLs from the current request} -body {
+    try {
+        ::tclwire::tools::begin [dict create \
+            protocol https \
+            path /scripts/report.tcl \
+            headers [dict create host example.test:9443]]
+        list \
+            [::tclwire::tools::makeurl] \
+            [::tclwire::tools::makeurl chart.png] \
+            [::tclwire::tools::makeurl /assets/site.css] \
+            [::tclwire::tools::makeurl index.html]
+    } finally {
+        ::tclwire::tools::end
+    }
+} -result [list \
+    https://example.test:9443/scripts/report.tcl \
+    https://example.test:9443/scripts/chart.png \
+    https://example.test:9443/assets/site.css \
+    https://example.test:9443/scripts/index.html]
+
+test application-tools-1.2 {makeurl preserves directory script URLs} -body {
+    try {
+        ::tclwire::tools::begin [dict create \
+            protocol http \
+            path /docs/ \
+            headers [dict create host example.test]]
+        list \
+            [::tclwire::tools::makeurl] \
+            [::tclwire::tools::makeurl intro.html]
+    } finally {
+        ::tclwire::tools::end
+    }
+} -result [list \
+    http://example.test/docs/ \
+    http://example.test/docs/intro.html]
+
+test application-tools-1.3 {makeurl requires a current request context} -body {
+    catch {::tclwire::tools::makeurl} message
+    set message
+} -result {no current application request is active}
+
+test application-tools-1.4 {load_env copies environment into the default array} -body {
+    set original_exists [info exists ::env(TCLWIRE_LOAD_ENV_TEST)]
+    if {$original_exists} {
+        set original_value $::env(TCLWIRE_LOAD_ENV_TEST)
+    }
+    set ::env(TCLWIRE_LOAD_ENV_TEST) default-value
+    try {
+        apply {{} {
+            ::tclwire::tools::load_env
+            return $env(TCLWIRE_LOAD_ENV_TEST)
+        }}
+    } finally {
+        if {$original_exists} {
+            set ::env(TCLWIRE_LOAD_ENV_TEST) $original_value
+        } else {
+            unset -nocomplain ::env(TCLWIRE_LOAD_ENV_TEST)
+        }
+    }
+} -result default-value
+
+test application-tools-1.5 {load_env copies environment into a named array} -body {
+    set original_exists [info exists ::env(TCLWIRE_LOAD_ENV_TEST)]
+    if {$original_exists} {
+        set original_value $::env(TCLWIRE_LOAD_ENV_TEST)
+    }
+    set ::env(TCLWIRE_LOAD_ENV_TEST) named-value
+    try {
+        unset -nocomplain copied
+        ::tclwire::tools::load_env copied
+        set copied(TCLWIRE_LOAD_ENV_TEST)
+    } finally {
+        unset -nocomplain copied
+        if {$original_exists} {
+            set ::env(TCLWIRE_LOAD_ENV_TEST) $original_value
+        } else {
+            unset -nocomplain ::env(TCLWIRE_LOAD_ENV_TEST)
+        }
+    }
+} -result named-value
+
+test application-tools-1.6 {load_env replaces stale target array entries} -body {
+    array set copied [list STALE value]
+    try {
+        ::tclwire::tools::load_env copied
+        info exists copied(STALE)
+    } finally {
+        unset -nocomplain copied
+    }
+} -result 0
 
 oo::class create ::tclwire::application_test::OutputReceiver {
     method application_output {transaction_id event} {
@@ -325,6 +417,23 @@ test application-dispatcher-1.9a {
 } -result {1 1 1}
 
 test application-dispatcher-1.9b {
+    worker scripts notify their pool before removing accounting
+} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        set descriptor [$dispatcher application default]
+        set script [$dispatcher worker_script $descriptor app:default]
+        list \
+            [expr {[string first {operation remove_worker} $script] >= 0}] \
+            [expr {[string first {pool_key app:default} $script] >= 0}] \
+            [expr {[string first {operation remove_worker} $script] < \
+                [string first {::tclwire::accounting remove_thread} $script]}]
+    } finally {
+        $dispatcher destroy
+    }
+} -result {1 1 1}
+
+test application-dispatcher-1.9c {
     application descriptors include worker application paths
 } -body {
     set config $application_config

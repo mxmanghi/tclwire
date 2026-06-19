@@ -228,6 +228,15 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         return [[dict get $record thread_master] return_thread $worker_id]
     }
 
+    method remove_worker {pool_key worker_id} {
+        set record [my require_pool $pool_key]
+        set master [dict get $record thread_master]
+        if {$master eq {}} {
+            return true
+        }
+        return [$master remove_thread $worker_id]
+    }
+
     method resize_pool {pool_key limits} {
         set pool_key [my normalize_pool_key $pool_key]
         set record [my require_pool $pool_key]
@@ -326,6 +335,10 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                 release_worker {
                     set result [my release_worker [my command_value $command pool_key] \
                                                   [my command_value $command worker_id]]
+                }
+                remove_worker {
+                    set result [my remove_worker [my command_value $command pool_key] \
+                                                 [my command_value $command worker_id]]
                 }
                 resize_pool {
                     set result [my resize_pool [my command_value $command pool_key] \

@@ -17,29 +17,6 @@ package require tclwire::accounting 1.2
 
 namespace eval ::tclwire {}
 
-# Default stale-thread predicate.
-#
-# Call signature:
-#   {*}$predicate thread_id thread_account now
-#
-# thread_id is the Tcl thread id, thread_account is the accounting dictionary,
-# and now is the current epoch timestamp in seconds.
-
-if {[info commands ::tclwire::is_stale] eq {}} {
-    proc ::tclwire::is_stale {thread_id thread_account now} {
-        if {[dict get $thread_account status] ne "idle"} {
-            return false
-        }
-
-        set last_run_end [dict get $thread_account last_run_end]
-        if {$last_run_end <= 0} {
-            return false
-        }
-
-        return [expr {($now - $last_run_end) > 60}]
-    }
-}
-
 ::oo::class create ::tclwire::ThreadMaster {
     variable max_threads_number
     variable accounting
@@ -85,7 +62,9 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         set live_thread_ids {}
         set retained_thread_ids {}
         foreach thread_id $owned_threads {
-            set thread_account [$accounting get_thread_account $thread_id]
+            if {[catch {$accounting get_thread_account $thread_id} thread_account]} {
+                continue
+            }
             lappend retained_thread_ids $thread_id
             if {$filter eq "all" || [dict get $thread_account status] eq $filter} {
                 lappend live_thread_ids $thread_id
@@ -96,7 +75,16 @@ if {[info commands ::tclwire::is_stale] eq {}} {
     }
 
     method owns_thread {thread_id} {
-        return [expr {[lsearch -exact [[self] thread_ids all] $thread_id] >= 0}]
+        return [expr {[lsearch -exact $owned_threads $thread_id] >= 0}]
+    }
+
+    method remove_thread {thread_id} {
+        set index [lsearch -exact $owned_threads $thread_id]
+        if {$index < 0} {
+            error "Thread $thread_id is not owned by this ThreadMaster"
+        }
+        set owned_threads [lreplace $owned_threads $index $index]
+        return true
     }
 
     method allocate_owned_idle_thread {thread_id_v} {
@@ -108,18 +96,6 @@ if {[info commands ::tclwire::is_stale] eq {}} {
             return true
         }
         return false
-    }
-
-    method all_accounting_thread_ids {{filter all}} {
-        if {$filter eq "all"} {
-            return [dict keys [$accounting get_threads_database]]
-        }
-
-        set per_status_lists [$accounting per_status_lists]
-        if {[dict exists $per_status_lists $filter]} {
-            return [dict get $per_status_lists $filter]
-        }
-        return {}
     }
 
     method live_threads_number {} {
@@ -221,77 +197,10 @@ if {[info commands ::tclwire::is_stale] eq {}} {
         }
     }
 
-    method worker_ready {thread_id} {
-        if {![[self] owns_thread $thread_id]} {
-            error "Thread $thread_id is not owned by this ThreadMaster"
-        }
-        $accounting change_thread_status $thread_id idle
-    }
-
-    method run_on_thread {thread_id cmd} {
-        if {![[self] owns_thread $thread_id]} {
-            error "Thread $thread_id is not owned by this ThreadMaster"
-        }
-        set status [[self] thread_status $thread_id]
-        if {$status eq {}} {
-            error "Thread $thread_id is not in the pool"
-        }
-        if {$status ni {allocated idle}} {
-            error "Thread $thread_id is not available: status is '$status'"
-        }
-
-        $accounting change_thread_status $thread_id allocated
-        thread::send -async $thread_id $cmd
-        return $thread_id
-    }
-
-    method submit {cmd {thread_id_v ""}} {
-        set thread_id ""
-        if {![[self] allocate_thread thread_id]} {
-            return false
-        }
-        if {$thread_id_v ne ""} {
-            upvar 1 $thread_id_v caller_thread_id
-            set caller_thread_id $thread_id
-        }
-        [[self] run_on_thread $thread_id $cmd]
-        return true
-    }
-
-    method stale_thread_ids {{is_stale_cmd ::tclwire::is_stale}} {
-        set now [clock seconds]
-        set stale_thread_ids {}
-        dict for {thread_id thread_account} [[self] accounting_snapshot] {
-            if {[{*}$is_stale_cmd $thread_id $thread_account $now]} {
-                lappend stale_thread_ids $thread_id
-            }
-        }
-        return $stale_thread_ids
-    }
-
-    method release_stale_threads {{is_stale_cmd ::tclwire::is_stale}} {
-        set stale_thread_ids [[self] stale_thread_ids $is_stale_cmd]
-        foreach thread_id $stale_thread_ids {
-            $accounting change_thread_status $thread_id terminating
-        }
-        foreach thread_id $stale_thread_ids {
-            thread::send -async $thread_id demand_thread_exit
-        }
-        return $stale_thread_ids
-    }
-
-    method broadcast {cmd {filter all}} {
-        foreach tid [[self] thread_ids $filter] {
-            thread::send -async $tid $cmd
-        }
-    }
-
     method stop_threads {{filter all}} {
-        [self] broadcast demand_thread_exit $filter
-    }
-
-    method stop_thread {thread_id} {
-        thread::send -async $thread_id demand_thread_exit
+        foreach tid [[self] thread_ids $filter] {
+            thread::send -async $tid demand_thread_exit
+        }
     }
 
 

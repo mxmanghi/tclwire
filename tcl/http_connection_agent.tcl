@@ -80,6 +80,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     method build_request_descriptor {request_data} {
         set descriptor [$protocol_session parse_request $request_data]
         set peer [my peer]
+        dict set descriptor protocol $log_protocol
         dict set descriptor connection_id [my connection_id]
         dict set descriptor remote_host [dict get $peer host]
         dict set descriptor remote_port [dict get $peer port]

@@ -89,7 +89,7 @@ test thread-registry-1.4 {TPBA-created workers are registered by ThreadMaster} -
     }
 } -result {1 allocated http {} 1}
 
-test thread-registry-1.4.1 {ThreadMaster fails when an owned worker has no account} -body {
+test thread-registry-1.4.1 {ThreadMaster prunes owned workers with no account} -body {
     set worker_script [format {
         lappend auto_path %s
         package require Thread
@@ -109,18 +109,48 @@ test thread-registry-1.4.1 {ThreadMaster fails when an owned worker has no accou
         set worker_id [$master acquire_worker]
         ::tclwire::accounting remove_thread $worker_id
         list \
-            [catch {$master thread_ids all} message] \
-            [string match \
-                "Thread $worker_id account doesn't exist" \
-                $message]
+            [$master thread_ids all] \
+            [$master live_threads_number]
     } finally {
         if {$worker_id ne {}} {
-            catch {$master stop_thread $worker_id}
+            catch {::thread::send -async $worker_id demand_thread_exit}
             catch {::tclwire::accounting remove_thread $worker_id}
         }
         $master destroy
     }
-} -result {1 1}
+} -result {{} 0}
+
+test thread-registry-1.4.2 {ThreadMaster removes an owned worker from the pool} -body {
+    set worker_script [format {
+        lappend auto_path %s
+        package require Thread
+        package require tclwire::accounting 1.2
+
+        proc demand_thread_exit {} {
+            ::thread::release [::thread::id]
+        }
+
+        ::thread::wait
+        catch {::tclwire::accounting remove_thread [::thread::id]}
+    } [list $project_root]]
+
+    set master [::tclwire::ThreadMaster new $worker_script 1 http]
+    set worker_id {}
+    try {
+        set worker_id [$master acquire_worker]
+        set removed [$master remove_thread $worker_id]
+        list \
+            $removed \
+            [$master owns_thread $worker_id] \
+            [$master live_threads_number]
+    } finally {
+        if {$worker_id ne {}} {
+            catch {::thread::send -async $worker_id demand_thread_exit}
+            catch {::tclwire::accounting remove_thread $worker_id}
+        }
+        $master destroy
+    }
+} -result {true 0 0}
 
 test thread-registry-1.5 {HTTP host context can be updated} -body {
     set thread_id registry-http-thread
@@ -307,23 +337,5 @@ test thread-registry-1.11 {accounting keyed access rejects missing records} -bod
     1 {Connection registry:missing record doesn't exist} \
     1 {Connection registry:missing record doesn't exist} \
     1 {Connection registry:missing record doesn't exist}]
-
-test thread-registry-1.12 {stale predicate requires complete thread accounts} -body {
-    list \
-        [catch {
-            ::tclwire::is_stale registry-malformed \
-                [dict create last_run_end 0] \
-                [clock seconds]
-        } missing_status] \
-        $missing_status \
-        [catch {
-            ::tclwire::is_stale registry-malformed \
-                [dict create status idle] \
-                [clock seconds]
-        } missing_last_end] \
-        $missing_last_end
-} -result [list \
-    1 {key "status" not known in dictionary} \
-    1 {key "last_run_end" not known in dictionary}]
 
 cleanupTests

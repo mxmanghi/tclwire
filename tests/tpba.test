@@ -42,6 +42,14 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
         return true
     }
 
+    method remove_thread {worker_id} {
+        if {![dict exists $workers $worker_id]} {
+            error "unknown fake worker: $worker_id"
+        }
+        dict unset workers $worker_id
+        return true
+    }
+
     method resize {maximum} {
         set maximum_workers $maximum
         return $maximum_workers
@@ -98,6 +106,45 @@ test tpba-1.2 {workers are acquired and released through their pool key} -body {
         $broker destroy
     }
 } -result {1 {} true 1}
+
+test tpba-1.2.1 {workers can remove themselves from their pool key} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:shop {worker script} \
+            [dict create maximum_workers 1]
+        set worker_id [$broker acquire_worker app:shop]
+        set removed [$broker remove_worker app:shop $worker_id]
+        set reacquired [$broker acquire_worker app:shop]
+        list \
+            $removed \
+            [expr {$worker_id ne $reacquired}] \
+            [dict get [$broker pool_status app:shop] stats live_threads_number]
+    } finally {
+        $broker destroy
+    }
+} -result {true 1 1}
+
+test tpba-1.2.2 {dictionary command API removes workers from pools} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:docs {worker script} \
+            [dict create maximum_workers 1]
+        set acquire_response [$broker execute_command [dict create \
+            operation acquire_worker \
+            pool_key app:docs]]
+        set worker_id [dict get $acquire_response result]
+        set remove_response [$broker execute_command [dict create \
+            operation remove_worker \
+            pool_key app:docs \
+            worker_id $worker_id]]
+        list \
+            [dict get $remove_response ok] \
+            [dict get $remove_response result] \
+            [dict get [$broker pool_status app:docs] stats live_threads_number]
+    } finally {
+        $broker destroy
+    }
+} -result {1 true 0}
 
 test tpba-1.3 {pool status retains descriptor policy and aggregate stats} -body {
     set broker [::tclwire::tpba_test::new_broker]

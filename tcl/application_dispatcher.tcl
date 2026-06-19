@@ -197,7 +197,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
         return [dict get $response result]
     }
 
-    method worker_script {application_descriptor} {
+    method worker_script {application_descriptor {pool_key {}}} {
         set application_paths [dict get $application_descriptor application_paths]
 
         set loader {}
@@ -206,6 +206,15 @@ oo::class create ::tclwire::ApplicationDispatcher {
         } else {
             set loader [list package require \
                 [dict get $application_descriptor package] 0.1]
+        }
+        set exit_pool_notification {}
+        if {$pool_key ne {}} {
+            set exit_pool_notification [format {
+            catch {::tclwire::tpba request [dict create \
+                operation remove_worker \
+                pool_key %s \
+                worker_id [::thread::id]]}
+            } [list $pool_key]]
         }
         return [format {
             set application_paths %s
@@ -219,6 +228,14 @@ oo::class create ::tclwire::ApplicationDispatcher {
             package require Thread
             package require tclwire::accounting 1.2
             package require tclwire::content_generator_agent 0.1
+            foreach directory [lreverse $application_paths] {
+                set pkg_index [file join $directory pkgIndex.tcl]
+                if {[file isfile $pkg_index]} {
+                    set dir $directory
+                    source $pkg_index
+                    unset dir
+                }
+            }
             %s
 
             proc demand_thread_exit {} {
@@ -226,8 +243,9 @@ oo::class create ::tclwire::ApplicationDispatcher {
             }
 
             ::thread::wait
+            %s
             ::tclwire::accounting remove_thread [::thread::id]
-        } [list $application_paths] $loader]
+        } [list $application_paths] $loader $exit_pool_notification]
     }
 
     method start {} {
@@ -244,7 +262,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             set response [::tclwire::tpba request \
                         [dict create operation      create_pool  \
                                      pool_key       $key         \
-                                     worker_script  [my worker_script $descriptor] \
+                                     worker_script  [my worker_script $descriptor $key] \
                                      policy         $policy \
                                      descriptor     [dict create kind        application \
                                                                  application $application_id \
