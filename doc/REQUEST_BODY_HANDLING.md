@@ -1,27 +1,34 @@
 # Request Body Handling
 
-This note describes how request uploads are handled by the current test server
-implementation and outlines the likely evolution path for a general-purpose
-web server architecture.
+This note describes how request uploads are handled by the current threaded
+HTTP implementation and outlines the likely evolution path for larger
+request-body support.
 
 ## Current Behavior
 
-The current implementation fully buffers each HTTP request before application
-logic starts.
+The current implementation fully buffers each HTTP request in the
+`HttpConnectionAgent` before application logic starts in a Content Generator
+Agent (CGA) worker.
 
 The relevant flow is:
 
-1. `http_endpoint_service::read_request` reads from the client channel and
-   appends the bytes into `request_data($chan)`.
-2. `complete_request` checks whether the full request has arrived.
-3. Only when the request is complete does the server call the application
-   entrypoint.
+1. `HttpConnectionAgent::readable` reads available bytes from the client
+   channel into its input buffer.
+2. `HttpProtocolSession::complete_request` checks whether a complete request
+   has arrived.
+3. `HttpProtocolSession::parse_request` parses the completed request and
+   returns a request descriptor with `body_mode in_memory`.
+4. `HttpConnectionAgent` adds connection and transaction metadata.
+5. `ApplicationDispatcher` sends the descriptor to a CGA worker.
+6. The CGA wraps the descriptor in a read-only `HttpRequest` object and calls
+   the application entrypoint, `handle_request {request}`.
 
 Relevant code:
 
-- [http_endpoint.tcl](/home/manghi/Projects/tclwire/http_endpoint.tcl:56)
-- [http_server.tcl](/home/manghi/Projects/tclwire/http_server.tcl:65)
-- [http_application.tcl](/home/manghi/Projects/tclwire/http_application.tcl:136)
+- [http_connection_agent.tcl](../tcl/http_connection_agent.tcl)
+- [http_protocol.tcl](../tcl/http_protocol.tcl)
+- [content_generator_agent.tcl](../tcl/content_generator_agent.tcl)
+- [http_request.tcl](../tcl/http_request.tcl)
 
 ### Fixed-Length Bodies
 
@@ -36,16 +43,18 @@ buffer.
 
 ### Chunked Uploads
 
-For requests with `Transfer-Encoding: chunked`, the server still buffers the
-full request body in memory until the terminating chunk is present.
+For requests with `Transfer-Encoding: chunked`, the connection agent still
+buffers the full request body in memory until the terminating chunk is present.
 
-The current code parses the buffered chunk stream only to determine whether the
-upload is complete. It does not process the upload incrementally.
+The protocol session parses chunk framing while locating the end of the
+request. During `parse_request`, it removes chunk framing, decodes the
+supported transfer-coding chain, and stores the decoded body in the request
+descriptor. It does not expose upload bytes incrementally to application code.
 
 ## Consequence
 
-The current model is acceptable for the TclCurl test suite because the payloads
-are small and the implementation is simple.
+The current model is acceptable for small request bodies and keeps the worker
+API simple.
 
 For a general-purpose web server, this approach is not scalable:
 
@@ -53,7 +62,7 @@ For a general-purpose web server, this approach is not scalable:
 - memory usage grows independently for each active uploading connection
 - the application cannot start processing the body until the upload is fully
   received
-- the acceptor side remains responsible for buffering all request bytes
+- the connection thread remains responsible for buffering all request bytes
 
 In practice, the memory cost can be larger than the raw request size because of
 intermediate Tcl object allocations and copying.
@@ -127,26 +136,21 @@ The best general-purpose design is often a hybrid:
 
 This avoids forcing every upload into one representation.
 
-## Relation to the Planned Thread Architecture
+## Relation to the Current Worker API
 
-The long-term direction discussed for this web server is:
+The current architecture does not transfer client channels to application
+workers. The connection thread owns the channel and HTTP protocol state.
+Application workers receive copied request descriptors and send ordered output
+events back to the owning connection thread.
 
-- a lightweight infrastructure thread accepts connections
-- specialized worker threads perform request processing and response I/O
-- channel ownership is handed over to the worker
+Within that model, full buffering is simple but has two important costs:
 
-Within that model, full buffering in the acceptor thread is not ideal.
+- large bodies are held by the connection thread before dispatch;
+- in-memory bodies are copied into the worker request descriptor.
 
-The cleaner direction is:
-
-1. accept enough bytes to parse the request line and headers
-2. choose the application or worker that will handle the request
-3. transfer channel ownership to that worker
-4. let the worker read the request body incrementally
-5. let the worker also produce the response and handle write errors
-
-This keeps the infrastructure layer small and places the full request/response
-transaction in the execution context that owns the application logic.
+Any future streaming or spooling design must preserve the rule that
+application workers do not perform socket I/O unless the worker API is changed
+deliberately.
 
 ## Suggested Future Body Modes
 
@@ -194,17 +198,18 @@ A practical step-by-step evolution could be:
 2. Introduce an internal body abstraction instead of always passing a raw
    complete request string.
 3. Add a size threshold for spooling large bodies to temporary files.
-4. Move request-line and header parsing fully into the application/worker side.
-5. Introduce a streaming body mode for worker-thread execution.
+4. Add a descriptor representation for spooled bodies.
+5. Introduce a streaming body mode with explicit ownership, cancellation, and
+   backpressure semantics.
 6. Keep `in_memory` as a compatibility mode for tests and simple handlers.
 
 ## Summary
 
 The current server buffers the whole upload in memory before request handling.
-That is acceptable for the test suite, but not sufficient for a real
-general-purpose server.
+That is acceptable for small bodies, but not sufficient for a general-purpose
+server handling large or many concurrent uploads.
 
 Temporary files are one valid solution, but they are not the only one and not
-necessarily the final one. The most scalable architecture is to let the worker
-thread own the channel and process the request body incrementally, while still
-supporting in-memory and spooled-file modes where useful.
+necessarily the final one. The current worker API leaves room for future
+`spooled_file` and `streaming` modes, but those modes need explicit descriptor,
+lifecycle, and backpressure semantics.

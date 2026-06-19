@@ -29,8 +29,21 @@
       border-bottom: 1px solid var(--line);
     }
 
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .brand img {
+      width: 72px;
+      height: 72px;
+      object-fit: contain;
+    }
+
     h1 {
-      margin: 0 0 10px;
+      margin: 0;
       font-size: 2.35rem;
       line-height: 1.1;
       letter-spacing: 0;
@@ -116,7 +129,10 @@
 </head>
 <body>
   <header>
-    <h1 class="boxed"> TclWire </h1>
+    <div class="brand">
+      <img src="doc/tclwire-logo.png" alt="" width="72" height="72">
+      <h1>TclWire</h1>
+    </div>
     <p class="lead">TclWire is a Tcl application server shaped around small, composable server implementations. The current runtime starts HTTP by default and again supports selectable FTP and HTTP proxy services alongside the shared threading, logging, and configuration model.</p>
   </header>
 

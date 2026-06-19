@@ -264,10 +264,15 @@ proc ::mk2html::rewrite_markdown_links {
 
 proc ::mk2html::navigation {documents current_output} {
     set navigation {    <nav aria-label="Documentation">
-      <div class="site-title">TclWire Documentation</div>
+      <a class="site-logo" href="@INDEX_URL@" aria-label="TclWire Documentation">
+        <img src="@LOGO_URL@" alt="" width="220" height="132">
+      </a>
       <ul>
 }
     set index_url [relative_url $current_output index.html]
+    set logo_url [relative_url $current_output "tclwire-logo-nav.png"]
+    set navigation [string map [list @INDEX_URL@ $index_url @LOGO_URL@ $logo_url] \
+        $navigation]
     set index_class [expr {$current_output eq "index.html" \
         ? { class="active"} : ""}]
     append navigation "        <li$index_class>\n"
@@ -319,7 +324,9 @@ proc ::mk2html::index_body {documents} {
 
 proc ::mk2html::empty_navigation {} {
     return {    <nav aria-label="Documentation">
-      <div class="site-title">TclWire Documentation</div>
+      <a class="site-logo" href="index.html" aria-label="TclWire Documentation">
+        <img src="tclwire-logo-nav.png" alt="" width="220" height="132">
+      </a>
       <ul>
       </ul>
     </nav>}
@@ -358,6 +365,24 @@ proc ::mk2html::write_page {output_directory output_name content} {
     file mkdir [file dirname $target]
     write_text_file $target $content
     puts "generated $target"
+}
+
+proc ::mk2html::copy_logo {repository output_directory} {
+    foreach logo_name {
+        tclwire-logo.png
+        tclwire-logo-nav.png
+        tclwire-logo-blue.png
+    } {
+        set logo [file join $repository doc $logo_name]
+        if {![file isfile $logo]} {
+            continue
+        }
+
+        set target [file join $output_directory $logo_name]
+        file mkdir [file dirname $target]
+        file copy -force $logo $target
+        puts "copied $target"
+    }
 }
 
 proc ::mk2html::page_template {title body navigation} {
@@ -419,10 +444,20 @@ proc ::mk2html::page_template {title body navigation} {
       background: var(--nav-bg);
       border-right: 1px solid var(--border);
     }
-    .site-title {
-      padding: 0 12px 16px;
-      font-size: 1.15em;
-      font-weight: 600;
+    .site-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 12px 18px;
+      color: var(--fg);
+      text-decoration: none;
+    }
+    .site-logo:hover { text-decoration: none; }
+    .site-logo img {
+      display: block;
+      width: min(220px, 100%);
+      height: auto;
+      object-fit: contain;
     }
     nav ul { padding: 0; margin: 0; list-style: none; }
     nav li { margin-bottom: 4px; padding: 8px 12px; border-radius: 6px; }
@@ -543,7 +578,7 @@ proc ::mk2html::page_template {title body navigation} {
         @BODY@ $body] $template]
 }
 
-proc ::mk2html::build_directory {source_directory output_directory} {
+proc ::mk2html::build_directory {source_directory output_directory repository} {
     set sources [find_markdown_files $source_directory]
     if {![llength $sources]} {
         error "no Markdown files found in $source_directory"
@@ -552,6 +587,7 @@ proc ::mk2html::build_directory {source_directory output_directory} {
     set documents [collect_documents $sources $source_directory]
     set source_mapping [source_output_map $documents]
     file mkdir $output_directory
+    copy_logo $repository $output_directory
 
     write_page $output_directory index.html [page_template \
         "TclWire Documentation" \
@@ -571,7 +607,7 @@ proc ::mk2html::build_directory {source_directory output_directory} {
     }
 }
 
-proc ::mk2html::build_file {source output_directory} {
+proc ::mk2html::build_file {source output_directory repository} {
     if {![string equal -nocase [file extension $source] .md]} {
         error "input file is not Markdown: $source"
     }
@@ -586,6 +622,7 @@ proc ::mk2html::build_file {source output_directory} {
         $source $output_name $source_mapping]
 
     file mkdir $output_directory
+    copy_logo $repository $output_directory
     write_page $output_directory $output_name [page_template \
         [dict get $document title] \
         $body \
@@ -608,9 +645,9 @@ proc ::mk2html::run {arguments} {
     set output [dict get $options output]
 
     if {[file isdirectory $input]} {
-        build_directory $input $output
+        build_directory $input $output $repository
     } elseif {[file isfile $input]} {
-        build_file $input $output
+        build_file $input $output $repository
     } else {
         error "input path does not exist: $input"
     }
