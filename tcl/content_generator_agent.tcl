@@ -12,9 +12,13 @@ package require tclwire::tpba::control 0.1
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::cga {
+    variable cumulative_request_count 0
+
     proc execute {
         pool_key application_class application_descriptor request_descriptor
     } {
+        variable cumulative_request_count
+
         set worker_id [::thread::id]
         ::tclwire::accounting change_thread_status $worker_id running \
                 [list $application_class [dict get $request_descriptor transaction_id]]
@@ -44,6 +48,13 @@ namespace eval ::tclwire::cga {
             if {$application ne {}} {
                 catch {$application destroy}
             }
+            incr cumulative_request_count
+            catch {::tclwire::tpba request [dict create \
+                operation report_workload \
+                pool_key $pool_key \
+                worker_id $worker_id \
+                running_workload 0 \
+                cumulative_workload $cumulative_request_count]}
             catch {::tclwire::tpba request [dict create \
                 operation release_worker \
                 pool_key $pool_key \

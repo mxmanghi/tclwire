@@ -17,12 +17,40 @@ package require tclwire::accounting 1.2
 
 namespace eval ::tclwire {}
 
+::oo::class create ::tclwire::PlainMetric {
+    method configure_metric_options {options} {
+        return $options
+    }
+
+    method combined_workload {running_workload cumulative_workload options} {
+        return $cumulative_workload
+    }
+}
+
+::oo::class create ::tclwire::ConcurrentConnectionMetric {
+    method configure_metric_options {options} {
+        set options [dict merge [dict create max_conn_per_thread 5] $options]
+        set max_conn_per_thread [dict get $options max_conn_per_thread]
+        if {![string is integer -strict $max_conn_per_thread] ||
+                $max_conn_per_thread < 1} {
+            error "max_conn_per_thread must be an integer greater than or equal to 1"
+        }
+        return $options
+    }
+
+    method combined_workload {running_workload cumulative_workload options} {
+        set max_conn_per_thread [dict get $options max_conn_per_thread]
+        return [expr {$max_conn_per_thread * $running_workload + $cumulative_workload}]
+    }
+}
+
 ::oo::class create ::tclwire::ThreadMaster {
     variable max_threads_number
     variable accounting
     variable thread_script
     variable thread_family
     variable owned_threads
+    variable metric_options
 
     constructor {tscript {mtn 100} {family {}}} {
         set max_threads_number $mtn
@@ -31,6 +59,7 @@ namespace eval ::tclwire {}
         set thread_script $tscript
         set thread_family [string tolower [string trim $family]]
         set owned_threads {}
+        set metric_options [dict create]
     }
 
     # Boundary rule:
@@ -87,12 +116,75 @@ namespace eval ::tclwire {}
         return true
     }
 
-    method allocate_owned_idle_thread {thread_id_v} {
+    method configure_metric {metric_class options} {
+        ::oo::objdefine [self] mixin $metric_class
+        set metric_options [my configure_metric_options $options]
+        return $metric_class
+    }
+
+    method configure_metric_options {options} {
+        return $options
+    }
+
+    method combined_workload {running_workload cumulative_workload options} {
+        return [expr {$running_workload + $cumulative_workload}]
+    }
+
+    method workload_index {record} {
+        if {[dict exists $record running_workload]} {
+            set running_workload [dict get $record running_workload]
+        } else {
+            set running_workload 0
+        }
+        if {[dict exists $record cumulative_workload]} {
+            set cumulative_workload [dict get $record cumulative_workload]
+        } else {
+            set cumulative_workload 0
+        }
+        return [my combined_workload $running_workload $cumulative_workload $metric_options]
+    }
+
+    method workload_record {thread_id running_workload cumulative_workload} {
+        set record [dict create \
+            thread_id $thread_id \
+            running_workload $running_workload \
+            cumulative_workload $cumulative_workload]
+        dict set record combined_workload [my workload_index $record]
+        return $record
+    }
+
+    method candidate_workload {thread_id workloads} {
+        if {[dict exists $workloads $thread_id]} {
+            set record [dict get $workloads $thread_id]
+            if {[dict exists $record combined_workload]} {
+                return [dict get $record combined_workload]
+            }
+            return [my workload_index $record]
+        }
+        return [my workload_index [dict create \
+            thread_id $thread_id \
+            running_workload 0 \
+            cumulative_workload 0]]
+    }
+
+    method allocate_owned_idle_thread {thread_id_v {workloads {}}} {
         upvar 1 $thread_id_v thread_id
 
+        set selected {}
+        set selected_workload {}
         foreach candidate [[self] thread_ids idle] {
-            $accounting change_thread_status $candidate allocated
-            set thread_id $candidate
+            set candidate_workload [my candidate_workload $candidate $workloads]
+            if {$selected eq {} ||
+                    $candidate_workload < $selected_workload ||
+                    ($candidate_workload == $selected_workload &&
+                        [string compare $candidate $selected] < 0)} {
+                set selected $candidate
+                set selected_workload $candidate_workload
+            }
+        }
+        if {$selected ne {}} {
+            $accounting change_thread_status $selected allocated
+            set thread_id $selected
             return true
         }
         return false
@@ -151,10 +243,10 @@ namespace eval ::tclwire {}
 
     }
 
-    method allocate_thread {thread_id_v} {
+    method allocate_thread {thread_id_v {workloads {}}} {
         upvar 1 $thread_id_v thread_id
 
-        if {[[self] allocate_owned_idle_thread thread_id]} {
+        if {[[self] allocate_owned_idle_thread thread_id $workloads]} {
             return true
         }
 
@@ -167,9 +259,9 @@ namespace eval ::tclwire {}
         return false
     }
 
-    method acquire_worker {} {
+    method acquire_worker {{workloads {}}} {
         set thread_id ""
-        if {![[self] allocate_thread thread_id]} { return "" }
+        if {![[self] allocate_thread thread_id $workloads]} { return "" }
         return $thread_id
     }
 

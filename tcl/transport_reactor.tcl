@@ -253,6 +253,7 @@ oo::class create ::tclwire::TransportReactor {
                                                                                $connection_id $connection_key \
                                                                                $peer_host $peer_port \
                                                                                [::thread::id] [list [self] connection_finished $pool_key] \
+                                                                               $pool_key \
                                                                                $agent_args $transport_config]
         } error options]} {
             set last_accept_error $error

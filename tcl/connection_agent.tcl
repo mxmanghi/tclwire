@@ -7,6 +7,7 @@ package require TclOO
 package require Thread
 package require tclwire::accounting 1.2
 package require tclwire::logger::client 0.1
+package require tclwire::tpba::control 0.1
 package require tclwire::transaction_descriptor 0.1
 
 namespace eval ::tclwire {}
@@ -231,6 +232,8 @@ namespace eval ::tclwire {
     variable connection_agent {}
     variable connection_finished_thread {}
     variable connection_finished_command {}
+    variable connection_pool_key {}
+    variable cumulative_connection_count 0
 
     proc prepare_connection_channel {channel transport_config} {
         if {$transport_config eq {} ||
@@ -273,11 +276,13 @@ namespace eval ::tclwire {
     proc start_connection_agent {
         agent_class conn_channel connection_id connection_key
         host port finished_thread finished_command
-        agent_args transport_config
+        pool_key agent_args transport_config
     } {
         variable connection_agent
         variable connection_finished_thread
         variable connection_finished_command
+        variable connection_pool_key
+        variable cumulative_connection_count
 
         if {$connection_agent ne {}} {
             error "connection worker is already active"
@@ -288,8 +293,10 @@ namespace eval ::tclwire {
 
         set connection_finished_thread  $finished_thread
         set connection_finished_command $finished_command
+        set connection_pool_key         $pool_key
         ::tclwire::accounting change_thread_status \
             [::thread::id] running [list $agent_class $connection_id]
+        incr cumulative_connection_count
         if {[catch {
             set conn_channel [prepare_connection_channel $conn_channel $transport_config]
             ::tclwire::accounting update_connection $connection_key \
@@ -315,9 +322,26 @@ namespace eval ::tclwire {
                     $connection_id [::thread::id]]
                 ::thread::send -async $connection_finished_thread $callback
             }
+            if {$connection_pool_key ne {}} {
+                catch {::tclwire::tpba request [dict create \
+                    operation report_workload \
+                    pool_key $connection_pool_key \
+                    worker_id [::thread::id] \
+                    running_workload 0 \
+                    cumulative_workload $cumulative_connection_count]}
+            }
             set connection_finished_thread {}
             set connection_finished_command {}
+            set connection_pool_key {}
             return {}
+        }
+        if {$connection_pool_key ne {}} {
+            catch {::tclwire::tpba request [dict create \
+                operation report_workload \
+                pool_key $connection_pool_key \
+                worker_id [::thread::id] \
+                running_workload 1 \
+                cumulative_workload $cumulative_connection_count]}
         }
         return $connection_agent
     }
@@ -334,6 +358,8 @@ namespace eval ::tclwire {
         variable connection_agent
         variable connection_finished_thread
         variable connection_finished_command
+        variable connection_pool_key
+        variable cumulative_connection_count
 
         set connection_id {}
         if {$connection_agent eq $agent} {
@@ -342,6 +368,14 @@ namespace eval ::tclwire {
             set connection_agent {}
         }
 
+        if {$connection_pool_key ne {}} {
+            catch {::tclwire::tpba request [dict create \
+                operation report_workload \
+                pool_key $connection_pool_key \
+                worker_id [::thread::id] \
+                running_workload 0 \
+                cumulative_workload $cumulative_connection_count]}
+        }
         if {($connection_finished_thread ne {}) && \
             [::thread::exists $connection_finished_thread]} {
             set callback [list {*}$connection_finished_command $connection_id [::thread::id]]
@@ -349,6 +383,7 @@ namespace eval ::tclwire {
         }
         set connection_finished_thread  {}
         set connection_finished_command {}
+        set connection_pool_key {}
         return
     }
 

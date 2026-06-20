@@ -12,18 +12,74 @@ namespace eval ::tclwire::tpba_test {
 oo::class create ::tclwire::tpba_test::FakeThreadMaster {
     variable maximum_workers
     variable workers
+    variable metric_class
+    variable metric_options
 
     constructor {worker_script maximum {family {}}} {
         set maximum_workers $maximum
         set workers [dict create]
+        set metric_class ::tclwire::PlainMetric
+        set metric_options [dict create]
     }
 
-    method acquire_worker {} {
+    method configure_metric {class options} {
+        set metric_class $class
+        if {$metric_class eq "::tclwire::ConcurrentConnectionMetric"} {
+            set metric_options [dict merge [dict create max_conn_per_thread 5] $options]
+            set max_conn_per_thread [dict get $metric_options max_conn_per_thread]
+            if {![string is integer -strict $max_conn_per_thread] ||
+                    $max_conn_per_thread < 1} {
+                error "max_conn_per_thread must be an integer greater than or equal to 1"
+            }
+        } else {
+            set metric_options $options
+        }
+        return $metric_class
+    }
+
+    method owns_thread {worker_id} {
+        return [dict exists $workers $worker_id]
+    }
+
+    method workload_record {worker_id running_workload cumulative_workload} {
+        if {$metric_class eq "::tclwire::ConcurrentConnectionMetric"} {
+            set combined_workload [expr {
+                [dict get $metric_options max_conn_per_thread] *
+                $running_workload + $cumulative_workload
+            }]
+        } else {
+            set combined_workload $cumulative_workload
+        }
+        return [dict create \
+            thread_id $worker_id \
+            running_workload $running_workload \
+            cumulative_workload $cumulative_workload \
+            combined_workload $combined_workload]
+    }
+
+    method acquire_worker {{workloads {}}} {
+        set selected {}
+        set selected_workload {}
         dict for {worker_id status} $workers {
             if {$status eq "idle"} {
-                dict set workers $worker_id allocated
-                return $worker_id
+                if {[dict exists $workloads $worker_id combined_workload]} {
+                    set worker_workload \
+                        [dict get $workloads $worker_id combined_workload]
+                } else {
+                    set worker_workload 0
+                }
+                if {$selected eq {} ||
+                        $worker_workload < $selected_workload ||
+                        ($worker_workload == $selected_workload &&
+                            [string compare $worker_id $selected] < 0)} {
+                    set selected $worker_id
+                    set selected_workload $worker_workload
+                }
             }
+        }
+        if {$selected ne {}} {
+            dict set workers $selected allocated
+            return $selected
         }
         if {[dict size $workers] >= $maximum_workers} {
             return {}
@@ -254,5 +310,85 @@ test tpba-1.9 {command API derives a connection-agent pool key} -body {
         $broker destroy
     }
 } -result {1 connection:http}
+
+test tpba-1.10 {workers report plain workload through TPBA} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:metrics {worker script} \
+            [dict create maximum_workers 1] \
+            [dict create kind application application metrics]
+        set worker_id [$broker acquire_worker app:metrics]
+        set reported [$broker report_workload app:metrics $worker_id 1 7]
+        set listed [$broker pool_workloads app:metrics]
+        list \
+            [dict get $reported running_workload] \
+            [dict get $reported cumulative_workload] \
+            [dict get $reported combined_workload] \
+            [dict get $listed $worker_id combined_workload] \
+            [dict get [$broker pool_status app:metrics] workloads $worker_id combined_workload]
+    } finally {
+        $broker destroy
+    }
+} -result {1 7 7 7 7}
+
+test tpba-1.11 {connection pools use concurrent connection workload metric} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool connection:http {worker script} \
+            [dict create maximum_workers 1] \
+            [dict create kind connection_agent protocol http]
+        set worker_id [$broker acquire_worker connection:http]
+        set reported [$broker report_workload connection:http $worker_id 2 3]
+        dict get $reported combined_workload
+    } finally {
+        $broker destroy
+    }
+} -result 13
+
+test tpba-1.11.1 {connection metric validates max_conn_per_thread} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        catch {
+            $broker create_pool connection:bad {worker script} \
+                [dict create maximum_workers 1 max_conn_per_thread 0] \
+                [dict create kind connection_agent protocol bad]
+        } message
+        set message
+    } finally {
+        $broker destroy
+    }
+} -result {max_conn_per_thread must be an integer greater than or equal to 1}
+
+test tpba-1.12 {idle allocation selects the lowest combined workload} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:balanced {worker script} \
+            [dict create maximum_workers 2] \
+            [dict create kind application application balanced]
+        set first [$broker acquire_worker app:balanced]
+        set second [$broker acquire_worker app:balanced]
+        $broker report_workload app:balanced $first 0 10
+        $broker report_workload app:balanced $second 0 1
+        $broker release_worker app:balanced $first
+        $broker release_worker app:balanced $second
+        set selected [$broker acquire_worker app:balanced]
+        expr {$selected eq $second}
+    } finally {
+        $broker destroy
+    }
+} -result 1
+
+test tpba-1.13 {workload reports validate pool ownership} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:owned {worker script} \
+            [dict create maximum_workers 1] \
+            [dict create kind application application owned]
+        catch {$broker report_workload app:owned missing-worker 0 1} message
+        set message
+    } finally {
+        $broker destroy
+    }
+} -result {Thread missing-worker is not owned by pool app:owned}
 
 cleanupTests
