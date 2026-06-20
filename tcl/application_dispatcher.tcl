@@ -210,10 +210,10 @@ oo::class create ::tclwire::ApplicationDispatcher {
         set exit_pool_notification {}
         if {$pool_key ne {}} {
             set exit_pool_notification [format {
-            catch {::tclwire::tpba request [dict create \
-                operation remove_worker \
-                pool_key %s \
-                worker_id [::thread::id]]}
+                catch {::tclwire::tpba request \
+                        [dict create operation remove_worker \
+                                     pool_key  %s \
+                                     worker_id [::thread::id]]}
             } [list $pool_key]]
         }
         return [format {
