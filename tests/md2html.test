@@ -1,0 +1,35 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+source [file join $project_root utils md2html.tcl]
+
+test md2html-1.1 {Tcl source summary uses the leading file comment} -body {
+    ::mk2html::tcl_source_summary /tmp/example.tcl {
+# example.tcl --
+#
+# Example summary line.
+
+package require TclOO
+}
+} -result {Example summary line.}
+
+test md2html-1.2 {Tcl source links are rewritten to generated source pages} -body {
+    set mapping [dict create \
+        [file normalize [file join $project_root tcl application_dispatcher.tcl]] \
+        tcl/application_dispatcher.tcl.html]
+    ::mk2html::rewrite_tcl_links \
+        {<a href="../tcl/application_dispatcher.tcl">source</a>} \
+        [file join $project_root doc WORKER_REQUEST_API.md] \
+        worker_request_api.html \
+        $project_root \
+        $mapping
+} -result {<a href="tcl/application_dispatcher.tcl.html">source</a>}
+
+test md2html-1.3 {Tcl source output uses file name plus html extension} -body {
+    set documents [::mk2html::collect_tcl_sources $project_root]
+    dict get [lindex [lsearch -inline -all $documents *application_dispatcher.tcl*] 0] \
+        output
+} -result {tcl/application_dispatcher.tcl.html}
+
+cleanupTests

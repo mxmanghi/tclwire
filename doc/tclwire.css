@@ -10,6 +10,13 @@
   --table-alt: #f6f8fa;
   --nav-bg: #f6f8fa;
   --nav-active: #ddf4ff;
+  --syntax-command: #8250df;
+  --syntax-variable: #953800;
+  --syntax-namespace: #0550ae;
+  --syntax-name: #116329;
+  --syntax-comment: #6e7781;
+  --syntax-string: #0a3069;
+  --syntax-punctuation: #57606a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,6 +31,13 @@
     --table-alt: #151b23;
     --nav-bg: #151b23;
     --nav-active: #1f3a5f;
+    --syntax-command: #d2a8ff;
+    --syntax-variable: #ffa657;
+    --syntax-namespace: #79c0ff;
+    --syntax-name: #7ee787;
+    --syntax-comment: #8b949e;
+    --syntax-string: #a5d6ff;
+    --syntax-punctuation: #8b949e;
   }
 }
 
@@ -165,6 +179,20 @@ pre {
 }
 
 pre code { padding: 0; background: transparent; border-radius: 0; }
+
+.tcl-command { color: var(--syntax-command); font-weight: 600; }
+
+.tcl-variable { color: var(--syntax-variable); }
+
+.tcl-namespace { color: var(--syntax-namespace); }
+
+.tcl-name { color: var(--syntax-name); }
+
+.tcl-comment { color: var(--syntax-comment); font-style: italic; }
+
+.tcl-string { color: var(--syntax-string); }
+
+.tcl-punctuation { color: var(--syntax-punctuation); }
 
 table {
   display: block;

@@ -233,6 +233,102 @@ proc ::mk2html::source_output_map {documents} {
     return $mapping
 }
 
+proc ::mk2html::collect_tcl_sources {repository} {
+    set source_directory [file join $repository tcl]
+    set documents {}
+    foreach source [lsort -dictionary \
+            [glob -nocomplain -directory $source_directory *.tcl]] {
+        set source [file normalize $source]
+        set content [read_text_file $source]
+        set output "tcl/[file tail $source].html"
+        lappend documents [dict create \
+            source $source \
+            content $content \
+            title [file tail $source] \
+            summary [tcl_source_summary $source $content] \
+            output $output]
+    }
+    return $documents
+}
+
+proc ::mk2html::tcl_source_summary {source content} {
+    set comments {}
+    set saw_header 0
+    foreach line [split $content \n] {
+        set trimmed [string trim $line]
+        if {[regexp {^[ \t]*#(.*)$} $line -> comment]} {
+            lappend comments [string trim $comment]
+            set saw_header 1
+            continue
+        }
+        if {$trimmed eq "" && !$saw_header} {
+            continue
+        }
+        if {$trimmed eq "" && $saw_header} {
+            lappend comments {}
+            continue
+        }
+        break
+    }
+
+    set paragraphs {}
+    set paragraph {}
+    foreach comment $comments {
+        if {[regexp {^[^[:space:]]+\.tcl[ \t]+--$} $comment]} {
+            continue
+        }
+        if {$comment eq ""} {
+            if {[llength $paragraph]} {
+                lappend paragraphs [join $paragraph " "]
+                set paragraph {}
+            }
+            continue
+        }
+        lappend paragraph $comment
+    }
+    if {[llength $paragraph]} {
+        lappend paragraphs [join $paragraph " "]
+    }
+    if {[llength $paragraphs]} {
+        return [short_summary [lindex $paragraphs 0]]
+    }
+
+    set definitions {}
+    foreach line [split $content \n] {
+        if {[regexp {^[ \t]*oo::class[ \t]+create[ \t]+([^ \t\{]+)} \
+                $line -> name]} {
+            lappend definitions "class $name"
+        } elseif {[regexp {^[ \t]*proc[ \t]+([^ \t\{]+)} $line -> name]} {
+            lappend definitions "proc $name"
+        }
+        if {[llength $definitions] >= 3} {
+            break
+        }
+    }
+    if {[llength $definitions]} {
+        return "Defines [join $definitions {, }]."
+    }
+
+    return "Tcl source file."
+}
+
+proc ::mk2html::short_summary {text} {
+    set text [string trim [regsub -all {[ \t\r\n]+} $text " "]]
+    if {[string length $text] > 180} {
+        set text "[string trimright [string range $text 0 176]]..."
+    }
+    return $text
+}
+
+proc ::mk2html::tcl_source_output_map {documents} {
+    set mapping [dict create]
+    foreach document $documents {
+        dict set mapping [file normalize [dict get $document source]] \
+            [dict get $document output]
+    }
+    return $mapping
+}
+
 proc ::mk2html::rewrite_markdown_links {
     html source current_output source_mapping
 } {
@@ -262,7 +358,52 @@ proc ::mk2html::rewrite_markdown_links {
     return $html
 }
 
-proc ::mk2html::navigation {documents current_output} {
+proc ::mk2html::rewrite_tcl_links {
+    html source current_output repository tcl_source_mapping
+} {
+    set pattern {href="([^":?#]+\.tcl)(#[^"]*)?"}
+    set offset 0
+    while {[regexp -indices -nocase -start $offset $pattern $html \
+        match path fragment]} {
+        lassign $match match_start match_end
+        lassign $path path_start path_end
+        set href_path [string range $html $path_start $path_end]
+        set linked_source [file normalize \
+            [file join [file dirname $source] $href_path]]
+
+        if {![dict exists $tcl_source_mapping $linked_source] &&
+                [regexp {(^|/)tcl/([^/]+\.tcl)$} $href_path -> ignored tail]} {
+            set linked_source [file normalize [file join $repository tcl $tail]]
+        }
+        if {![dict exists $tcl_source_mapping $linked_source]} {
+            set offset [expr {$match_end + 1}]
+            continue
+        }
+
+        set target [relative_url $current_output \
+            [dict get $tcl_source_mapping $linked_source]]
+        if {[lindex $fragment 0] >= 0} {
+            append target [string range $html {*}$fragment]
+        }
+        set replacement "href=\"$target\""
+        set html [string replace $html $match_start $match_end $replacement]
+        set offset [expr {$match_start + [string length $replacement]}]
+    }
+    return $html
+}
+
+proc ::mk2html::render_document_body {
+    document current_output source_mapping repository tcl_source_mapping
+} {
+    set source [dict get $document source]
+    set html [::Markdown::convert [dict get $document markdown]]
+    set html [rewrite_markdown_links $html $source $current_output \
+        $source_mapping]
+    return [rewrite_tcl_links $html $source $current_output $repository \
+        $tcl_source_mapping]
+}
+
+proc ::mk2html::navigation {documents current_output {tcl_sources {}}} {
     set navigation {    <nav aria-label="Documentation">
       <a class="site-logo" href="@INDEX_URL@" aria-label="TclWire Documentation">
         <img src="@LOGO_URL@" alt="" width="220" height="132">
@@ -280,6 +421,17 @@ proc ::mk2html::navigation {documents current_output} {
     append navigation {          <span>Documentation contents and summaries.</span>
         </li>
 }
+    if {[llength $tcl_sources]} {
+        set tcl_index_url [relative_url $current_output tcl/index.html]
+        set class [expr {$current_output eq "tcl/index.html" \
+            || [string match "tcl/*.tcl.html" $current_output] \
+            ? { class="active"} : ""}]
+        append navigation "        <li$class>\n"
+        append navigation "          <a href=\"$tcl_index_url\">Tcl Sources</a>\n"
+        append navigation {          <span>Highlighted source listings.</span>
+        </li>
+}
+    }
     foreach document $documents {
         set output [dict get $document output]
         set output_url [relative_url $current_output $output]
@@ -320,6 +472,64 @@ proc ::mk2html::index_body {documents} {
     }
     append body "</div>\n"
     return $body
+}
+
+proc ::mk2html::tcl_source_index_body {tcl_sources current_output} {
+    set body {<h1>Tcl Source Files</h1>
+<p>Generated source listings for the Tcl modules in the repository.</p>
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Summary</th>
+    </tr>
+  </thead>
+  <tbody>
+}
+    foreach document $tcl_sources {
+        set output [dict get $document output]
+        set title [html_escape [dict get $document title]]
+        set summary [html_escape [dict get $document summary]]
+        set url [relative_url $current_output $output]
+        append body "    <tr>\n"
+        append body "      <td><a href=\"$url\">$title</a></td>\n"
+        append body "      <td>$summary</td>\n"
+        append body "    </tr>\n"
+    }
+    append body {  </tbody>
+</table>
+}
+    return $body
+}
+
+proc ::mk2html::tcl_source_body {document} {
+    set title [html_escape [dict get $document title]]
+    set summary [html_escape [dict get $document summary]]
+    set source [::tcl_highlight::highlight [dict get $document content]]
+    return "<h1>$title</h1>\n<p>$summary</p>\n<pre><code class=\"language-tcl\">$source</code></pre>\n"
+}
+
+proc ::mk2html::write_tcl_source_pages {
+    output_directory documents tcl_sources
+} {
+    if {![llength $tcl_sources]} {
+        return
+    }
+
+    write_page $output_directory tcl/index.html [page_template \
+        "Tcl Source Files" \
+        [tcl_source_index_body $tcl_sources tcl/index.html] \
+        [navigation $documents tcl/index.html $tcl_sources] \
+        tcl/index.html]
+
+    foreach document $tcl_sources {
+        set output_name [dict get $document output]
+        write_page $output_directory $output_name [page_template \
+            [dict get $document title] \
+            [tcl_source_body $document] \
+            [navigation $documents $output_name $tcl_sources] \
+            $output_name]
+    }
 }
 
 proc ::mk2html::empty_navigation {} {
@@ -478,27 +688,29 @@ proc ::mk2html::build_directory {source_directory output_directory repository} {
 
     set documents [collect_documents $sources $source_directory]
     set source_mapping [source_output_map $documents]
+    set tcl_sources [collect_tcl_sources $repository]
+    set tcl_source_mapping [tcl_source_output_map $tcl_sources]
     file mkdir $output_directory
     copy_assets $repository $output_directory
 
     write_page $output_directory index.html [page_template \
         "TclWire Documentation" \
         [index_body $documents] \
-        [navigation $documents index.html] \
+        [navigation $documents index.html $tcl_sources] \
         index.html]
 
     foreach document $documents {
-        set source [dict get $document source]
         set title [dict get $document title]
         set output_name [dict get $document output]
-        set body [rewrite_markdown_links \
-            [::Markdown::convert [dict get $document markdown]] \
-            $source $output_name $source_mapping]
+        set body [render_document_body $document $output_name \
+            $source_mapping $repository $tcl_source_mapping]
         write_page $output_directory $output_name \
             [page_template $title $body \
-                [navigation $documents $output_name] \
+                [navigation $documents $output_name $tcl_sources] \
                 $output_name]
     }
+
+    write_tcl_source_pages $output_directory $documents $tcl_sources
 }
 
 proc ::mk2html::build_file {source output_directory repository} {
@@ -511,17 +723,19 @@ proc ::mk2html::build_file {source output_directory repository} {
     set document [lindex $documents 0]
     set output_name [dict get $document output]
     set source_mapping [source_output_map $documents]
-    set body [rewrite_markdown_links \
-        [::Markdown::convert [dict get $document markdown]] \
-        $source $output_name $source_mapping]
+    set tcl_sources [collect_tcl_sources $repository]
+    set tcl_source_mapping [tcl_source_output_map $tcl_sources]
+    set body [render_document_body $document $output_name \
+        $source_mapping $repository $tcl_source_mapping]
 
     file mkdir $output_directory
     copy_assets $repository $output_directory
     write_page $output_directory $output_name [page_template \
         [dict get $document title] \
         $body \
-        [existing_navigation $output_directory] \
+        [navigation $documents $output_name $tcl_sources] \
         $output_name]
+    write_tcl_source_pages $output_directory $documents $tcl_sources
 }
 
 proc ::mk2html::run {arguments} {
@@ -532,6 +746,7 @@ proc ::mk2html::run {arguments} {
     set options [parse_arguments $arguments]
     set script_directory [file dirname [file normalize [info script]]]
     set repository [file dirname $script_directory]
+    source [file join $script_directory tcl_highlight.tcl]
     set input [dict get $options input]
     if {[file pathtype $input] ne "absolute"} {
         set input [file join $repository $input]
@@ -548,13 +763,16 @@ proc ::mk2html::run {arguments} {
     }
 }
 
-try {
-    ::mk2html::run $::argv
-} trap {TCL LOOKUP VARNAME} {message options} {
-    puts stderr "error: $message"
-    exit 1
-} on error {message options} {
-    puts stderr "error: $message"
-    ::mk2html::usage stderr
-    exit 1
+if {[info exists ::argv0] && [file normalize $::argv0] eq
+        [file normalize [info script]]} {
+    try {
+        ::mk2html::run $::argv
+    } trap {TCL LOOKUP VARNAME} {message options} {
+        puts stderr "error: $message"
+        exit 1
+    } on error {message options} {
+        puts stderr "error: $message"
+        ::mk2html::usage stderr
+        exit 1
+    }
 }

@@ -1,0 +1,36 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+source [file join $project_root utils tcl_highlight.tcl]
+
+test tcl-highlight-1.1 {recognized commands are highlighted} -body {
+    ::tcl_highlight::highlight {set value 1}
+} -result {<span class="tcl-command">set</span> value 1}
+
+test tcl-highlight-1.2 {variables are highlighted} -body {
+    ::tcl_highlight::highlight {puts $value}
+} -result {<span class="tcl-command">puts</span> <span class="tcl-variable">$value</span>}
+
+test tcl-highlight-1.3 {namespace-qualified names are highlighted} -body {
+    ::tcl_highlight::highlight {namespace eval ::tclwire::runtime {}}
+} -result {<span class="tcl-command">namespace</span> eval <span class="tcl-name"><span class="tcl-namespace">::tclwire::</span>runtime</span> <span class="tcl-punctuation">{</span><span class="tcl-punctuation">}</span>}
+
+test tcl-highlight-1.4 {namespace-qualified commands keep command class} -body {
+    ::tcl_highlight::highlight {oo::class create Example}
+} -result {<span class="tcl-command"><span class="tcl-namespace">oo::</span>class</span> create Example}
+
+test tcl-highlight-1.5 {namespace-qualified variables expose namespace class} -body {
+    ::tcl_highlight::highlight {set value $::tclwire::state}
+} -result {<span class="tcl-command">set</span> value <span class="tcl-variable">$<span class="tcl-namespace">::tclwire::</span>state</span>}
+
+test tcl-highlight-1.6 {comments are highlighted only at command start} -body {
+    ::tcl_highlight::highlight "# comment\nset value#literal"
+} -result {<span class="tcl-comment"># comment</span>
+<span class="tcl-command">set</span> value#literal}
+
+test tcl-highlight-1.7 {html-sensitive characters are escaped} -body {
+    ::tcl_highlight::highlight {puts "<tag>$value</tag>"}
+} -result {<span class="tcl-command">puts</span> <span class="tcl-string">&quot;</span><span class="tcl-string">&lt;tag&gt;</span><span class="tcl-variable">$value</span><span class="tcl-string">&lt;/tag&gt;</span><span class="tcl-string">&quot;</span>}
+
+cleanupTests
