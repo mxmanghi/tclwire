@@ -83,6 +83,24 @@ namespace eval ::tclwire::tpba {
             [list ::tclwire::tpba::agent_execute_command $command]]
     }
 
+    proc notify_workload_transition {pool_key transition_id} {
+        set pool_key [string trim $pool_key]
+        set transition_id [string trim $transition_id]
+        if {$pool_key eq {}} {
+            error "workload notification pool key must not be empty"
+        }
+        if {$transition_id eq {}} {
+            error "workload notification transition id must not be empty"
+        }
+        set notification [list [::thread::id] $pool_key $transition_id]
+        if {[llength $notification] != 3} {
+            error "workload notification must be {thread_id pool_key transition_id}"
+        }
+        return [request [dict create \
+            operation thread_workload_changed \
+            notification $notification]]
+    }
+
     proc require_thread {} {
         set tid [thread_id]
         if {$tid eq {} || ![::thread::exists $tid]} {
@@ -102,7 +120,8 @@ namespace eval ::tclwire::tpba {
         return
     }
 
-    namespace export start stop reset request thread_id is_running
+    namespace export start stop reset request thread_id is_running \
+        notify_workload_transition
     namespace ensemble create
 }
 

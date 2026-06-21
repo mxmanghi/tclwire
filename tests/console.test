@@ -13,6 +13,9 @@ test console-protocol-1.1 {PS returns thread accounting rows as JSON table} -bod
     catch {::tclwire::accounting remove_thread $thread_id}
     try {
         ::tclwire::accounting register_thread $thread_id running http
+        ::tclwire::accounting update_thread_workload $thread_id \
+            [dict create running_workload 2 cumulative_workload 7 \
+                         combined_workload 17]
         set response [::json::json2dict [::tclwire::console dispatch PS]]
         set rows [dict get $response rows]
         set found 0
@@ -20,7 +23,10 @@ test console-protocol-1.1 {PS returns thread accounting rows as JSON table} -bod
             if {[dict get $row thread_id] eq $thread_id} {
                 set found [expr {
                     [dict get $row status] eq "running" &&
-                    [dict get $row family] eq "http"
+                    [dict get $row family] eq "http" &&
+                    [dict get $row running_workload] == 2 &&
+                    [dict get $row cumulative_workload] == 7 &&
+                    [dict get $row combined_workload] == 17
                 }]
             }
         }
@@ -29,11 +35,14 @@ test console-protocol-1.1 {PS returns thread accounting rows as JSON table} -bod
             [dict get $response type] \
             [dict get $response command] \
             [expr {"nruns" ni [dict get $response columns]}] \
+            [expr {"running_workload" in [dict get $response columns]}] \
+            [expr {"cumulative_workload" in [dict get $response columns]}] \
+            [expr {"combined_workload" in [dict get $response columns]}] \
             $found
     } finally {
         ::tclwire::accounting remove_thread $thread_id
     }
-} -result {true table PS 1 1}
+} -result {true table PS 1 1 1 1 1}
 
 test console-protocol-1.2 {CONN returns and filters connection rows} -body {
     set first console-http#1

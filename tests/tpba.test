@@ -14,12 +14,16 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
     variable workers
     variable metric_class
     variable metric_options
+    variable workloads
+    variable eligible
 
     constructor {worker_script maximum {family {}}} {
         set maximum_workers $maximum
         set workers [dict create]
         set metric_class ::tclwire::PlainMetric
         set metric_options [dict create]
+        set workloads [dict create]
+        set eligible {}
     }
 
     method configure_metric {class options} {
@@ -57,14 +61,46 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
             combined_workload $combined_workload]
     }
 
-    method acquire_worker {{workloads {}}} {
+    method workload_eligible {worker_id} {
+        if {![dict exists $workers $worker_id]} {
+            return false
+        }
+        set status [dict get $workers $worker_id]
+        if {$metric_class eq "::tclwire::ConcurrentConnectionMetric"} {
+            if {$status ne "idle"} {
+                return false
+            }
+            if {![dict exists $workloads $worker_id running_workload]} {
+                return true
+            }
+            return [expr {
+                [dict get $workloads $worker_id running_workload] <
+                [dict get $metric_options max_conn_per_thread]
+            }]
+        }
+        return [expr {$status eq "idle"}]
+    }
+
+    method refresh_eligibility {worker_id} {
+        set index [lsearch -exact $eligible $worker_id]
+        if {[my workload_eligible $worker_id]} {
+            if {$index < 0} {
+                lappend eligible $worker_id
+            }
+        } elseif {$index >= 0} {
+            set eligible [lreplace $eligible $index $index]
+        }
+        return $eligible
+    }
+
+    method acquire_worker {} {
         set selected {}
         set selected_workload {}
         dict for {worker_id status} $workers {
-            if {$status eq "idle"} {
-                if {[dict exists $workloads $worker_id combined_workload]} {
+            if {[my workload_eligible $worker_id]} {
+                if {[dict exists [my workloads] $worker_id combined_workload]} {
                     set worker_workload \
-                        [dict get $workloads $worker_id combined_workload]
+                        [dict get [my workloads] $worker_id combined_workload]
                 } else {
                     set worker_workload 0
                 }
@@ -79,6 +115,7 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
         }
         if {$selected ne {}} {
             dict set workers $selected allocated
+            my refresh_eligibility $selected
             return $selected
         }
         if {[dict size $workers] >= $maximum_workers} {
@@ -87,6 +124,7 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
 
         set worker_id fake-worker-[incr ::tclwire::tpba_test::next_worker_id]
         dict set workers $worker_id allocated
+        dict set workloads $worker_id [my workload_record $worker_id 0 0]
         return $worker_id
     }
 
@@ -95,6 +133,7 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
             error "unknown fake worker: $worker_id"
         }
         dict set workers $worker_id idle
+        my refresh_eligibility $worker_id
         return true
     }
 
@@ -103,7 +142,61 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
             error "unknown fake worker: $worker_id"
         }
         dict unset workers $worker_id
+        if {[dict exists $workloads $worker_id]} {
+            dict unset workloads $worker_id
+        }
         return true
+    }
+
+    method thread_workload_changed {worker_id transition_id} {
+        if {![dict exists $workloads $worker_id]} {
+            dict set workloads $worker_id [my workload_record $worker_id 0 0]
+        }
+        set record [dict get $workloads $worker_id]
+        switch -exact -- $transition_id {
+            thread-start {
+            }
+            request-processed {
+                dict incr record cumulative_workload
+                dict set record running_workload 0
+                catch {my return_thread $worker_id}
+            }
+            connection-open -
+            new-connection-processing {
+                dict incr record running_workload
+                dict incr record cumulative_workload
+                dict set workers $worker_id running
+            }
+            connection-closed {
+                set running_workload [dict get $record running_workload]
+                if {$running_workload > 0} {
+                    dict set record running_workload [expr {$running_workload - 1}]
+                }
+                if {[dict get $record running_workload] == 0} {
+                    catch {my return_thread $worker_id}
+                }
+            }
+            idle-connection-agent {
+                dict set record running_workload 0
+                catch {my return_thread $worker_id}
+            }
+            thread-exit {
+                dict set workers $worker_id terminating
+            }
+            default {
+                error "unknown test workload transition: $transition_id"
+            }
+        }
+        set record [my workload_record $worker_id \
+            [dict get $record running_workload] \
+            [dict get $record cumulative_workload]]
+        dict set workloads $worker_id $record
+        my refresh_eligibility $worker_id
+        return $record
+    }
+
+    method workloads {} {
+        return $workloads
     }
 
     method resize {maximum} {
@@ -112,14 +205,16 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
     }
 
     method stats {} {
-        set per_status [dict create allocated {} idle {}]
+        set per_status [dict create allocated {} idle {} running {} terminating {}]
         dict for {worker_id status} $workers {
             dict lappend per_status $status $worker_id
         }
         return [dict create \
             max_threads_number $maximum_workers \
             live_threads_number [dict size $workers] \
-            per_status_lists $per_status]
+            per_status_lists $per_status \
+            workloads $workloads \
+            eligible_threads_list $eligible]
     }
 
     method stop_threads {{filter all}} {
@@ -130,6 +225,18 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
 proc ::tclwire::tpba_test::new_broker {} {
     return [::tclwire::ThreadPoolsBrokerAgent new \
         -threadmasterfactory ::tclwire::tpba_test::FakeThreadMaster]
+}
+
+proc ::tclwire::tpba_test::workload_transition {
+    broker worker_id pool_key transition_id
+} {
+    set response [$broker execute_command [dict create \
+        operation thread_workload_changed \
+        notification [list $worker_id $pool_key $transition_id]]]
+    if {![dict get $response ok]} {
+        error [dict get $response error]
+    }
+    return [dict get $response result]
 }
 
 test tpba-1.1 {dispatcher-controlled keys identify independent pools} -body {
@@ -311,25 +418,25 @@ test tpba-1.9 {command API derives a connection-agent pool key} -body {
     }
 } -result {1 connection:http}
 
-test tpba-1.10 {workers report plain workload through TPBA} -body {
+test tpba-1.10 {workers notify plain workload transitions through TPBA} -body {
     set broker [::tclwire::tpba_test::new_broker]
     try {
         $broker create_pool app:metrics {worker script} \
             [dict create maximum_workers 1] \
             [dict create kind application application metrics]
         set worker_id [$broker acquire_worker app:metrics]
-        set reported [$broker report_workload app:metrics $worker_id 1 7]
-        set listed [$broker pool_workloads app:metrics]
+        set reported [::tclwire::tpba_test::workload_transition \
+            $broker $worker_id app:metrics request-processed]
+        set status [$broker pool_status app:metrics]
         list \
             [dict get $reported running_workload] \
             [dict get $reported cumulative_workload] \
             [dict get $reported combined_workload] \
-            [dict get $listed $worker_id combined_workload] \
-            [dict get [$broker pool_status app:metrics] workloads $worker_id combined_workload]
+            [dict get $status stats workloads $worker_id combined_workload]
     } finally {
         $broker destroy
     }
-} -result {1 7 7 7 7}
+} -result {0 1 1 1}
 
 test tpba-1.11 {connection pools use concurrent connection workload metric} -body {
     set broker [::tclwire::tpba_test::new_broker]
@@ -338,12 +445,15 @@ test tpba-1.11 {connection pools use concurrent connection workload metric} -bod
             [dict create maximum_workers 1] \
             [dict create kind connection_agent protocol http]
         set worker_id [$broker acquire_worker connection:http]
-        set reported [$broker report_workload connection:http $worker_id 2 3]
+        ::tclwire::tpba_test::workload_transition \
+            $broker $worker_id connection:http connection-open
+        set reported [::tclwire::tpba_test::workload_transition \
+            $broker $worker_id connection:http connection-open]
         dict get $reported combined_workload
     } finally {
         $broker destroy
     }
-} -result 13
+} -result 12
 
 test tpba-1.11.1 {connection metric validates max_conn_per_thread} -body {
     set broker [::tclwire::tpba_test::new_broker]
@@ -367,8 +477,12 @@ test tpba-1.12 {idle allocation selects the lowest combined workload} -body {
             [dict create kind application application balanced]
         set first [$broker acquire_worker app:balanced]
         set second [$broker acquire_worker app:balanced]
-        $broker report_workload app:balanced $first 0 10
-        $broker report_workload app:balanced $second 0 1
+        for {set i 0} {$i < 10} {incr i} {
+            ::tclwire::tpba_test::workload_transition \
+                $broker $first app:balanced request-processed
+        }
+        ::tclwire::tpba_test::workload_transition \
+            $broker $second app:balanced request-processed
         $broker release_worker app:balanced $first
         $broker release_worker app:balanced $second
         set selected [$broker acquire_worker app:balanced]
@@ -378,17 +492,31 @@ test tpba-1.12 {idle allocation selects the lowest combined workload} -body {
     }
 } -result 1
 
-test tpba-1.13 {workload reports validate pool ownership} -body {
+test tpba-1.13 {workload notifications validate pool ownership} -body {
     set broker [::tclwire::tpba_test::new_broker]
     try {
         $broker create_pool app:owned {worker script} \
             [dict create maximum_workers 1] \
             [dict create kind application application owned]
-        catch {$broker report_workload app:owned missing-worker 0 1} message
+        catch {::tclwire::tpba_test::workload_transition \
+            $broker missing-worker app:owned request-processed} message
         set message
     } finally {
         $broker destroy
     }
 } -result {Thread missing-worker is not owned by pool app:owned}
+
+test tpba-1.14 {workload notifications require strict three-field form} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        set response [$broker execute_command [dict create \
+            operation thread_workload_changed \
+            notification [list worker app:owned]]]
+        set message [dict get $response error]
+        set message
+    } finally {
+        $broker destroy
+    }
+} -result {workload notification must be {thread_id pool_key transition_id}}
 
 cleanupTests

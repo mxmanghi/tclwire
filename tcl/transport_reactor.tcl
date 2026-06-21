@@ -170,8 +170,9 @@ oo::class create ::tclwire::TransportReactor {
             }
 
             ::thread::wait
+            catch {::tclwire::tpba notify_workload_transition %s thread-exit}
             ::tclwire::accounting remove_thread [::thread::id]
-        } [list $project_root] [list $agent_package]]
+        } [list $project_root] [list $agent_package] [list $pool_key]]
     }
 
     method destroy_pool {} {
