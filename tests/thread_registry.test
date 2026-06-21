@@ -57,6 +57,32 @@ test thread-registry-1.3 {registration is owned by the accounting API} -body {
     }
 } -result {allocated ftp {} 0}
 
+test thread-registry-1.3a {thread workload fields are mirrored in accounting} -body {
+    set thread_id registry-workload-thread
+    catch {::tclwire::accounting remove_thread $thread_id}
+    try {
+        ::tclwire::accounting register_thread $thread_id allocated ftp
+        set initial [::tclwire::accounting get_thread_account $thread_id]
+        ::tclwire::accounting update_thread_workload $thread_id \
+            [dict create running_workload 2 cumulative_workload 5 combined_workload 15]
+        set updated [::tclwire::accounting get_thread_account $thread_id]
+        catch {
+            ::tclwire::accounting update_thread_workload $thread_id \
+                [dict create running_workload invalid]
+        } message
+        list \
+            [dict get $initial running_workload] \
+            [dict get $initial cumulative_workload] \
+            [dict get $initial combined_workload] \
+            [dict get $updated running_workload] \
+            [dict get $updated cumulative_workload] \
+            [dict get $updated combined_workload] \
+            $message
+    } finally {
+        ::tclwire::accounting remove_thread $thread_id
+    }
+} -result {0 0 0 2 5 15 {running_workload must be a non-negative integer}}
+
 test thread-registry-1.4 {TPBA-created workers are registered by ThreadMaster} -body {
     set worker_script [format {
         lappend auto_path %s

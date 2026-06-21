@@ -233,7 +233,6 @@ namespace eval ::tclwire {
     variable connection_finished_thread {}
     variable connection_finished_command {}
     variable connection_pool_key {}
-    variable cumulative_connection_count 0
 
     proc prepare_connection_channel {channel transport_config} {
         if {$transport_config eq {} ||
@@ -282,7 +281,6 @@ namespace eval ::tclwire {
         variable connection_finished_thread
         variable connection_finished_command
         variable connection_pool_key
-        variable cumulative_connection_count
 
         if {$connection_agent ne {}} {
             error "connection worker is already active"
@@ -296,7 +294,6 @@ namespace eval ::tclwire {
         set connection_pool_key         $pool_key
         ::tclwire::accounting change_thread_status \
             [::thread::id] running [list $agent_class $connection_id]
-        incr cumulative_connection_count
         if {[catch {
             set conn_channel [prepare_connection_channel $conn_channel $transport_config]
             ::tclwire::accounting update_connection $connection_key \
@@ -323,12 +320,10 @@ namespace eval ::tclwire {
                 ::thread::send -async $connection_finished_thread $callback
             }
             if {$connection_pool_key ne {}} {
-                catch {::tclwire::tpba request [dict create \
-                    operation report_workload \
-                    pool_key $connection_pool_key \
-                    worker_id [::thread::id] \
-                    running_workload 0 \
-                    cumulative_workload $cumulative_connection_count]}
+                catch {
+                    ::tclwire::tpba notify_workload_transition \
+                        $connection_pool_key idle-connection-agent
+                }
             }
             set connection_finished_thread {}
             set connection_finished_command {}
@@ -336,12 +331,10 @@ namespace eval ::tclwire {
             return {}
         }
         if {$connection_pool_key ne {}} {
-            catch {::tclwire::tpba request [dict create \
-                operation report_workload \
-                pool_key $connection_pool_key \
-                worker_id [::thread::id] \
-                running_workload 1 \
-                cumulative_workload $cumulative_connection_count]}
+            catch {
+                ::tclwire::tpba notify_workload_transition \
+                    $connection_pool_key connection-open
+            }
         }
         return $connection_agent
     }
@@ -359,7 +352,6 @@ namespace eval ::tclwire {
         variable connection_finished_thread
         variable connection_finished_command
         variable connection_pool_key
-        variable cumulative_connection_count
 
         set connection_id {}
         if {$connection_agent eq $agent} {
@@ -369,12 +361,10 @@ namespace eval ::tclwire {
         }
 
         if {$connection_pool_key ne {}} {
-            catch {::tclwire::tpba request [dict create \
-                operation report_workload \
-                pool_key $connection_pool_key \
-                worker_id [::thread::id] \
-                running_workload 0 \
-                cumulative_workload $cumulative_connection_count]}
+            catch {
+                ::tclwire::tpba notify_workload_transition \
+                    $connection_pool_key connection-closed
+            }
         }
         if {($connection_finished_thread ne {}) && \
             [::thread::exists $connection_finished_thread]} {

@@ -43,21 +43,21 @@ pools, where a running worker may still have capacity for more connections.
 
 ## Workload Vocabulary
 
-Workers report two raw values:
+Worker pools maintain two raw workload values for each worker:
 
 | Value | Meaning |
 | --- | --- |
 | `running_workload` | Current active workload. For current CGA workers this is normally `0` when reported. For connection-agent workers it is the current number of active connections. |
 | `cumulative_workload` | Historical work completed or accepted by the worker. For CGAs this is completed request count. For connection-agent workers this is accepted connection count. |
 
-The selected metric mixin computes a combined workload index, or CWI, from
-those raw values.
+The selected metric mixin interprets worker transition notifications and
+computes a combined workload index, or CWI, from those raw values.
 
-The TPBA stores workload records in a private dictionary keyed first by pool
-key and then by worker thread id:
+The workload database is pool-local. Each `ThreadMaster` stores workload
+records keyed by worker thread id:
 
 ```text
-pool_key -> worker_id -> workload record
+ThreadMaster -> worker_id -> workload record
 ```
 
 Each workload record contains:
@@ -71,7 +71,8 @@ Each workload record contains:
 
 `ThreadMaster` does not encode any specific metric policy. It stores only an
 opaque `metric_options` dictionary and delegates option configuration and CWI
-calculation to the selected metric mixin.
+calculation to the selected metric mixin. The metric mixin also interprets
+transition ids reported by workers through TPBA.
 
 ### PlainMetric
 
@@ -84,7 +85,12 @@ CWI = cumulative_workload
 ```
 
 This keeps CGA balancing simple: after a worker completes a request and becomes
-idle, workers with fewer completed requests are preferred.
+idle, workers with fewer completed requests are preferred. The relevant CGA
+transition is:
+
+```text
+request-processed
+```
 
 ### ConcurrentConnectionMetric
 
@@ -105,39 +111,68 @@ CWI = max_conn_per_thread * running_workload + cumulative_workload
 ```
 
 The multiplication makes active connection count dominate historical work for
-normal values. In a future capacity-aware allocator, this metric should be used
-only after an eligibility check confirms that the worker is still below
-`max_conn_per_thread`.
+normal values. The connection metric also has the information needed for the
+future eligibility predicate: a worker can accept more work while its
+`running_workload` is below `max_conn_per_thread`. The current runtime still
+keeps allocation idle-only because connection-agent workers are not yet
+multi-agent.
 
-## Implemented First Step
+The current connection-agent transitions are:
 
-The implemented first step adds TPBA-visible metrics without changing the
-current single-connection-per-worker runtime model.
+```text
+connection-open
+connection-closed
+new-connection-processing
+idle-connection-agent
+```
+
+All worker classes may also notify:
+
+```text
+thread-start
+thread-exit
+```
+
+## Implemented Workload Management
+
+The implemented workload-management step moves workload ownership into each
+thread pool while keeping TPBA as the router for worker notifications.
 
 Implemented behavior:
 
-- TPBA owns a workload database keyed by pool key and worker id.
-- TPBA exposes `report_workload`.
-- TPBA exposes `pool_workloads`.
-- `pool_status` includes the workload table.
-- `ThreadMaster` can compute workload records through its selected metric.
-- `ThreadMaster` selects the idle worker with the lowest CWI when TPBA passes
-  a workload table into `acquire_worker`.
-- CGA workers report cumulative completed request count at the end of request
-  processing, before releasing themselves back to the TPBA pool.
-- connection-agent workers report workload on connection startup and
-  connection finish.
+- Each `ThreadMaster` owns the workload database for its pool.
+- Each `ThreadMaster` owns its `eligible_threads_list`.
+- TPBA routes worker transition notifications to the correct pool.
+- `pool_status` exposes workload data through `stats workloads`.
+- `ThreadMaster` computes workload records through its selected metric.
+- `ThreadMaster` selects the eligible idle worker with the lowest CWI.
+- `PlainMetric` keeps ordinary pools idle-only.
+- `ConcurrentConnectionMetric` tracks active connection count and computes CWI
+  with `max_conn_per_thread`.
+- CGA workers notify `request-processed` at the end of request processing.
+- Connection-agent workers notify `connection-open` and `connection-closed`.
 - connection-agent workers still host only one active connection agent.
+- The shared thread accounting record mirrors `running_workload`,
+  `cumulative_workload`, and `combined_workload`.
 
-The implemented command shape is:
+Workers should use the helper procedure:
+
+```tcl
+::tclwire::tpba notify_workload_transition $pool_key $transition_id
+```
+
+That helper emits the strict notification list:
+
+```tcl
+list [::thread::id] $pool_key $transition_id
+```
+
+The TPBA command shape is:
 
 ```tcl
 ::tclwire::tpba request [dict create \
-    operation report_workload \
-    pool_key $pool_key \
-    worker_id $worker_id \
-    running_workload $running_workload \
-    cumulative_workload $cumulative_workload]
+    operation thread_workload_changed \
+    notification [list $worker_id $pool_key $transition_id]]
 ```
 
 The command validates that:
@@ -145,12 +180,9 @@ The command validates that:
 - the pool exists;
 - the pool is active;
 - the worker is owned by that pool;
-- workload values are non-negative integers.
+- the notification is exactly `{thread_id pool_key transition_id}`.
 
 ## Current Limitations
-
-The workload-aware allocator still only selects idle workers. This is
-intentional for the first step.
 
 Connection-agent workers are not yet concurrent. The current runtime still has
 single-connection assumptions:
@@ -160,9 +192,9 @@ single-connection assumptions:
 - the reactor currently maps one worker id to one active connection key;
 - per-connection completion releases the whole worker back to the pool.
 
-Because of these invariants, `ConcurrentConnectionMetric` currently reports
-useful workload data but does not yet make running connection-agent workers
-eligible for additional connections.
+Because of these invariants, the allocator still gates actual selection to
+idle workers. Full runtime support for selecting running connection-agent
+workers still requires the future connection-agent concurrency changes below.
 
 ## Future Connection-Agent Concurrency
 
@@ -207,22 +239,21 @@ That ordering would make the priority explicit: prefer fewer active
 connections first, then lower historical load, then deterministic or
 round-robin tie breaking.
 
-The scalar CWI is acceptable for the first instrumentation step because
-connection workers are still selected only when idle. The tuple approach should
-be reconsidered before enabling running connection-agent workers as allocation
-candidates.
+The scalar CWI is acceptable for the current pool-level implementation. The
+tuple approach should be reconsidered before the connection-agent runtime is
+made fully concurrent.
 
 ## Tests
 
 Current focused tests cover:
 
-- workload reporting through TPBA;
-- workload visibility through `pool_workloads` and `pool_status`;
+- workload transition notification through TPBA;
+- workload visibility through `pool_status`;
 - `PlainMetric` CWI calculation;
 - `ConcurrentConnectionMetric` default `max_conn_per_thread`;
 - validation of invalid `max_conn_per_thread`;
 - lowest-CWI idle-worker selection;
-- ownership validation for workload reports.
+- ownership validation for workload notifications.
 
 Focused test commands:
 
@@ -230,4 +261,3 @@ Focused test commands:
 tclsh tests/tpba.test
 tclsh tests/thread_registry.test
 ```
-

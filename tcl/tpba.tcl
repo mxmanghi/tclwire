@@ -14,7 +14,6 @@ if {![::tclwire::accounting is_initialized]} {
 
 oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     variable pools
-    variable workloads
     variable thread_master_factory
 
     constructor args {
@@ -32,7 +31,6 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         }
 
         set pools [dict create]
-        set workloads [dict create]
         set thread_master_factory $options(-threadmasterfactory)
     }
 
@@ -61,12 +59,11 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             error "pool descriptor must define kind or role"
         }
 
-        set prefixes [dict create \
-            application app \
-            connection connection \
-            connection_agent connection \
-            protocol protocol \
-            transport transport]
+        set prefixes [dict create application   app         \
+                                  connection    connection  \
+                                  connection_agent connection \
+                                  protocol      protocol    \
+                                  transport     transport]
         if {[dict exists $prefixes $kind]} {
             set prefix [dict get $prefixes $kind]
         } else {
@@ -208,7 +205,6 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                                 created_at      [clock seconds] \
                                 thread_master   $master]
         dict set pools $pool_key $record
-        dict set workloads $pool_key [dict create]
 
         if {[catch {
             set reserved {}
@@ -226,7 +222,6 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             catch {$master stop_threads}
             catch {$master destroy}
             dict unset pools $pool_key
-            dict unset workloads $pool_key
             return -options $options $error
         }
 
@@ -243,7 +238,6 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             catch {$master destroy}
         }
         dict unset pools $pool_key
-        dict unset workloads $pool_key
         return $pool_key
     }
 
@@ -253,8 +247,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             error "thread pool is not active: [dict get $record pool_key]"
         }
         set master [dict get $record thread_master]
-        set workload_table [dict get $workloads [dict get $record pool_key]]
-        return [$master acquire_worker $workload_table]
+        return [$master acquire_worker]
     }
 
     method release_worker {pool_key worker_id} {
@@ -271,21 +264,17 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         if {$master eq {}} {
             return true
         }
-        if {[dict exists $workloads $pool_key $worker_id]} {
-            dict unset workloads $pool_key $worker_id
-        }
         return [$master remove_thread $worker_id]
     }
 
-    method validate_workload_value {name value} {
-        if {![string is integer -strict $value] || $value < 0} {
-            error "$name must be a non-negative integer"
+    method dispatch_workload_notification {notification} {
+        if {[llength $notification] != 3} {
+            error "workload notification must be {thread_id pool_key transition_id}"
         }
-        return $value
-    }
-
-    method report_workload {pool_key worker_id running_workload cumulative_workload} {
-        set pool_key [my normalize_pool_key $pool_key]
+        lassign $notification worker_id pool_key transition_id
+        if {$worker_id eq {} || $pool_key eq {} || $transition_id eq {}} {
+            error "workload notification fields must not be empty"
+        }
         set record [my require_pool $pool_key]
         set master [dict get $record thread_master]
         if {$master eq {}} {
@@ -294,21 +283,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         if {![$master owns_thread $worker_id]} {
             error "Thread $worker_id is not owned by pool $pool_key"
         }
-        set running_workload [my validate_workload_value running_workload $running_workload]
-        set cumulative_workload [my validate_workload_value cumulative_workload $cumulative_workload]
-        set workload_record \
-            [$master workload_record $worker_id $running_workload $cumulative_workload]
-        dict set workloads $pool_key $worker_id $workload_record
-        return $workload_record
-    }
-
-    method pool_workloads {pool_key} {
-        set pool_key [my normalize_pool_key $pool_key]
-        my require_pool $pool_key
-        if {![dict exists $workloads $pool_key]} {
-            return [dict create]
-        }
-        return [dict get $workloads $pool_key]
+        return [$master thread_workload_changed $worker_id $transition_id]
     }
 
     method resize_pool {pool_key limits} {
@@ -342,7 +317,6 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         }
 
         return [dict merge $record [dict create thread_master {} \
-                                                workloads     [my pool_workloads [dict get $record pool_key]] \
                                                 stats         $stats]]
     }
 
@@ -415,14 +389,9 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                     set result [my remove_worker [my command_value $command pool_key] \
                                                  [my command_value $command worker_id]]
                 }
-                report_workload {
-                    set result [my report_workload [my command_value $command pool_key] \
-                                                   [my command_value $command worker_id] \
-                                                   [my command_value $command running_workload] \
-                                                   [my command_value $command cumulative_workload]]
-                }
-                pool_workloads {
-                    set result [my pool_workloads [my command_value $command pool_key]]
+                thread_workload_changed {
+                    set result [my dispatch_workload_notification \
+                        [my command_value $command notification]]
                 }
                 resize_pool {
                     set result [my resize_pool [my command_value $command pool_key] \
@@ -458,7 +427,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     }
 
     unexport command_value normalize_pool_key normalize_policy pool_family require_pool \
-        metric_class validate_workload_value
+        metric_class dispatch_workload_notification
 }
 
 if {[info commands ::tclwire::TPBA] eq {}} {

@@ -29,6 +29,9 @@
 #	- status: current status (created, allocated, idle, running, terminating)
 #	- family: protocol or execution family assigned by the pool owner
 #	- http_host: current or most recently observed Host header for HTTP(S) workers
+#	- running_workload: non-negative integer current workload
+#	- cumulative_workload: non-negative integer cumulative workload
+#	- combined_workload: non-negative integer combined workload index
 #
 #  connection accounting:
 #
@@ -90,7 +93,10 @@ namespace eval ::tclwire::accounting {
                           command           {} \
                           status            $status \
                           family            $family \
-                          http_host         $http_host]
+                          http_host         $http_host \
+                          running_workload  0 \
+                          cumulative_workload 0 \
+                          combined_workload 0]
         return $account
     }
 
@@ -152,6 +158,31 @@ namespace eval ::tclwire::accounting {
             }
             ::tsv::keylset tclwire accounting $tid $thread_d
         }
+    }
+
+    proc update_thread_workload {tid fields} {
+        initialize
+        foreach field {running_workload cumulative_workload combined_workload} {
+            if {[dict exists $fields $field]} {
+                set value [dict get $fields $field]
+                if {![string is integer -strict $value] || $value < 0} {
+                    error "$field must be a non-negative integer"
+                }
+            }
+        }
+        ::tsv::lock tclwire {
+            if {![::tsv::keylget tclwire accounting $tid thread_d]} {
+                error "Thread $tid account doesn't exist"
+            }
+            foreach {field value} $fields {
+                if {$field ni {running_workload cumulative_workload combined_workload}} {
+                    error "unknown thread workload field '$field'"
+                }
+                dict set thread_d $field $value
+            }
+            ::tsv::keylset tclwire accounting $tid $thread_d
+        }
+        return $tid
     }
 
     proc set_thread_http_host {tid http_host} {
