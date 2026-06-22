@@ -57,12 +57,33 @@ thread::send $tpba_thread_id \
 ```
 
 The request dictionary contains an `operation`, such as `create_pool`,
-`acquire_worker`, `release_worker`, or `destroy_pool`. The response is a
-dictionary with `ok`, `result` on success, or `error` on failure.
+`pool_key`, `acquire_worker`, `release_worker`, `remove_worker`,
+`thread_workload_changed`, `resize_pool`, `pool_status`, `list_pools`,
+`shutdown_pool`, or `destroy_pool`. The response is a dictionary with `ok`,
+`correlation_id`, `result` on success, or `error` and `errorcode` on failure.
 
 The TPBA thread owns `ThreadMaster` objects. Each `ThreadMaster` owns the
 policy and lifecycle for one worker pool and starts workers with
 `thread::create`.
+
+Workers do not call `ThreadMaster` directly. When a worker observes a workload
+transition it calls:
+
+```tcl
+::tclwire::tpba notify_workload_transition $pool_key $transition_id
+```
+
+The client-side helper sends this TPBA command:
+
+```tcl
+dict create \
+    operation thread_workload_changed \
+    notification [list [::thread::id] $pool_key $transition_id]
+```
+
+The notification is strictly `{thread_id pool_key transition_id}`. The TPBA
+validates that the pool exists and that the reporting thread is owned by that
+pool before forwarding the transition to the pool's `ThreadMaster`.
 
 ### Connection-Agent Workers
 
@@ -165,9 +186,27 @@ pool registry / worker lifecycle
 
 Pool control is request/response oriented. `TransportReactor` uses it to create
 and destroy connection-agent pools and to acquire or release connection-agent
-workers. `ApplicationDispatcher` uses it to create application pools and
-acquire CGA workers. CGA workers use it to release themselves after request
-processing.
+workers. `ApplicationDispatcher` uses it to derive application pool keys,
+create application pools, destroy them, and acquire CGA workers.
+
+Workers also send request/response messages to the TPBA, but only for worker
+lifecycle and workload notifications:
+
+```text
+worker thread
+    |
+    | ::tclwire::tpba notify_workload_transition $pool_key $transition_id
+    v
+TPBA thread
+    |
+    | validate {thread_id pool_key transition_id}
+    v
+ThreadMaster thread_workload_changed
+```
+
+These messages update pool workload accounting and can return a worker to the
+idle set. They do not carry accepted channels, request descriptors, response
+data, or application output.
 
 ### Accepted Transport Connection
 
@@ -202,6 +241,15 @@ The startup command also sends a completion callback route:
 plus the listener/runtime thread id. The connection-agent worker stores both
 values and uses them when the connection closes.
 
+After the connection agent is constructed, the worker reports:
+
+```tcl
+::tclwire::tpba notify_workload_transition $pool_key connection-open
+```
+
+If startup fails before the agent is ready, it reports
+`idle-connection-agent` instead so the pool slot can be made eligible again.
+
 ### Connection Completion
 
 ```text
@@ -211,17 +259,25 @@ ConnectionAgent close
     v
 connection-agent worker thread
     |
+    | ::tclwire::tpba notify_workload_transition $pool_key connection-closed
+    v
+TPBA updates connection workload and may mark worker idle
+    |
     | asynchronous thread::send listener_thread callback
     v
 TransportReactor connection_finished
     |
     | ::tclwire::tpba request {operation release_worker ...}
     v
-TPBA releases worker to pool
+TPBA release boundary
 ```
 
-The completion callback removes listener-side bookkeeping, logs the close
-snapshot, and releases the worker back to the connection-agent pool.
+The connection-agent worker reports `connection-closed` before notifying the
+listener. The TPBA's concurrent-connection metric decrements the worker's
+running workload and returns the worker to the idle set when no connections
+remain. The listener-side completion callback removes reactor bookkeeping,
+logs the close snapshot, and calls `release_worker` as an idempotent pool
+release boundary.
 
 ### HTTP Request Dispatch
 
@@ -294,16 +350,23 @@ it commits headers and writes chunks as output events arrive.
 ```text
 CGA finally block
     |
-    | ::tclwire::tpba request {operation release_worker pool_key app:* worker_id self}
+    | ::tclwire::tpba notify_workload_transition $pool_key request-processed
     v
 TPBA thread
     |
     v
-ThreadMaster returns worker to idle state
+ThreadMaster records workload and returns worker to idle state
 ```
 
-The CGA releases itself in a `finally` block after ending the output
-transaction and destroying request/application objects.
+The CGA reports `request-processed` in a `finally` block after ending the
+output transaction and destroying request/application objects. The TPBA's plain
+workload metric increments cumulative workload, clears running workload, and
+returns the worker to the idle set.
+
+Application and connection worker scripts also report `thread-exit` before
+removing their accounting record during interpreter shutdown. Application
+workers additionally request `remove_worker` so their pool no longer retains a
+stale owned-thread entry.
 
 ### Logging
 
@@ -352,6 +415,8 @@ first stop any active connection agent, then release their Tcl thread.
 | Connection-agent worker | TransportReactor thread | `thread::send -async` | completion callback | No |
 | HttpConnectionAgent | CGA worker | `thread::send -async` | `::tclwire::cga::execute` command and request descriptor | No |
 | CGA worker | HttpConnectionAgent thread | `thread::send -async` | application output event dictionary | No |
+| Connection-agent worker | TPBA | `thread::send` | `thread_workload_changed` notification: `connection-open`, `connection-closed`, `idle-connection-agent`, `thread-exit` | Yes |
+| CGA worker | TPBA | `thread::send` | `thread_workload_changed` notification: `request-processed`, `thread-exit`; optional `remove_worker` | Yes |
 | ThreadMaster | Worker thread | `thread::send -async` | `demand_thread_exit` or submitted command | No |
 | Any worker | Shared accounting | `tsv::lock` APIs | thread and connection status fields | Immediate shared-state update |
 
@@ -369,6 +434,9 @@ first stop any active connection agent, then release their Tcl thread.
   through the accounting API.
 - Pool policy and worker ownership live in the TPBA thread, even though worker
   status is mirrored into shared accounting.
+- Workers may publish observed workload transitions, but the TPBA remains the
+  authority that validates ownership and applies pool lifecycle/accounting
+  effects.
 
 ## Error and Backpressure Behavior
 
@@ -429,4 +497,3 @@ HttpConnectionAgent validates event sequence and writes response
     v
 connection closes and worker completion releases pool slot
 ```
-

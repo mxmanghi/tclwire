@@ -257,19 +257,12 @@ namespace eval ::tclwire {}
     method store_workload_record {thread_id record} {
         set running_workload [dict get $record running_workload]
         set cumulative_workload [dict get $record cumulative_workload]
-        foreach {name value} [list \
-                running_workload $running_workload \
-                cumulative_workload $cumulative_workload] {
-            if {![string is integer -strict $value] || $value < 0} {
-                error "$name must be a non-negative integer"
-            }
-        }
         set record [my workload_record $thread_id $running_workload $cumulative_workload]
         dict set workload_db $thread_id $record
-        catch {$accounting update_thread_workload $thread_id [dict create \
-            running_workload [dict get $record running_workload] \
-            cumulative_workload [dict get $record cumulative_workload] \
-            combined_workload [dict get $record combined_workload]]}
+
+        set up_to_date_rec [dict filter $record key running_workload cumulative_workload combined_workload]
+        $accounting update_thread_workload $thread_id $up_to_date_rec
+
         set status [my thread_status $thread_id]
         if {[my thread_eligible_for_workload $thread_id $record $status]} {
             my mark_thread_eligible $thread_id
@@ -277,6 +270,7 @@ namespace eval ::tclwire {}
             my unmark_thread_eligible $thread_id
         }
         return $record
+
     }
 
     method candidate_workload {thread_id} {
