@@ -450,6 +450,7 @@ encoding = "utf-8"
     ::tclwire::runtime start [list \
         --config $slow_config \
         --conn-max-workers 1 \
+        --conn-max-per-thread 1 \
         --conn-max-wait 1000]
 
     set first [socket 127.0.0.1 8990]
@@ -499,6 +500,105 @@ encoding = "utf-8"
     removeFile $slow_application
 } -result {1 1 1 1 1 1}
 
+test http-connection-1.5aa {one connection worker handles concurrent connections up to configured limit} -setup {
+    set slow_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::ConcurrentSlowApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request_descriptor} {
+        after 500
+        ::tclwire::io response 200 OK \
+            [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+        ::tclwire::io out concurrent-ok
+    }
+}
+} concurrent-slow-application.tcl]
+    set slow_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+logerr = "%s"
+log_level = "debug"
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::ConcurrentSlowApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $::tclwire::http_connection_test::logerr \
+   $slow_application \
+   $project_root] concurrent-slow-config.toml]
+} -body {
+    ::tclwire::runtime start [list \
+        --config $slow_config \
+        --conn-max-workers 1 \
+        --conn-max-per-thread 2 \
+        --conn-max-wait 0]
+
+    set first [socket 127.0.0.1 8990]
+    chan configure $first -blocking 0 -buffering none -translation binary
+    puts -nonewline $first \
+        "GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $first
+
+    after 50
+    update
+
+    set second [socket 127.0.0.1 8990]
+    chan configure $second -blocking 0 -buffering none -translation binary
+    puts -nonewline $second \
+        "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $second
+
+    set responses [dict create $first {} $second {}]
+    set deadline [expr {[clock milliseconds] + 5000}]
+    while {[clock milliseconds] < $deadline &&
+            (! [eof $first] || ! [eof $second])} {
+        update
+        foreach channel [list $first $second] {
+            if {![eof $channel]} {
+                dict append responses $channel [read $channel]
+            }
+        }
+        after 5
+    }
+    foreach channel [list $first $second] {
+        dict append responses $channel [read $channel]
+        catch {close $channel}
+    }
+
+    set reactor [::tclwire::runtime transport_reactor]
+    set status [::tclwire::tpba request [dict create \
+        operation pool_status \
+        pool_key [$reactor pool_key]]]
+    set workloads [dict get $status result stats workloads]
+    set worker_id [lindex [dict keys $workloads] 0]
+    set log [::tclwire::http_connection_test::error_log_contents]
+    ::tclwire::runtime stop
+    list \
+        [string match "HTTP/1.1 200 OK*" [dict get $responses $first]] \
+        [string match "*concurrent-ok" [dict get $responses $first]] \
+        [string match "HTTP/1.1 200 OK*" [dict get $responses $second]] \
+        [string match "*concurrent-ok" [dict get $responses $second]] \
+        [dict get $status result stats live_threads_number] \
+        [dict get $status result stats workloads $worker_id running_workload] \
+        [dict get $status result stats workloads $worker_id cumulative_workload] \
+        [string match {*event=connection_queued*} $log]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $slow_config
+    removeFile $slow_application
+} -result {1 1 1 1 1 0 2 0}
+
 test http-connection-1.5b {deferred connection timeout close is logged at crit severity} -setup {
     set slow_application [makeFile {
 package require tclwire::application 0.1
@@ -540,6 +640,7 @@ encoding = "utf-8"
     ::tclwire::runtime start [list \
         --config $slow_config \
         --conn-max-workers 1 \
+        --conn-max-per-thread 1 \
         --conn-max-wait 0]
 
     set first [socket 127.0.0.1 8990]

@@ -151,6 +151,68 @@ test console-protocol-1.2b {CONF returns global service and host configuration r
     }
 } -result {true true {scope name value} 1 1 1}
 
+test console-protocol-1.2c {CWORK returns connection worker workload rows} -body {
+    set worker_id console-worker-thread
+    set app_worker_id console-app-thread
+    set first console-http#worker-1
+    set second console-http#worker-2
+    foreach thread_id [list $worker_id $app_worker_id] {
+        catch {::tclwire::accounting remove_thread $thread_id}
+    }
+    foreach key [list $first $second] {
+        catch {::tclwire::accounting remove_connection $key}
+    }
+    try {
+        ::tclwire::accounting register_thread $worker_id running http
+        ::tclwire::accounting update_thread_workload $worker_id \
+            [dict create running_workload 2 cumulative_workload 9 \
+                         combined_workload 19]
+        ::tclwire::accounting register_thread $app_worker_id idle application
+        ::tclwire::accounting update_thread_workload $app_worker_id \
+            [dict create running_workload 0 cumulative_workload 4 \
+                         combined_workload 4]
+        ::tclwire::accounting record_connection_opened $first \
+            [dict create connection_id 1 protocol http service_id http:8990 \
+                         listener_port 8990 worker_thread_id $worker_id]
+        ::tclwire::accounting record_connection_opened $second \
+            [dict create connection_id 2 protocol http service_id http:8990 \
+                         listener_port 8990 worker_thread_id $worker_id]
+        set response [::json::json2dict [::tclwire::console dispatch CWORK]]
+        set rows [dict get $response rows]
+        set found 0
+        set excluded 1
+        foreach row $rows {
+            if {[dict get $row worker_id] eq $worker_id} {
+                set found [expr {
+                    [dict get $row connection_state] eq "active" &&
+                    [dict get $row family] eq "http" &&
+                    [dict get $row active_connections] == 2 &&
+                    [dict get $row cumulative_connections] == 9 &&
+                    [dict get $row combined_workload] == 19 &&
+                    [string match "*$first*" [dict get $row connection_keys]] &&
+                    [string match "*$second*" [dict get $row connection_keys]]
+                }]
+            }
+            if {[dict get $row worker_id] eq $app_worker_id} {
+                set excluded 0
+            }
+        }
+        list \
+            [dict get $response ok] \
+            [dict get $response command] \
+            [dict get $response columns] \
+            $found \
+            $excluded
+    } finally {
+        foreach thread_id [list $worker_id $app_worker_id] {
+            catch {::tclwire::accounting remove_thread $thread_id}
+        }
+        foreach key [list $first $second] {
+            catch {::tclwire::accounting remove_connection $key}
+        }
+    }
+} -result {true CWORK {worker_id connection_state family active_connections cumulative_connections combined_workload connection_keys} 1 1}
+
 test console-protocol-1.3 {console command errors use JSON error shape} -body {
     set response [::json::json2dict [::tclwire::console dispatch {CONN -bad x}]]
     set error [dict get $response error]

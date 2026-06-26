@@ -16,6 +16,7 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
     variable metric_options
     variable workloads
     variable eligible
+    variable reservations
 
     constructor {worker_script maximum {family {}}} {
         set maximum_workers $maximum
@@ -24,6 +25,7 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
         set metric_options [dict create]
         set workloads [dict create]
         set eligible {}
+        set reservations [dict create]
     }
 
     method configure_metric {class options} {
@@ -67,7 +69,7 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
         }
         set status [dict get $workers $worker_id]
         if {$metric_class eq "::tclwire::ConcurrentConnectionMetric"} {
-            if {$status ne "idle"} {
+            if {$status ni {idle running}} {
                 return false
             }
             if {![dict exists $workloads $worker_id running_workload]} {
@@ -163,11 +165,30 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
             }
             connection-open -
             new-connection-processing {
-                dict incr record running_workload
-                dict incr record cumulative_workload
+                if {$transition_id eq "new-connection-processing"} {
+                    dict incr record running_workload
+                    dict incr record cumulative_workload
+                    dict incr reservations $worker_id
+                } elseif {[dict exists $reservations $worker_id] &&
+                        [dict get $reservations $worker_id] > 0} {
+                    dict incr reservations $worker_id -1
+                    if {[dict get $reservations $worker_id] == 0} {
+                        dict unset reservations $worker_id
+                    }
+                } else {
+                    dict incr record running_workload
+                    dict incr record cumulative_workload
+                }
                 dict set workers $worker_id running
             }
             connection-closed {
+                if {[dict exists $reservations $worker_id] &&
+                        [dict get $reservations $worker_id] > 0} {
+                    dict incr reservations $worker_id -1
+                    if {[dict get $reservations $worker_id] == 0} {
+                        dict unset reservations $worker_id
+                    }
+                }
                 set running_workload [dict get $record running_workload]
                 if {$running_workload > 0} {
                     dict set record running_workload [expr {$running_workload - 1}]
@@ -454,6 +475,46 @@ test tpba-1.11 {connection pools use concurrent connection workload metric} -bod
         $broker destroy
     }
 } -result 12
+
+test tpba-1.11.0 {connection pools select running workers below connection limit} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool connection:http {worker script} \
+            [dict create maximum_workers 1 max_conn_per_thread 2] \
+            [dict create kind connection_agent protocol http]
+        set first [$broker acquire_worker connection:http]
+        ::tclwire::tpba_test::workload_transition \
+            $broker $first connection:http connection-open
+        set second [$broker acquire_worker connection:http]
+        ::tclwire::tpba_test::workload_transition \
+            $broker $second connection:http connection-open
+        set exhausted [$broker acquire_worker connection:http]
+        list [expr {$first eq $second}] $exhausted
+    } finally {
+        $broker destroy
+    }
+} -result {1 {}}
+
+test tpba-1.11.0a {connection processing reservations count against the connection limit} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool connection:http {worker script} \
+            [dict create maximum_workers 1 max_conn_per_thread 1] \
+            [dict create kind connection_agent protocol http]
+        set worker_id [$broker acquire_worker connection:http]
+        ::tclwire::tpba_test::workload_transition \
+            $broker $worker_id connection:http new-connection-processing
+        set exhausted [$broker acquire_worker connection:http]
+        ::tclwire::tpba_test::workload_transition \
+            $broker $worker_id connection:http connection-open
+        set status [$broker pool_status connection:http]
+        list $exhausted \
+            [dict get $status stats workloads $worker_id running_workload] \
+            [dict get $status stats workloads $worker_id cumulative_workload]
+    } finally {
+        $broker destroy
+    }
+} -result {{} 1 1}
 
 test tpba-1.11.1 {connection metric validates max_conn_per_thread} -body {
     set broker [::tclwire::tpba_test::new_broker]

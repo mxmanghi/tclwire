@@ -43,6 +43,26 @@ retained closed or failed rows and the close diagnostics `closed_at`,
 `configuration` object containing `debug_connection`, so clients can infer the
 shape from the server-provided configuration metadata.
 
+### `CWORK`
+
+Returns connection worker thread workload rows. This is a connection-focused
+view over thread accounting and connection accounting.
+
+Arguments: none.
+
+Columns:
+
+- `worker_id`: connection worker thread id;
+- `connection_state`: `active` when at least one live connection is assigned
+  to the worker, otherwise `idle`;
+- `family`: protocol family, such as `http`, `ftp`, or `proxy`;
+- `active_connections`: live connection records currently assigned to the
+  worker;
+- `cumulative_connections`: accepted connection count since worker creation;
+- `combined_workload`: current CWI used by pool selection;
+- `connection_keys`: space-separated accounting keys for those live
+  connections.
+
 ### `CONF`
 
 Returns the effective runtime configuration as a table. Rows use `scope` to
@@ -123,8 +143,10 @@ Single commands can be sent non-interactively:
 ```sh
 tclsh utils/tclwire_console.tcl --command PS
 tclsh utils/tclwire_console.tcl --command "CONN -port 8990"
+tclsh utils/tclwire_console.tcl --command CWORK
 tclsh utils/tclwire_console.tcl PS
 tclsh utils/tclwire_console.tcl CONN -port 8990
+tclsh utils/tclwire_console.tcl CWORK
 tclsh utils/tclwire_console.tcl LOGROTATE
 tclsh utils/tclwire_console.tcl SHUT
 ```

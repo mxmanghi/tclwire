@@ -391,7 +391,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                 }
                 thread_workload_changed {
                     set result [my dispatch_workload_notification \
-                        [my command_value $command notification]]
+                               [my command_value $command notification]]
                 }
                 resize_pool {
                     set result [my resize_pool [my command_value $command pool_key] \

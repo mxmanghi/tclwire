@@ -27,6 +27,7 @@ oo::class create ::tclwire::TransportReactor {
             -transportconfig {}
             -serviceid {}
             -maxworkers 100
+            -maxconnperthread 5
             -connmaxwait 1000
         }
         foreach {name value} $args {
@@ -35,7 +36,7 @@ oo::class create ::tclwire::TransportReactor {
             }
             set options($name) $value
         }
-        foreach {name minimum} {-maxworkers 1 -connmaxwait 0} {
+        foreach {name minimum} {-maxworkers 1 -maxconnperthread 1 -connmaxwait 0} {
             if {![string is integer -strict $options($name)] ||
                     $options($name) < $minimum} {
                 error "$name must be an integer greater than or equal to $minimum"
@@ -63,7 +64,8 @@ oo::class create ::tclwire::TransportReactor {
                                          name           $service_id \
                                          agent_class    $agent_class]
         set pool_policy [dict create minimum_workers 0 \
-                                     maximum_workers $options(-maxworkers)]
+                                     maximum_workers $options(-maxworkers) \
+                                     max_conn_per_thread $options(-maxconnperthread)]
         set pool_key {}
         set pool_created 0
         set pending_connections {}
@@ -220,6 +222,14 @@ oo::class create ::tclwire::TransportReactor {
             my defer_connection $descriptor
             return
         }
+        set reservation_response [::tclwire::tpba request [dict create \
+            operation thread_workload_changed \
+            notification [list $tid $pool_key new-connection-processing]]]
+        if {![dict get $reservation_response ok]} {
+            set last_accept_error [dict get $reservation_response error]
+            catch {close $channel}
+            return
+        }
         set peer_host [dict get $descriptor peer_host]
         set peer_port [dict get $descriptor peer_port]
         set connection_key "$service_id#$connection_id"
@@ -248,8 +258,8 @@ oo::class create ::tclwire::TransportReactor {
             ::thread::detach $channel
             set detached     1
             ::thread::send $tid [list ::thread::attach $channel]
-            dict set agent_threads $tid $connection_id
-            dict set agent_connection_keys $tid $connection_key
+            dict set agent_threads $tid $connection_id 1
+            dict set agent_connection_keys $tid $connection_id $connection_key
             ::thread::send -async $tid [list ::tclwire::start_connection_agent $agent_class $channel \
                                                                                $connection_id $connection_key \
                                                                                $peer_host $peer_port \
@@ -263,11 +273,19 @@ oo::class create ::tclwire::TransportReactor {
             } else {
                 catch {close $channel}
             }
-            if {[dict exists $agent_threads $tid]} {
-                dict unset agent_threads $tid
+            if {[dict exists $agent_threads $tid $connection_id]} {
+                dict unset agent_threads $tid $connection_id
+                if {[dict exists $agent_threads $tid] &&
+                        [dict size [dict get $agent_threads $tid]] == 0} {
+                    dict unset agent_threads $tid
+                }
             }
-            if {[dict exists $agent_connection_keys $tid]} {
-                dict unset agent_connection_keys $tid
+            if {[dict exists $agent_connection_keys $tid $connection_id]} {
+                dict unset agent_connection_keys $tid $connection_id
+                if {[dict exists $agent_connection_keys $tid] &&
+                        [dict size [dict get $agent_connection_keys $tid]] == 0} {
+                    dict unset agent_connection_keys $tid
+                }
             }
             catch {
 
@@ -279,6 +297,9 @@ oo::class create ::tclwire::TransportReactor {
                                                                                  $close_status]
 
             }
+            catch {::tclwire::tpba request [dict create \
+                operation thread_workload_changed \
+                notification [list $tid $pool_key connection-closed]]}
             catch {::tclwire::tpba request [dict create operation release_worker \
                                                         pool_key  $pool_key \
                                                         worker_id $tid]}
@@ -363,20 +384,43 @@ oo::class create ::tclwire::TransportReactor {
         return
     }
 
-    method connection_finished {finished_pool_key connection_id worker_id} {
-        if {[dict exists $agent_connection_keys $worker_id]} {
-            set connection_key [dict get $agent_connection_keys $worker_id]
-            dict unset agent_connection_keys $worker_id
+    method connection_finished {
+        finished_pool_key connection_id worker_id {workload_released 0}
+    } {
+        set removed_connection 0
+        if {[dict exists $agent_connection_keys $worker_id $connection_id]} {
+            set connection_key \
+                [dict get $agent_connection_keys $worker_id $connection_id]
+            dict unset agent_connection_keys $worker_id $connection_id
+            if {[dict exists $agent_connection_keys $worker_id] &&
+                    [dict size [dict get $agent_connection_keys $worker_id]] == 0} {
+                dict unset agent_connection_keys $worker_id
+            }
             catch {
                 set close_record \
                     [::tclwire::accounting record_connection_closed $connection_key [dict create close_reason finished]]
                 ::tclwire::logger log_connection_closed $close_record
             }
         }
-        if {[dict exists $agent_threads $worker_id]} {
+        if {[dict exists $agent_threads $worker_id $connection_id]} {
+            dict unset agent_threads $worker_id $connection_id
+            set removed_connection 1
+        }
+        if {[dict exists $agent_threads $worker_id] &&
+                [dict size [dict get $agent_threads $worker_id]] == 0} {
             dict unset agent_threads $worker_id
         }
-        if {$pool_created && ($finished_pool_key eq $pool_key)} {
+        if {$pool_created && ($finished_pool_key eq $pool_key) &&
+                $removed_connection && !$workload_released} {
+            set response [::tclwire::tpba request [dict create \
+                operation thread_workload_changed \
+                notification [list $worker_id $pool_key connection-closed]]]
+            if {![dict get $response ok]} {
+                set last_accept_error [dict get $response error]
+            }
+        }
+        if {$pool_created && ($finished_pool_key eq $pool_key) &&
+                ![dict exists $agent_threads $worker_id]} {
             set response [::tclwire::tpba request                           \
                                     [dict create operation  release_worker  \
                                                  pool_key   $pool_key       \
@@ -398,9 +442,9 @@ oo::class create ::tclwire::TransportReactor {
 
     method agent_threads {} {
         set live [dict create]
-        dict for {tid connection_id} $agent_threads {
+        dict for {tid connections} $agent_threads {
             if {[::thread::exists $tid]} {
-                dict set live $tid $connection_id
+                dict set live $tid [dict keys $connections]
             }
         }
         set agent_threads $live

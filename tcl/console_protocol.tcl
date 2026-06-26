@@ -20,6 +20,10 @@ namespace eval ::tclwire::console {
     variable connection_debug_columns {
         closed_at close_reason transport_error
     }
+    variable connection_worker_columns {
+        worker_id connection_state family active_connections
+        cumulative_connections combined_workload connection_keys
+    }
     variable conf_columns {
         scope name value
     }
@@ -184,6 +188,66 @@ namespace eval ::tclwire::console {
             [dict create] [dict create configuration [configuration_metadata]]]
     }
 
+    proc connection_worker_connection_counts {} {
+        set counts [dict create]
+        dict for {connection_key record} \
+                [::tclwire::accounting get_connections_database] {
+            if {![dict exists $record worker_thread_id]} {
+                continue
+            }
+            set worker_id [dict get $record worker_thread_id]
+            if {$worker_id eq {}} {
+                continue
+            }
+            if {[dict get $record status] in {closed failed}} {
+                continue
+            }
+            if {[dict exists $counts $worker_id]} {
+                set worker_counts [dict get $counts $worker_id]
+            } else {
+                set worker_counts [dict create open_connections 0 \
+                                                connection_keys {}]
+            }
+            dict incr worker_counts open_connections
+            dict lappend worker_counts connection_keys $connection_key
+            dict set counts $worker_id $worker_counts
+        }
+        return $counts
+    }
+
+    proc connection_worker_rows {} {
+        variable connection_worker_columns
+        set rows {}
+        set connection_counts [connection_worker_connection_counts]
+        dict for {thread_id account} [::tclwire::accounting get_threads_database] {
+            set family [dict get $account family]
+            if {$family eq {} || $family eq "application"} {
+                continue
+            }
+            set active_connections 0
+            set connection_keys {}
+            if {[dict exists $connection_counts $thread_id]} {
+                set active_connections \
+                    [dict get $connection_counts $thread_id open_connections]
+                set connection_keys \
+                    [join [dict get $connection_counts $thread_id connection_keys] " "]
+            }
+            set connection_state [expr {
+                $active_connections > 0 ? "active" : "idle"
+            }]
+            set row [dict create \
+                worker_id $thread_id \
+                connection_state $connection_state \
+                family $family \
+                active_connections $active_connections \
+                cumulative_connections [dict get $account cumulative_workload] \
+                combined_workload [dict get $account combined_workload] \
+                connection_keys $connection_keys]
+            lappend rows [row_from_dict $connection_worker_columns $row]
+        }
+        return $rows
+    }
+
     proc parse_connection_args {args} {
         set filter [dict create]
         for {set i 0} {$i < [llength $args]} {incr i} {
@@ -293,6 +357,15 @@ namespace eval ::tclwire::console {
                 }
                 return [connection_table $message]
             }
+            CWORK {
+                variable connection_worker_columns
+                if {[llength $args] != 0} {
+                    return [error_message $command bad_arguments \
+                        "CWORK accepts no arguments"]
+                }
+                return [table_message $command $connection_worker_columns \
+                    [connection_worker_rows]]
+            }
             CONF {
                 variable conf_columns
                 if {[llength $args] != 0} {
@@ -327,7 +400,7 @@ namespace eval ::tclwire::console {
     }
 
     namespace export configure dispatch error_message ok_message table_message \
-        ps_rows connection_rows conf_rows
+        ps_rows connection_rows connection_worker_rows conf_rows
     namespace ensemble create
 }
 

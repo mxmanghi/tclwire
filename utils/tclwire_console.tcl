@@ -28,6 +28,7 @@ namespace eval ::tclwire::console_client {
         puts $channel "Commands:"
         puts $channel "  PS"
         puts $channel "  CONN ?-port portn|-remote remote-ip?"
+        puts $channel "  CWORK"
         puts $channel "  CONF"
         puts $channel "  LOGROTATE"
         puts $channel "  SHUT"

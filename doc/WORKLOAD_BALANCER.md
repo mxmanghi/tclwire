@@ -111,11 +111,9 @@ CWI = max_conn_per_thread * running_workload + cumulative_workload
 ```
 
 The multiplication makes active connection count dominate historical work for
-normal values. The connection metric also has the information needed for the
-future eligibility predicate: a worker can accept more work while its
-`running_workload` is below `max_conn_per_thread`. The current runtime still
-keeps allocation idle-only because connection-agent workers are not yet
-multi-agent.
+normal values. The connection metric also supplies the eligibility predicate:
+a worker can accept more work while its `running_workload` is below
+`max_conn_per_thread`.
 
 The current connection-agent transitions are:
 
@@ -145,13 +143,21 @@ Implemented behavior:
 - TPBA routes worker transition notifications to the correct pool.
 - `pool_status` exposes workload data through `stats workloads`.
 - `ThreadMaster` computes workload records through its selected metric.
-- `ThreadMaster` selects the eligible idle worker with the lowest CWI.
+- `ThreadMaster` selects the eligible worker with the lowest CWI.
 - `PlainMetric` keeps ordinary pools idle-only.
 - `ConcurrentConnectionMetric` tracks active connection count and computes CWI
   with `max_conn_per_thread`.
 - CGA workers notify `request-processed` at the end of request processing.
-- Connection-agent workers notify `connection-open` and `connection-closed`.
-- connection-agent workers still host only one active connection agent.
+- Connection-agent workers notify `connection-open` after creating a
+  connection-agent object and `connection-closed` when the agent closes its
+  channel.
+- The transport reactor notifies `connection-closed` only for startup or
+  dispatch paths where a worker-side close notification was not reported.
+- Transport dispatch reserves capacity synchronously with
+  `new-connection-processing`, so rapid accepts cannot over-assign a worker
+  before its asynchronous `connection-open` report arrives.
+- Connection-agent workers can host multiple active connection agents up to
+  `max_conn_per_thread`.
 - The shared thread accounting record mirrors `running_workload`,
   `cumulative_workload`, and `combined_workload`.
 
@@ -182,49 +188,34 @@ The command validates that:
 - the worker is owned by that pool;
 - the notification is exactly `{thread_id pool_key transition_id}`.
 
-## Current Limitations
+## Connection-Agent Concurrency
 
-Connection-agent workers are not yet concurrent. The current runtime still has
-single-connection assumptions:
+Connection-agent worker allocation now uses capacity-slot ownership rather
+than whole-thread ownership.
 
-- each worker stores one `::tclwire::connection_agent`;
-- starting a second agent in the same worker is rejected;
-- the reactor currently maps one worker id to one active connection key;
-- per-connection completion releases the whole worker back to the pool.
+Implemented behavior:
 
-Because of these invariants, the allocator still gates actual selection to
-idle workers. Full runtime support for selecting running connection-agent
-workers still requires the future connection-agent concurrency changes below.
-
-## Future Connection-Agent Concurrency
-
-The second step should change connection-agent worker allocation from
-whole-thread ownership to capacity-slot ownership.
-
-Required changes:
-
-- Replace the single worker-local `connection_agent` variable with a dictionary
-  keyed by connection key or agent id.
-- Track per-worker active connection count.
-- Track per-worker cumulative accepted connection count.
-- Change reactor-side tracking from `worker_id -> connection_key` to mappings
-  that support many connections per worker, such as:
-  - `connection_key -> worker_id`
-  - `worker_id -> list(connection_key)`
-- Include `connection_key` in completion callbacks so a multi-connection
-  worker can identify which logical connection finished.
-- Add a hard eligibility predicate for connection pools:
+- Worker-local connection agents are stored in dictionaries keyed by the
+  worker-side channel identifier.
+- Reactor-side tracking supports multiple connection ids and connection keys
+  per worker id.
+- The connection metric tracks active and reserved connection capacity.
+- The hard eligibility predicate for connection pools is:
 
 ```text
 active_connections + reserved_connections < max_conn_per_thread
 ```
 
-- Make TPBA reserve capacity synchronously during `acquire_worker` so rapid
-  accepts cannot over-assign a worker before its asynchronous workload report
-  arrives.
-- Reconcile TPBA reservations with worker workload reports.
-- Release only one capacity slot when a connection closes; return the worker to
-  `idle` only when the active connection count reaches zero.
+- TPBA reserves capacity synchronously during dispatch with
+  `new-connection-processing`.
+- Worker `connection-open` notifications reconcile an existing reservation
+  instead of double-counting the same connection.
+- Worker-side `connection-closed` notifications release one capacity slot;
+  reactor-side fallback notifications release reservations when startup fails
+  before the worker can report a normal close.
+- A worker returns to `idle` only when its active connection count reaches zero.
+- The global runtime setting is `conn_max_per_thread`; it is passed into the
+  connection pool policy as `max_conn_per_thread`. The default is `5`.
 
 ## Open Design Notes
 
@@ -232,7 +223,7 @@ The current connection CWI is scalar. A later implementation may prefer tuple
 ordering:
 
 ```text
-{running_connections cumulative_connections last_selected_at}
+{active_connections cumulative_connections last_selected_at}
 ```
 
 That ordering would make the priority explicit: prefer fewer active
@@ -240,8 +231,8 @@ connections first, then lower historical load, then deterministic or
 round-robin tie breaking.
 
 The scalar CWI is acceptable for the current pool-level implementation. The
-tuple approach should be reconsidered before the connection-agent runtime is
-made fully concurrent.
+tuple approach can still be reconsidered if the scalar starts hiding too much
+selection policy.
 
 ## Tests
 
@@ -253,6 +244,9 @@ Current focused tests cover:
 - `ConcurrentConnectionMetric` default `max_conn_per_thread`;
 - validation of invalid `max_conn_per_thread`;
 - lowest-CWI idle-worker selection;
+- running connection-worker selection below `max_conn_per_thread`;
+- synchronous connection-capacity reservation before `connection-open`;
+- HTTP runtime handling of two concurrent connections on one worker;
 - ownership validation for workload notifications.
 
 Focused test commands:
@@ -260,4 +254,5 @@ Focused test commands:
 ```sh
 tclsh tests/tpba.test
 tclsh tests/thread_registry.test
+tclsh tests/http_connection.test
 ```

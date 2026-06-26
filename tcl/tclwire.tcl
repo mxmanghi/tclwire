@@ -119,6 +119,8 @@ namespace eval ::tclwire::runtime {
         puts $channel "      Maximum accepted-socket wait for a connection worker. Default: 1000"
         puts $channel "  --conn-max-workers <count>"
         puts $channel "      Maximum connection-agent workers per service. Default: 100"
+        puts $channel "  --conn-max-per-thread <count>"
+        puts $channel "      Maximum connections per connection-agent worker. Default: 5"
         puts $channel "  --unix-socket <path> Console socket. Default: /tmp/tclwire.sock"
         puts $channel "  --quiet"
         puts $channel "  --debug"
@@ -257,6 +259,7 @@ namespace eval ::tclwire::runtime {
         set log_level info
         set conn_max_wait 1000
         set conn_max_workers 100
+        set conn_max_per_thread 5
         set unix_socket [file normalize /tmp/tclwire.sock]
         set ftp_user_check 1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
@@ -293,6 +296,7 @@ namespace eval ::tclwire::runtime {
                             log_level    $log_level \
                             conn_max_wait $conn_max_wait \
                             conn_max_workers $conn_max_workers \
+                            conn_max_per_thread $conn_max_per_thread \
                             unix_socket  $unix_socket \
                             startservers $startservers \
                             services     $services \
@@ -362,7 +366,11 @@ namespace eval ::tclwire::runtime {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
-            foreach {field minimum} {conn_max_wait 0 conn_max_workers 1} {
+            foreach {field minimum} {
+                conn_max_wait 0
+                conn_max_workers 1
+                conn_max_per_thread 1
+            } {
                 if {[dict exists $global $field]} {
                     dict set config $field [parse_integer_min \
                         "tclwire.$field" [dict get $global $field] $minimum]
@@ -611,6 +619,11 @@ namespace eval ::tclwire::runtime {
                     dict set config conn_max_workers [parse_integer_min $option \
                         [require_value $argv [incr i] $option] 1]
                 }
+                --conn-max-per-thread -
+                --conn_max_per_thread {
+                    dict set config conn_max_per_thread [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 1]
+                }
                 --unix-socket {
                     dict set config unix_socket [file normalize \
                         [require_value $argv [incr i] $option]]
@@ -787,17 +800,17 @@ namespace eval ::tclwire::runtime {
         set setup_proc [dict get $descriptor setup_proc]
         set agent_args [$setup_proc $config $service]
 
-        return [::tclwire::TransportReactor new \
-            -host [dict get $config host] \
-            -port [dict get $service port] \
-            -protocol $protocol \
-            -serviceid $service_id \
-            -transportconfig [service_transport_config $service] \
-            -agentclass [dict get $descriptor agent_class] \
-            -agentpackage [dict get $descriptor agent_package] \
-            -agentargs $agent_args \
-            -maxworkers [dict get $config conn_max_workers] \
-            -connmaxwait [dict get $config conn_max_wait]]
+        return [::tclwire::TransportReactor new -host           [dict get $config host] \
+                                                -port           [dict get $service port] \
+                                                -protocol       $protocol \
+                                                -serviceid      $service_id \
+                                                -transportconfig [service_transport_config $service] \
+                                                -agentclass     [dict get $descriptor agent_class] \
+                                                -agentpackage   [dict get $descriptor agent_package] \
+                                                -agentargs      $agent_args \
+                                                -maxworkers     [dict get $config conn_max_workers] \
+                                                -maxconnperthread [dict get $config conn_max_per_thread] \
+                                                -connmaxwait    [dict get $config conn_max_wait]]
     }
 
     proc start {argv} {
@@ -842,9 +855,8 @@ namespace eval ::tclwire::runtime {
                 $reactor start
             }
 
-            set console_reactor [::tclwire::ConsoleReactor new \
-                -path [dict get $config unix_socket] \
-                -shutdowncommand [list ::tclwire::runtime::request_shutdown]]
+            set console_reactor [::tclwire::ConsoleReactor new -path [dict get $config unix_socket] \
+                                                               -shutdowncommand [list ::tclwire::runtime::request_shutdown]]
             $console_reactor start
 
         } on error {message options} {

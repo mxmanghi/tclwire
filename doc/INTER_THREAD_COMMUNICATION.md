@@ -255,28 +255,34 @@ If startup fails before the agent is ready, it reports
 ```text
 ConnectionAgent close
     |
-    | after 0 ::tclwire::connection_agent_finished
+    | ::tclwire::connection_agent_closed
     v
 connection-agent worker thread
     |
     | ::tclwire::tpba notify_workload_transition $pool_key connection-closed
     v
-TPBA updates connection workload and may mark worker idle
+TPBA routes workload change to the connection pool metric
     |
     | asynchronous thread::send listener_thread callback
     v
 TransportReactor connection_finished
+    |
+    | removes connection from per-worker maps
+    | fallback connection-closed only if worker did not report release
     |
     | ::tclwire::tpba request {operation release_worker ...}
     v
 TPBA release boundary
 ```
 
-The connection-agent worker reports `connection-closed` before notifying the
-listener. The TPBA's concurrent-connection metric decrements the worker's
-running workload and returns the worker to the idle set when no connections
-remain. The listener-side completion callback removes reactor bookkeeping,
-logs the close snapshot, and calls `release_worker` as an idempotent pool
+The connection-agent worker removes its local descriptor, reports
+`connection-closed`, then reports completion to the listener with a flag saying
+whether the workload slot was released. The listener-side reactor callback owns
+the live connection map and uses that flag to avoid double-decrementing normal
+closes while still releasing startup-failure reservations. The TPBA's
+concurrent-connection metric decrements the worker's running workload and
+returns the worker to the idle set when no connections remain. The callback
+also logs the close snapshot and calls `release_worker` as an idempotent pool
 release boundary.
 
 ### HTTP Request Dispatch
@@ -416,6 +422,7 @@ first stop any active connection agent, then release their Tcl thread.
 | HttpConnectionAgent | CGA worker | `thread::send -async` | `::tclwire::cga::execute` command and request descriptor | No |
 | CGA worker | HttpConnectionAgent thread | `thread::send -async` | application output event dictionary | No |
 | Connection-agent worker | TPBA | `thread::send` | `thread_workload_changed` notification: `connection-open`, `connection-closed`, `idle-connection-agent`, `thread-exit` | Yes |
+| TransportReactor | TPBA | direct request | fallback `thread_workload_changed` notification: `connection-closed` when worker-side release did not happen | Yes |
 | CGA worker | TPBA | `thread::send` | `thread_workload_changed` notification: `request-processed`, `thread-exit`; optional `remove_worker` | Yes |
 | ThreadMaster | Worker thread | `thread::send -async` | `demand_thread_exit` or submitted command | No |
 | Any worker | Shared accounting | `tsv::lock` APIs | thread and connection status fields | Immediate shared-state update |

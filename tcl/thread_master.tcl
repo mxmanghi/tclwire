@@ -53,8 +53,10 @@ namespace eval ::tclwire {}
 
 ::oo::class create ::tclwire::ConcurrentConnectionMetric {
     variable metric_options
+    variable connection_reservations
 
     method configure_metric_options {options} {
+        set connection_reservations [dict create]
         set options [dict merge [dict create max_conn_per_thread 5] $options]
         set max_conn_per_thread [dict get $options max_conn_per_thread]
         if {![string is integer -strict $max_conn_per_thread] ||
@@ -74,13 +76,33 @@ namespace eval ::tclwire {}
         switch -exact -- $transition_id {
             thread-start {
             }
-            connection-open -
             new-connection-processing {
                 dict incr record running_workload
                 dict incr record cumulative_workload
+                dict incr connection_reservations $thread_id
+                my unmark_thread_eligible $thread_id
+            }
+            connection-open {
+                if {[dict exists $connection_reservations $thread_id] &&
+                        [dict get $connection_reservations $thread_id] > 0} {
+                    dict incr connection_reservations $thread_id -1
+                    if {[dict get $connection_reservations $thread_id] == 0} {
+                        dict unset connection_reservations $thread_id
+                    }
+                } else {
+                    dict incr record running_workload
+                    dict incr record cumulative_workload
+                }
                 my unmark_thread_eligible $thread_id
             }
             connection-closed {
+                if {[dict exists $connection_reservations $thread_id] &&
+                        [dict get $connection_reservations $thread_id] > 0} {
+                    dict incr connection_reservations $thread_id -1
+                    if {[dict get $connection_reservations $thread_id] == 0} {
+                        dict unset connection_reservations $thread_id
+                    }
+                }
                 set running_workload [dict get $record running_workload]
                 if {$running_workload > 0} {
                     dict set record running_workload [expr {$running_workload - 1}]
@@ -104,7 +126,7 @@ namespace eval ::tclwire {}
     }
 
     method thread_eligible_for_workload {thread_id record status} {
-        if {$status ne "idle"} {
+        if {$status ni {idle running}} {
             return false
         }
         set running_workload [dict get $record running_workload]

@@ -1,7 +1,7 @@
 # connection_agent.tcl --
 #
-# Protocol-independent connection-affine agent base class and worker-thread
-# lifecycle helpers.
+# Protocol-independent connection-affine agent base class
+# and worker-thread lifecycle helpers.
 
 package require TclOO
 package require Thread
@@ -201,7 +201,8 @@ oo::class create ::tclwire::ConnectionAgent {
                 [dict create close_reason closed]]
             ::tclwire::logger log_connection_closed $close_record
         }
-        after 0 [list ::tclwire::connection_agent_finished [self]]
+        ::tclwire::connection_agent_closed [self]
+        after 0 [list ::tclwire::destroy_connection_agent [self]]
     }
 
     method connection_id {} {
@@ -229,20 +230,73 @@ oo::class create ::tclwire::ConnectionAgent {
 }
 
 namespace eval ::tclwire {
-    variable connection_agent {}
-    variable connection_finished_thread {}
-    variable connection_finished_command {}
-    variable connection_pool_key {}
+    variable connection_descriptors [dict create]
+    variable connection_agent_channels [dict create]
+
+    proc connection_descriptor {
+        channel_key connection_agent connection_id connection_key
+        finished_thread finished_command pool_key
+    } {
+        return [dict create \
+            channel_key      $channel_key \
+            agent            $connection_agent \
+            connection_id    $connection_id \
+            connection_key   $connection_key \
+            finished_thread  $finished_thread \
+            finished_command $finished_command \
+            pool_key         $pool_key]
+    }
+
+    proc store_connection_descriptor {descriptor} {
+        variable connection_descriptors
+        variable connection_agent_channels
+
+        set channel_key [dict get $descriptor channel_key]
+        set agent [dict get $descriptor agent]
+        dict set connection_descriptors $channel_key $descriptor
+        dict set connection_agent_channels $agent $channel_key
+        return $descriptor
+    }
+
+    proc connection_descriptor_for_agent {agent} {
+        variable connection_descriptors
+        variable connection_agent_channels
+
+        if {![dict exists $connection_agent_channels $agent]} {
+            return {}
+        }
+        set channel_key [dict get $connection_agent_channels $agent]
+        if {![dict exists $connection_descriptors $channel_key]} {
+            return {}
+        }
+        return [dict get $connection_descriptors $channel_key]
+    }
+
+    proc remove_connection_descriptor {agent} {
+        variable connection_descriptors
+        variable connection_agent_channels
+
+        set descriptor [connection_descriptor_for_agent $agent]
+        if {$descriptor eq {}} {
+            return {}
+        }
+        set channel_key [dict get $descriptor channel_key]
+        dict unset connection_agent_channels $agent
+        dict unset connection_descriptors $channel_key
+        return $descriptor
+    }
 
     proc prepare_connection_channel {channel transport_config} {
         if {$transport_config eq {} ||
-                ![dict exists $transport_config secure] ||
-                ![dict get $transport_config secure]} {
+            ![dict exists $transport_config secure] ||
+            ![dict get $transport_config secure]} {
+
             return $channel
+
         }
         foreach field {certfile keyfile} {
             if {![dict exists $transport_config $field] ||
-                    [dict get $transport_config $field] eq {}} {
+                 [dict get $transport_config $field] eq {}} {
                 error "secure transport is missing $field"
             }
             if {![file isfile [dict get $transport_config $field]]} {
@@ -251,14 +305,13 @@ namespace eval ::tclwire {
         }
         package require tls
         chan configure $channel -blocking 0 -translation binary
-        set channel [::tls::import $channel \
-            -server 1 \
-            -request 0 \
-            -require 0 \
-            -certfile [dict get $transport_config certfile] \
-            -keyfile [dict get $transport_config keyfile] \
-            -ssl2 0 \
-            -ssl3 0]
+        set channel [::tls::import $channel -server 1 \
+                                            -request 0 \
+                                            -require 0 \
+                                            -certfile [dict get $transport_config certfile] \
+                                            -keyfile [dict get $transport_config keyfile] \
+                                            -ssl2 0 \
+                                            -ssl3 0]
         set deadline [expr {[clock milliseconds] + 30000}]
         while 1 {
             if {[::tls::handshake $channel]} {
@@ -277,34 +330,31 @@ namespace eval ::tclwire {
         host port finished_thread finished_command
         pool_key agent_args transport_config
     } {
-        variable connection_agent
-        variable connection_finished_thread
-        variable connection_finished_command
-        variable connection_pool_key
-
-        if {$connection_agent ne {}} {
-            error "connection worker is already active"
-        }
         if {![info object isa class $agent_class]} {
             error "unknown connection agent class: $agent_class"
         }
 
-        set connection_finished_thread  $finished_thread
-        set connection_finished_command $finished_command
-        set connection_pool_key         $pool_key
-        ::tclwire::accounting change_thread_status \
-            [::thread::id] running [list $agent_class $connection_id]
+        ::tclwire::accounting change_thread_status [::thread::id] running [list $agent_class $connection_id]
+        set channel_key $conn_channel
         if {[catch {
             set conn_channel [prepare_connection_channel $conn_channel $transport_config]
-            ::tclwire::accounting update_connection $connection_key \
-                [dict create \
-                    status open \
-                    worker_thread_id [::thread::id] \
-                    agent_class $agent_class]
-            set connection_agent [$agent_class new $conn_channel $connection_id \
-                $host $port -connectionkey $connection_key {*}$agent_args]
-            ::tclwire::accounting update_connection $connection_key \
-                [dict create agent_id $connection_agent]
+            set channel_key $conn_channel
+
+            set agent_st_d [dict create status           open \
+                                        worker_thread_id [::thread::id] \
+                                        agent_class      $agent_class]
+
+            ::tclwire::accounting update_connection $connection_key $agent_st_d
+
+            set connection_agent [$agent_class new  $conn_channel \
+                                                    $connection_id \
+                                                    $host $port     \
+                                                   -connectionkey $connection_key {*}$agent_args]
+            store_connection_descriptor \
+                [connection_descriptor $channel_key $connection_agent $connection_id $connection_key \
+                                       $finished_thread $finished_command $pool_key]
+
+            ::tclwire::accounting update_connection $connection_key [dict create agent_id $connection_agent]
         } message options]} {
             catch {close $conn_channel}
             catch {
@@ -313,67 +363,73 @@ namespace eval ::tclwire {
                                   transport_error $message]]
                 ::tclwire::logger log_connection_closed $close_record
             }
-            if {$connection_finished_thread ne {} &&
-                    [::thread::exists $connection_finished_thread]} {
-                set callback [list {*}$connection_finished_command \
+            if {$finished_thread ne {} && [::thread::exists $finished_thread]} {
+                set callback [list {*}$finished_command \
                     $connection_id [::thread::id]]
-                ::thread::send -async $connection_finished_thread $callback
+                ::thread::send -async $finished_thread $callback
             }
-            if {$connection_pool_key ne {}} {
-                catch {
-                    ::tclwire::tpba notify_workload_transition \
-                        $connection_pool_key idle-connection-agent
-                }
-            }
-            set connection_finished_thread {}
-            set connection_finished_command {}
-            set connection_pool_key {}
             return {}
         }
-        if {$connection_pool_key ne {}} {
+        if {$pool_key ne {}} {
             catch {
                 ::tclwire::tpba notify_workload_transition \
-                    $connection_pool_key connection-open
+                    $pool_key connection-open
             }
         }
         return $connection_agent
     }
 
     proc stop_connection_agent {} {
-        variable connection_agent
-        if {$connection_agent ne {}} {
-            catch {$connection_agent close}
+        variable connection_descriptors
+        foreach descriptor [dict values $connection_descriptors] {
+            set agent [dict get $descriptor agent]
+            catch {$agent close}
+        }
+        return
+    }
+
+    proc connection_agent_closed {agent} {
+        set descriptor [remove_connection_descriptor $agent]
+        if {$descriptor eq {}} {
+            return {}
+        }
+        set connection_id [dict get $descriptor connection_id]
+        set pool_key [dict get $descriptor pool_key]
+        set connection_finished_thread [dict get $descriptor finished_thread]
+        set connection_finished_command [dict get $descriptor finished_command]
+        set workload_released 0
+
+        if {$pool_key ne {}} {
+            if {![catch {
+                ::tclwire::tpba notify_workload_transition \
+                    $pool_key connection-closed
+            } response] && [dict get $response ok]} {
+                set workload_released 1
+            }
+        }
+
+        if {($connection_finished_thread ne {}) && \
+            [::thread::exists $connection_finished_thread]} {
+            set callback [list {*}$connection_finished_command \
+                $connection_id [::thread::id] $workload_released]
+            ::thread::send -async $connection_finished_thread $callback
+        }
+        return $descriptor
+    }
+
+    proc destroy_connection_agent {agent} {
+        if {[info object isa object $agent]} {
+            catch {$agent destroy}
         }
         return
     }
 
     proc connection_agent_finished {agent} {
-        variable connection_agent
-        variable connection_finished_thread
-        variable connection_finished_command
-        variable connection_pool_key
-
-        set connection_id {}
-        if {$connection_agent eq $agent} {
-            set connection_id [$connection_agent connection_id]
-            catch {$connection_agent destroy}
-            set connection_agent {}
+        set descriptor [connection_agent_closed $agent]
+        if {$descriptor eq {}} {
+            return
         }
-
-        if {$connection_pool_key ne {}} {
-            catch {
-                ::tclwire::tpba notify_workload_transition \
-                    $connection_pool_key connection-closed
-            }
-        }
-        if {($connection_finished_thread ne {}) && \
-            [::thread::exists $connection_finished_thread]} {
-            set callback [list {*}$connection_finished_command $connection_id [::thread::id]]
-            ::thread::send -async $connection_finished_thread $callback
-        }
-        set connection_finished_thread  {}
-        set connection_finished_command {}
-        set connection_pool_key {}
+        destroy_connection_agent $agent
         return
     }
 
