@@ -146,14 +146,14 @@ namespace eval ::tclwire {}
     variable eligible_threads_list
 
     constructor {tscript {mtn 100} {family {}}} {
-        set max_threads_number $mtn
-        set accounting ::tclwire::accounting
+        set max_threads_number  $mtn
+        set accounting          ::tclwire::accounting
         $accounting initialize
-        set thread_script $tscript
-        set thread_family [string tolower [string trim $family]]
-        set owned_threads {}
-        set metric_options [dict create]
-        set workload_db [dict create]
+        set thread_script       $tscript
+        set thread_family       [string tolower [string trim $family]]
+        set owned_threads       {}
+        set metric_options      [dict create]
+        set workload_db         [dict create]
         set eligible_threads_list {}
     }
 
@@ -303,10 +303,10 @@ namespace eval ::tclwire {}
             }
             return [my workload_index $record]
         }
-        return [my workload_index [dict create \
-            thread_id $thread_id \
-            running_workload 0 \
-            cumulative_workload 0]]
+        return [my workload_index \
+                [dict create    thread_id           $thread_id \
+                                running_workload    0 \
+                                cumulative_workload 0]]
     }
 
     method mark_thread_eligible {thread_id} {
@@ -391,12 +391,11 @@ namespace eval ::tclwire {}
     }
 
     method stats {} {
-        return [dict create \
-            max_threads_number $max_threads_number \
-            live_threads_number [[self] live_threads_number] \
-            per_status_lists [[self] per_status_lists] \
-            workloads $workload_db \
-            eligible_threads_list [my eligible_thread_ids]]
+        return [dict create max_threads_number  $max_threads_number \
+                            live_threads_number [[self] live_threads_number] \
+                            per_status_lists    [[self] per_status_lists] \
+                            workloads           $workload_db \
+                            eligible_threads_list [my eligible_thread_ids]]
     }
 
     method resize {new_max_threads_number} {
