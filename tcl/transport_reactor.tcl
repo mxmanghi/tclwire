@@ -195,13 +195,12 @@ oo::class create ::tclwire::TransportReactor {
 
     method dispatch_accept {channel peer_host peer_port} {
         set connection_id [incr next_connection_id]
-        set descriptor [dict create \
-            channel       $channel \
-            peer_host     $peer_host \
-            peer_port     $peer_port \
-            connection_id $connection_id \
-            attempts      0 \
-            accepted_at   [clock milliseconds]]
+        set descriptor [dict create channel       $channel      \
+                                    peer_host     $peer_host    \
+                                    peer_port     $peer_port    \
+                                    connection_id $connection_id \
+                                    attempts      0             \
+                                    accepted_at   [clock milliseconds]]
         my dispatch_connection $descriptor
         return
     }
@@ -217,14 +216,23 @@ oo::class create ::tclwire::TransportReactor {
             return
         }
         set tid [dict get $acquire_response result]
+
+        # this is central: if we couldn't get a valid thread_id from the TPBA
+        # it's time to 
+
         if {$tid eq {}} {
             set last_accept_error "connection-agent pool is exhausted: $pool_key"
             my defer_connection $descriptor
             return
         }
-        set reservation_response [::tclwire::tpba request [dict create \
-            operation thread_workload_changed \
-            notification [list $tid $pool_key new-connection-processing]]]
+
+        # the connection-agent workload has changed so we notify the
+        # TPBA, which keeps the ledger where we keep the threads accounting
+
+        set reservation_response [::tclwire::tpba request \
+                [dict create    operation       thread_workload_changed \
+                                notification    [list $tid $pool_key new-connection-processing]]]
+
         if {![dict get $reservation_response ok]} {
             set last_accept_error [dict get $reservation_response error]
             catch {close $channel}
@@ -263,7 +271,8 @@ oo::class create ::tclwire::TransportReactor {
             ::thread::send -async $tid [list ::tclwire::start_connection_agent $agent_class $channel \
                                                                                $connection_id $connection_key \
                                                                                $peer_host $peer_port \
-                                                                               [::thread::id] [list [self] connection_finished $pool_key] \
+                                                                               [::thread::id] \
+                                                                               [list [self] connection_finished $pool_key] \
                                                                                $pool_key \
                                                                                $agent_args $transport_config]
         } error options]} {

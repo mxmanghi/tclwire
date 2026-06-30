@@ -49,6 +49,14 @@ namespace eval ::tclwire {}
     method thread_eligible_for_workload {thread_id record status} {
         return [expr {$status eq "idle"}]
     }
+
+    # A plain worker processes one request at a time.  Returning workers join
+    # the tail, so allocation is FIFO and does not favour a recently used
+    # worker merely because its id sorts first.
+    method insert_eligible_thread {thread_id eligible_threads} {
+        lappend eligible_threads $thread_id
+        return $eligible_threads
+    }
 }
 
 ::oo::class create ::tclwire::ConcurrentConnectionMetric {
@@ -133,6 +141,25 @@ namespace eval ::tclwire {}
         set max_conn_per_thread [dict get $metric_options max_conn_per_thread]
         return [expr {$running_workload < $max_conn_per_thread}]
     }
+
+    # Keep connection workers ordered at transition time.  Allocation can
+    # then take the head instead of scanning the whole pool and recomputing a
+    # minimum.  Thread id is the deterministic tie breaker for equal CWI.
+    method insert_eligible_thread {thread_id eligible_threads} {
+        set workload [my candidate_workload $thread_id]
+        set index 0
+        foreach candidate $eligible_threads {
+            set candidate_workload [my candidate_workload $candidate]
+            if {$workload < $candidate_workload ||
+                    ($workload == $candidate_workload &&
+                        [string compare $thread_id $candidate] < 0)} {
+                return [linsert $eligible_threads $index $thread_id]
+            }
+            incr index
+        }
+        lappend eligible_threads $thread_id
+        return $eligible_threads
+    }
 }
 
 ::oo::class create ::tclwire::ThreadMaster {
@@ -144,6 +171,7 @@ namespace eval ::tclwire {}
     variable metric_options
     variable workload_db
     variable eligible_threads_list
+    variable eligible_threads_head
 
     constructor {tscript {mtn 100} {family {}}} {
         set max_threads_number  $mtn
@@ -155,6 +183,7 @@ namespace eval ::tclwire {}
         set metric_options      [dict create]
         set workload_db         [dict create]
         set eligible_threads_list {}
+        set eligible_threads_head 0
     }
 
     # Boundary rule:
@@ -261,10 +290,9 @@ namespace eval ::tclwire {}
     }
 
     method workload_record {thread_id running_workload cumulative_workload} {
-        set record [dict create \
-            thread_id $thread_id \
-            running_workload $running_workload \
-            cumulative_workload $cumulative_workload]
+        set record [dict create     thread_id        $thread_id         \
+                                    running_workload $running_workload  \
+                                    cumulative_workload $cumulative_workload]
         dict set record combined_workload [my workload_index $record]
         return $record
     }
@@ -277,7 +305,7 @@ namespace eval ::tclwire {}
     }
 
     method store_workload_record {thread_id record} {
-        set running_workload [dict get $record running_workload]
+        set running_workload    [dict get $record running_workload]
         set cumulative_workload [dict get $record cumulative_workload]
         set record [my workload_record $thread_id $running_workload $cumulative_workload]
         dict set workload_db $thread_id $record
@@ -303,20 +331,34 @@ namespace eval ::tclwire {}
             }
             return [my workload_index $record]
         }
-        return [my workload_index \
-                [dict create    thread_id           $thread_id \
-                                running_workload    0 \
-                                cumulative_workload 0]]
+        return [my workload_index [dict create    thread_id           $thread_id \
+                                                  running_workload    0 \
+                                                  cumulative_workload 0]]
+    }
+
+    method insert_eligible_thread {thread_id eligible_threads} {
+        lappend eligible_threads $thread_id
+        return $eligible_threads
     }
 
     method mark_thread_eligible {thread_id} {
-        if {[lsearch -exact $eligible_threads_list $thread_id] < 0} {
-            lappend eligible_threads_list $thread_id
+        # Reinsert an existing entry as well: a workload transition may have
+        # changed its position in a metric-defined ordering.
+        set eligible_threads_list [my eligible_thread_ids]
+        set eligible_threads_head 0
+        set index [lsearch -exact $eligible_threads_list $thread_id]
+        if {$index >= 0} {
+            set eligible_threads_list \
+                [lreplace $eligible_threads_list $index $index]
         }
+        set eligible_threads_list \
+            [my insert_eligible_thread $thread_id $eligible_threads_list]
         return $eligible_threads_list
     }
 
     method unmark_thread_eligible {thread_id} {
+        set eligible_threads_list [my eligible_thread_ids]
+        set eligible_threads_head 0
         set index [lsearch -exact $eligible_threads_list $thread_id]
         if {$index >= 0} {
             set eligible_threads_list \
@@ -326,51 +368,23 @@ namespace eval ::tclwire {}
     }
 
     method eligible_thread_ids {} {
-        set retained {}
-        foreach thread_id $eligible_threads_list {
-            if {![[self] owns_thread $thread_id]} {
-                continue
-            }
-            if {[catch {my thread_status $thread_id} status]} {
-                continue
-            }
-            set record [my workload_record_for $thread_id]
-            if {[my thread_eligible_for_workload $thread_id $record $status]} {
-                lappend retained $thread_id
-            }
-        }
-        set eligible_threads_list $retained
-        return $eligible_threads_list
+        return [lrange $eligible_threads_list $eligible_threads_head end]
     }
 
-    method allocate_owned_idle_thread {thread_id_v} {
+    method allocate_eligible_thread {thread_id_v} {
         upvar 1 $thread_id_v thread_id
 
-        set selected {}
-        set selected_workload {}
-        set candidates [my eligible_thread_ids]
-        foreach status {idle running} {
-            foreach candidate [[self] thread_ids $status] {
-                set record [my workload_record_for $candidate]
-                if {[my thread_eligible_for_workload $candidate $record $status] &&
-                        $candidate ni $candidates} {
-                    lappend candidates $candidate
-                }
+        # Eligibility and ordering are maintained by lifecycle/workload
+        # transitions.  Normally this loop executes once; it only continues
+        # to discard an entry whose accounting record was removed externally.
+        while {$eligible_threads_head < [llength $eligible_threads_list]} {
+            set selected [lindex $eligible_threads_list $eligible_threads_head]
+            incr eligible_threads_head
+            if {[catch {
+                $accounting change_thread_status $selected allocated
+            }]} {
+                continue
             }
-        }
-        foreach candidate $candidates {
-            set candidate_workload [my candidate_workload $candidate]
-            if {$selected eq {} ||
-                    $candidate_workload < $selected_workload ||
-                    ($candidate_workload == $selected_workload &&
-                        [string compare $candidate $selected] < 0)} {
-                set selected $candidate
-                set selected_workload $candidate_workload
-            }
-        }
-        if {$selected ne {}} {
-            my unmark_thread_eligible $selected
-            $accounting change_thread_status $selected allocated
             set thread_id $selected
             return true
         }
@@ -419,7 +433,10 @@ namespace eval ::tclwire {}
         set thread_id [thread::create $thread_script]
         thread::preserve $thread_id
         if {[catch {
-            $accounting register_thread $thread_id allocated $thread_family
+            # New workers have no workload.  Publish them as idle so the
+            # selected metric inserts them into its authoritative eligibility
+            # structure before they can be allocated.
+            $accounting register_thread $thread_id idle $thread_family
             my store_workload_record $thread_id [my workload_record $thread_id 0 0]
             my thread_workload_changed $thread_id thread-start
         } error options]} {
@@ -436,15 +453,18 @@ namespace eval ::tclwire {}
     method allocate_thread {thread_id_v} {
         upvar 1 $thread_id_v thread_id
 
-        if {[[self] allocate_owned_idle_thread thread_id]} {
+        if {[[self] allocate_eligible_thread thread_id]} {
             return true
         }
 
         set live_threads_number [[self] live_threads_number]
         if {$live_threads_number < $max_threads_number} {
-            set thread_id [[self] start_worker_thread $thread_script]
-            lappend owned_threads $thread_id
-            return true
+            set new_thread_id [[self] start_worker_thread $thread_script]
+            lappend owned_threads $new_thread_id
+            # Creation follows the same queue path as every later reuse.  In
+            # normal operation the newly inserted worker is the only eligible
+            # entry here because the existing queue was already exhausted.
+            return [[self] allocate_eligible_thread thread_id]
         }
         return false
     }

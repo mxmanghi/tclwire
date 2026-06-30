@@ -173,6 +173,70 @@ test thread-registry-1.4.2 {ThreadMaster removes an owned worker from the pool} 
     }
 } -result {true 0 0}
 
+test thread-registry-1.4.3 {plain metric maintains a FIFO eligible queue} -body {
+    set worker_script {
+        package require Thread
+        proc demand_thread_exit {} {::thread::release [::thread::id]}
+        ::thread::wait
+    }
+    set master [::tclwire::ThreadMaster new $worker_script 2 app]
+    set worker_ids {}
+    try {
+        $master configure_metric ::tclwire::PlainMetric [dict create]
+        set first [$master acquire_worker]
+        set second [$master acquire_worker]
+        set worker_ids [list $first $second]
+        $master thread_workload_changed $first request-processed
+        $master thread_workload_changed $second request-processed
+        set queued [dict get [$master stats] eligible_threads_list]
+        set selected_first [$master acquire_worker]
+        set selected_second [$master acquire_worker]
+        list \
+            [expr {$queued eq [list $first $second]}] \
+            [expr {$selected_first eq $first}] \
+            [expr {$selected_second eq $second}]
+    } finally {
+        foreach worker_id $worker_ids {
+            catch {::thread::send -async $worker_id demand_thread_exit}
+            catch {::tclwire::accounting remove_thread $worker_id}
+        }
+        $master destroy
+    }
+} -result {1 1 1}
+
+test thread-registry-1.4.4 {connection metric reorders eligibility on workload transitions} -body {
+    set worker_script {
+        package require Thread
+        proc demand_thread_exit {} {::thread::release [::thread::id]}
+        ::thread::wait
+    }
+    set master [::tclwire::ThreadMaster new $worker_script 2 http]
+    set worker_ids {}
+    try {
+        $master configure_metric ::tclwire::ConcurrentConnectionMetric \
+            [dict create max_conn_per_thread 5]
+        set first [$master acquire_worker]
+        set second [$master acquire_worker]
+        set worker_ids [list $first $second]
+        $master return_thread $first
+        $master return_thread $second
+        $master thread_workload_changed $first connection-open
+        $master thread_workload_changed $second connection-open
+        $master thread_workload_changed $second connection-open
+        set queued [dict get [$master stats] eligible_threads_list]
+        set selected [$master acquire_worker]
+        list \
+            [expr {$queued eq [list $first $second]}] \
+            [expr {$selected eq $first}]
+    } finally {
+        foreach worker_id $worker_ids {
+            catch {::thread::send -async $worker_id demand_thread_exit}
+            catch {::tclwire::accounting remove_thread $worker_id}
+        }
+        $master destroy
+    }
+} -result {1 1}
+
 test thread-registry-1.5 {HTTP host context can be updated} -body {
     set thread_id registry-http-thread
     set https_thread_id registry-https-thread

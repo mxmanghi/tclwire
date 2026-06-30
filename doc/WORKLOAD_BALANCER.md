@@ -143,10 +143,13 @@ Implemented behavior:
 - TPBA routes worker transition notifications to the correct pool.
 - `pool_status` exposes workload data through `stats workloads`.
 - `ThreadMaster` computes workload records through its selected metric.
-- `ThreadMaster` selects the eligible worker with the lowest CWI.
-- `PlainMetric` keeps ordinary pools idle-only.
+- `ThreadMaster` allocates directly from the head of the metric-maintained
+  eligibility queue; it does not rescan idle and running workers.
+- `PlainMetric` keeps ordinary pools idle-only and returns completed CGA
+  workers to the tail of a FIFO queue.
 - `ConcurrentConnectionMetric` tracks active connection count and computes CWI
-  with `max_conn_per_thread`.
+  with `max_conn_per_thread`; every workload transition repositions the worker
+  in increasing CWI order, using thread id as the deterministic tie breaker.
 - CGA workers notify `request-processed` at the end of request processing.
 - Connection-agent workers notify `connection-open` after creating a
   connection-agent object and `connection-closed` when the agent closes its
