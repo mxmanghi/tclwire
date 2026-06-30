@@ -19,20 +19,36 @@ namespace eval ::tclwire::console_client {
     variable history_file [file normalize ~/.tclwire-history]
     variable history_limit 200
     variable readline_eof 0
+    variable commands {
+        PS        {List thread accounting and status.}
+        CONN      {List connections; optionally filter by -port or -remote.}
+        CWORK     {List connection worker workloads.}
+        CONF      {Show the effective runtime configuration.}
+        LOGROTATE {Reopen the access and error log files.}
+        SHUT      {Request an orderly server shutdown.}
+        HELP      {List available console commands.}
+        EXIT      {Leave the console client.}
+    }
     variable timestamp_columns {
         last_run_start last_run_end created_on opened_at closed_at
     }
     proc usage {{channel stdout}} {
         puts $channel "Usage: tclsh utils/tclwire_console.tcl ?--unix-socket path? ?--command command? ?command ...?"
         puts $channel ""
-        puts $channel "Commands:"
-        puts $channel "  PS"
-        puts $channel "  CONN ?-port portn|-remote remote-ip?"
-        puts $channel "  CWORK"
-        puts $channel "  CONF"
-        puts $channel "  LOGROTATE"
-        puts $channel "  SHUT"
-        puts $channel "  EXIT"
+        print_help $channel
+    }
+
+    proc help_text {} {
+        variable commands
+        set lines {Commands:}
+        dict for {command description} $commands {
+            lappend lines [format "  %-9s %s" $command $description]
+        }
+        return [join $lines "\n"]
+    }
+
+    proc print_help {{channel stdout}} {
+        puts $channel [help_text]
     }
 
     proc parse_args {argv} {
@@ -84,6 +100,10 @@ namespace eval ::tclwire::console_client {
 
     proc is_exit_command {command} {
         return [expr {[string toupper [string trim $command]] eq "EXIT"}]
+    }
+
+    proc is_help_command {command} {
+        return [expr {[string toupper [string trim $command]] eq "HELP"}]
     }
 
     proc send_command {channel command} {
@@ -230,7 +250,7 @@ namespace eval ::tclwire::console_client {
         variable history_file
         variable history_limit
         set ::tclreadline::historyLength $history_limit
-        catch {::tclreadline::readline read $history_file}
+        catch {::tclreadline::readline initialize $history_file}
         return
     }
 
@@ -268,6 +288,11 @@ namespace eval ::tclwire::console_client {
                     continue
                 }
                 ::tclreadline::readline add $line
+                if {[is_help_command $line]} {
+                    print_help
+                    incr cmdcount
+                    continue
+                }
                 if {[catch {
                     set response [send_command $channel $line]
                     print_response $response
@@ -285,6 +310,10 @@ namespace eval ::tclwire::console_client {
     proc main {argv} {
         set command [parse_args $argv]
         if {[llength $command] > 0 && [is_exit_command [join $command " "]]} {
+            exit 0
+        }
+        if {[llength $command] > 0 && [is_help_command [join $command " "]]} {
+            print_help
             exit 0
         }
         set channel [connect]

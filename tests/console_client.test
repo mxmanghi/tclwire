@@ -22,6 +22,16 @@ test console-client-1.2 {EXIT is recognized as a local console command} -body {
         [::tclwire::console_client::is_exit_command SHUT]
 } -result {1 1 0}
 
+test console-client-1.2a {HELP is recognized and describes all commands} -body {
+    set help [::tclwire::console_client::help_text]
+    list \
+        [::tclwire::console_client::is_help_command { help }] \
+        [::tclwire::console_client::is_help_command PS] \
+        [lmap command {PS CONN CWORK CONF LOGROTATE SHUT HELP EXIT} {
+            regexp -line "^  $command +\\S" $help
+        }]
+} -result {1 0 {1 1 1 1 1 1 1 1}}
+
 test console-client-1.3 {interactive EXIT does not send a server command} -body {
     rename ::tclreadline::readline ::tclreadline::readline.real
     proc ::tclreadline::readline {args} {
@@ -163,5 +173,30 @@ test console-client-1.6 {history file is trimmed to the configured limit} -body 
         catch {file delete -force $history_file}
     }
 } -result {200 command-6 command-205}
+
+test console-client-1.7 {history file is loaded through readline initialization} -body {
+    set old_file $::tclwire::console_client::history_file
+    set old_limit $::tclwire::console_client::history_limit
+    set history_file [file join [temporaryDirectory] tclwire-history-[pid]]
+    set calls {}
+    rename ::tclreadline::readline ::tclreadline::readline.real
+    proc ::tclreadline::readline {args} {
+        variable ::calls
+        lappend calls $args
+        return
+    }
+    try {
+        set ::tclwire::console_client::history_file $history_file
+        set ::tclwire::console_client::history_limit 123
+        ::tclwire::console_client::load_history
+        list $calls $::tclreadline::historyLength
+    } finally {
+        set ::tclwire::console_client::history_file $old_file
+        set ::tclwire::console_client::history_limit $old_limit
+        rename ::tclreadline::readline {}
+        rename ::tclreadline::readline.real ::tclreadline::readline
+    }
+} -result [list [list [list initialize \
+    [file join [temporaryDirectory] tclwire-history-[pid]]]] 123]
 
 cleanupTests

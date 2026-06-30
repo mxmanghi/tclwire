@@ -84,6 +84,13 @@ Requests an orderly runtime shutdown.
 
 Arguments: none.
 
+### `HELP`
+
+Lists the available commands with a brief description. `HELP` is handled by
+the client and does not require a connection to the server.
+
+Arguments: none.
+
 ## JSON Responses
 
 Table-style inspection commands return:
@@ -137,7 +144,7 @@ It uses `tclreadline` for the prompt and renders tabular output with
 CRT-style ASCII borders.
 Interactive command history is loaded from and saved to `~/.tclwire-history`;
 the file is trimmed to the most recent 200 commands.
-Use `EXIT` or Ctrl-D to leave the interactive client.
+Use `HELP` to list commands and `EXIT` or Ctrl-D to leave the interactive client.
 Single commands can be sent non-interactively:
 
 ```sh
