@@ -67,8 +67,7 @@ namespace eval ::tclwire {}
         set connection_reservations [dict create]
         set options [dict merge [dict create max_conn_per_thread 5] $options]
         set max_conn_per_thread [dict get $options max_conn_per_thread]
-        if {![string is integer -strict $max_conn_per_thread] ||
-                $max_conn_per_thread < 1} {
+        if {![string is integer -strict $max_conn_per_thread] || ($max_conn_per_thread < 1)} {
             error "max_conn_per_thread must be an integer greater than or equal to 1"
         }
         return $options
@@ -83,38 +82,49 @@ namespace eval ::tclwire {}
         set record [my workload_record_for $thread_id]
         switch -exact -- $transition_id {
             thread-start {
+                dict set connection_reservations $thread_id 0
             }
             new-connection-processing {
+                # The per-thread counter is created by thread-start.  Let a
+                # missing key fail here: it is a lifecycle protocol violation.
                 dict incr record running_workload
                 dict incr record cumulative_workload
                 dict incr connection_reservations $thread_id
                 my unmark_thread_eligible $thread_id
             }
             connection-open {
-                if {[dict exists $connection_reservations $thread_id] &&
-                        [dict get $connection_reservations $thread_id] > 0} {
-                    dict incr connection_reservations $thread_id -1
-                    if {[dict get $connection_reservations $thread_id] == 0} {
-                        dict unset connection_reservations $thread_id
-                    }
-                } else {
-                    dict incr record running_workload
-                    dict incr record cumulative_workload
+                set reservations [dict get $connection_reservations $thread_id]
+                if {$reservations < 1} {
+                    error "connection-open without a reservation for thread $thread_id"
                 }
+                dict incr connection_reservations $thread_id -1
                 my unmark_thread_eligible $thread_id
             }
             connection-closed {
-                if {[dict exists $connection_reservations $thread_id] &&
-                        [dict get $connection_reservations $thread_id] > 0} {
-                    dict incr connection_reservations $thread_id -1
-                    if {[dict get $connection_reservations $thread_id] == 0} {
-                        dict unset connection_reservations $thread_id
-                    }
-                }
+                # This transition always describes an established connection.
+                # Pending startup is cancelled by the distinct transition
+                # below, so concurrent reservations cannot be consumed here.
+                dict get $connection_reservations $thread_id
                 set running_workload [dict get $record running_workload]
-                if {$running_workload > 0} {
-                    dict set record running_workload [expr {$running_workload - 1}]
+                if {$running_workload < 1} {
+                    error "connection-closed without workload for thread $thread_id"
                 }
+                dict set record running_workload [expr {$running_workload - 1}]
+                if {[dict get $record running_workload] == 0} {
+                    catch {my return_thread $thread_id}
+                }
+            }
+            connection-reservation-cancelled {
+                set reservations [dict get $connection_reservations $thread_id]
+                if {$reservations < 1} {
+                    error "connection reservation underflow for thread $thread_id"
+                }
+                dict incr connection_reservations $thread_id -1
+                set running_workload [dict get $record running_workload]
+                if {$running_workload < 1} {
+                    error "connection reservation has no workload for thread $thread_id"
+                }
+                dict set record running_workload [expr {$running_workload - 1}]
                 if {[dict get $record running_workload] == 0} {
                     catch {my return_thread $thread_id}
                 }
@@ -125,6 +135,7 @@ namespace eval ::tclwire {}
             }
             thread-exit {
                 my unmark_thread_eligible $thread_id
+                dict unset connection_reservations $thread_id
             }
             default {
                 error "unknown connection workload transition: $transition_id"
@@ -290,8 +301,8 @@ namespace eval ::tclwire {}
     }
 
     method workload_record {thread_id running_workload cumulative_workload} {
-        set record [dict create     thread_id        $thread_id         \
-                                    running_workload $running_workload  \
+        set record [dict create     thread_id           $thread_id         \
+                                    running_workload    $running_workload  \
                                     cumulative_workload $cumulative_workload]
         dict set record combined_workload [my workload_index $record]
         return $record
@@ -305,6 +316,7 @@ namespace eval ::tclwire {}
     }
 
     method store_workload_record {thread_id record} {
+
         set running_workload    [dict get $record running_workload]
         set cumulative_workload [dict get $record cumulative_workload]
         set record [my workload_record $thread_id $running_workload $cumulative_workload]
@@ -332,7 +344,7 @@ namespace eval ::tclwire {}
             return [my workload_index $record]
         }
         return [my workload_index [dict create    thread_id           $thread_id \
-                                                  running_workload    0 \
+                                                  running_workload    0          \
                                                   cumulative_workload 0]]
     }
 

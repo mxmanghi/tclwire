@@ -127,6 +127,7 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
         set worker_id fake-worker-[incr ::tclwire::tpba_test::next_worker_id]
         dict set workers $worker_id allocated
         dict set workloads $worker_id [my workload_record $worker_id 0 0]
+        dict set reservations $worker_id 0
         return $worker_id
     }
 
@@ -163,36 +164,39 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
                 dict set record running_workload 0
                 catch {my return_thread $worker_id}
             }
-            connection-open -
             new-connection-processing {
-                if {$transition_id eq "new-connection-processing"} {
-                    dict incr record running_workload
-                    dict incr record cumulative_workload
-                    dict incr reservations $worker_id
-                } elseif {[dict exists $reservations $worker_id] &&
-                        [dict get $reservations $worker_id] > 0} {
-                    dict incr reservations $worker_id -1
-                    if {[dict get $reservations $worker_id] == 0} {
-                        dict unset reservations $worker_id
-                    }
-                } else {
-                    dict incr record running_workload
-                    dict incr record cumulative_workload
+                dict incr record running_workload
+                dict incr record cumulative_workload
+                dict incr reservations $worker_id
+                dict set workers $worker_id running
+            }
+            connection-open {
+                if {[dict get $reservations $worker_id] < 1} {
+                    error "connection-open without a reservation for thread $worker_id"
                 }
+                dict incr reservations $worker_id -1
                 dict set workers $worker_id running
             }
             connection-closed {
-                if {[dict exists $reservations $worker_id] &&
-                        [dict get $reservations $worker_id] > 0} {
-                    dict incr reservations $worker_id -1
-                    if {[dict get $reservations $worker_id] == 0} {
-                        dict unset reservations $worker_id
-                    }
-                }
                 set running_workload [dict get $record running_workload]
-                if {$running_workload > 0} {
-                    dict set record running_workload [expr {$running_workload - 1}]
+                if {$running_workload < 1} {
+                    error "connection-closed without workload for thread $worker_id"
                 }
+                dict set record running_workload [expr {$running_workload - 1}]
+                if {[dict get $record running_workload] == 0} {
+                    catch {my return_thread $worker_id}
+                }
+            }
+            connection-reservation-cancelled {
+                if {[dict get $reservations $worker_id] < 1} {
+                    error "connection reservation underflow for thread $worker_id"
+                }
+                dict incr reservations $worker_id -1
+                set running_workload [dict get $record running_workload]
+                if {$running_workload < 1} {
+                    error "connection reservation has no workload for thread $worker_id"
+                }
+                dict set record running_workload [expr {$running_workload - 1}]
                 if {[dict get $record running_workload] == 0} {
                     catch {my return_thread $worker_id}
                 }
@@ -467,7 +471,11 @@ test tpba-1.11 {connection pools use concurrent connection workload metric} -bod
             [dict create kind connection_agent protocol http]
         set worker_id [$broker acquire_worker connection:http]
         ::tclwire::tpba_test::workload_transition \
+            $broker $worker_id connection:http new-connection-processing
+        ::tclwire::tpba_test::workload_transition \
             $broker $worker_id connection:http connection-open
+        ::tclwire::tpba_test::workload_transition \
+            $broker $worker_id connection:http new-connection-processing
         set reported [::tclwire::tpba_test::workload_transition \
             $broker $worker_id connection:http connection-open]
         dict get $reported combined_workload
@@ -484,8 +492,12 @@ test tpba-1.11.0 {connection pools select running workers below connection limit
             [dict create kind connection_agent protocol http]
         set first [$broker acquire_worker connection:http]
         ::tclwire::tpba_test::workload_transition \
+            $broker $first connection:http new-connection-processing
+        ::tclwire::tpba_test::workload_transition \
             $broker $first connection:http connection-open
         set second [$broker acquire_worker connection:http]
+        ::tclwire::tpba_test::workload_transition \
+            $broker $second connection:http new-connection-processing
         ::tclwire::tpba_test::workload_transition \
             $broker $second connection:http connection-open
         set exhausted [$broker acquire_worker connection:http]

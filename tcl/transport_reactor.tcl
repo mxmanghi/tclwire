@@ -56,8 +56,7 @@ oo::class create ::tclwire::TransportReactor {
         set agent_args      $options(-agentargs)
         set transport_config $options(-transportconfig)
         set protocol        $options(-protocol)
-        set service_id [expr {$options(-serviceid) eq {} \
-            ? "$options(-protocol):$port" : $options(-serviceid)}]
+        set service_id [expr {$options(-serviceid) eq {} ? "$options(-protocol):$port" : $options(-serviceid)}]
         set pool_descriptor [dict create kind           connection_agent \
                                          protocol       $options(-protocol) \
                                          family         $options(-protocol) \
@@ -229,9 +228,10 @@ oo::class create ::tclwire::TransportReactor {
         # the connection-agent workload has changed so we notify the
         # TPBA, which keeps the ledger where we keep the threads accounting
 
-        set reservation_response [::tclwire::tpba request \
-                [dict create    operation       thread_workload_changed \
-                                notification    [list $tid $pool_key new-connection-processing]]]
+        set tpba_msg [dict create operation    thread_workload_changed \
+                                  notification [list $tid $pool_key new-connection-processing]]
+
+        set reservation_response [::tclwire::tpba request $tpba_msg]
 
         if {![dict get $reservation_response ok]} {
             set last_accept_error [dict get $reservation_response error]
@@ -308,7 +308,7 @@ oo::class create ::tclwire::TransportReactor {
             }
             catch {::tclwire::tpba request [dict create \
                 operation thread_workload_changed \
-                notification [list $tid $pool_key connection-closed]]}
+                notification [list $tid $pool_key connection-reservation-cancelled]]}
             catch {::tclwire::tpba request [dict create operation release_worker \
                                                         pool_key  $pool_key \
                                                         worker_id $tid]}
@@ -393,9 +393,8 @@ oo::class create ::tclwire::TransportReactor {
         return
     }
 
-    method connection_finished {
-        finished_pool_key connection_id worker_id {workload_released 0}
-    } {
+    method connection_finished {finished_pool_key connection_id worker_id \
+            {workload_released 0} {connection_opened 1}} {
         set removed_connection 0
         if {[dict exists $agent_connection_keys $worker_id $connection_id]} {
             set connection_key \
@@ -421,9 +420,14 @@ oo::class create ::tclwire::TransportReactor {
         }
         if {$pool_created && ($finished_pool_key eq $pool_key) &&
                 $removed_connection && !$workload_released} {
-            set response [::tclwire::tpba request [dict create \
-                operation thread_workload_changed \
-                notification [list $worker_id $pool_key connection-closed]]]
+            set transition_id [expr {
+                $connection_opened
+                    ? "connection-closed"
+                    : "connection-reservation-cancelled"
+            }]
+            set response [::tclwire::tpba request \
+                                [dict create operation      thread_workload_changed \
+                                             notification   [list $worker_id $pool_key $transition_id]]]
             if {![dict get $response ok]} {
                 set last_accept_error [dict get $response error]
             }

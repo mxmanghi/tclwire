@@ -220,8 +220,11 @@ test thread-registry-1.4.4 {connection metric reorders eligibility on workload t
         set worker_ids [list $first $second]
         $master return_thread $first
         $master return_thread $second
+        $master thread_workload_changed $first new-connection-processing
         $master thread_workload_changed $first connection-open
+        $master thread_workload_changed $second new-connection-processing
         $master thread_workload_changed $second connection-open
+        $master thread_workload_changed $second new-connection-processing
         $master thread_workload_changed $second connection-open
         set queued [dict get [$master stats] eligible_threads_list]
         set selected [$master acquire_worker]
@@ -236,6 +239,45 @@ test thread-registry-1.4.4 {connection metric reorders eligibility on workload t
         $master destroy
     }
 } -result {1 1}
+
+test thread-registry-1.4.5 {connection reservations enforce transition order} -body {
+    set worker_script {
+        package require Thread
+        proc demand_thread_exit {} {::thread::release [::thread::id]}
+        ::thread::wait
+    }
+    set master [::tclwire::ThreadMaster new $worker_script 1 http]
+    set worker_id {}
+    try {
+        $master configure_metric ::tclwire::ConcurrentConnectionMetric \
+            [dict create max_conn_per_thread 3]
+        set worker_id [$master acquire_worker]
+        set missing_reservation [catch {
+            $master thread_workload_changed $worker_id connection-open
+        } message]
+
+        $master thread_workload_changed $worker_id new-connection-processing
+        $master thread_workload_changed $worker_id connection-open
+        $master thread_workload_changed $worker_id new-connection-processing
+
+        # Closing the established connection must not consume the other
+        # connection's pending reservation.
+        $master thread_workload_changed $worker_id connection-closed
+        set record [$master thread_workload_changed \
+            $worker_id connection-open]
+        list \
+            $missing_reservation \
+            [string match "connection-open without a reservation*" $message] \
+            [dict get $record running_workload] \
+            [dict get $record cumulative_workload]
+    } finally {
+        if {$worker_id ne {}} {
+            catch {::thread::send -async $worker_id demand_thread_exit}
+            catch {::tclwire::accounting remove_thread $worker_id}
+        }
+        $master destroy
+    }
+} -result {1 1 1 2}
 
 test thread-registry-1.5 {HTTP host context can be updated} -body {
     set thread_id registry-http-thread

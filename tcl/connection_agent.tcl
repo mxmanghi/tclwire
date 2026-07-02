@@ -358,22 +358,24 @@ namespace eval ::tclwire {
         } message options]} {
             catch {close $conn_channel}
             catch {
-                set close_record [::tclwire::accounting record_connection_closed $connection_key \
-                    [dict create status failed close_reason startup_failed \
-                                  transport_error $message]]
+
+                set close_rec [dict create status failed close_reason startup_failed transport_error $message]
+                set close_record [::tclwire::accounting record_connection_closed $connection_key $close_rec]
                 ::tclwire::logger log_connection_closed $close_record
+
             }
             if {$finished_thread ne {} && [::thread::exists $finished_thread]} {
                 set callback [list {*}$finished_command \
-                    $connection_id [::thread::id]]
+                    $connection_id [::thread::id] 0 0]
                 ::thread::send -async $finished_thread $callback
             }
             return {}
         }
         if {$pool_key ne {}} {
-            catch {
-                ::tclwire::tpba notify_workload_transition \
-                    $pool_key connection-open
+            set response [::tclwire::tpba notify_workload_transition \
+                $pool_key connection-open]
+            if {![dict get $response ok]} {
+                error [dict get $response error]
             }
         }
         return $connection_agent

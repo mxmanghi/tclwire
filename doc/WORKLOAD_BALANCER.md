@@ -120,6 +120,7 @@ The current connection-agent transitions are:
 ```text
 connection-open
 connection-closed
+connection-reservation-cancelled
 new-connection-processing
 idle-connection-agent
 ```
@@ -154,8 +155,10 @@ Implemented behavior:
 - Connection-agent workers notify `connection-open` after creating a
   connection-agent object and `connection-closed` when the agent closes its
   channel.
-- The transport reactor notifies `connection-closed` only for startup or
-  dispatch paths where a worker-side close notification was not reported.
+- The transport reactor notifies `connection-reservation-cancelled` when
+  startup or dispatch fails before a connection is established. It uses a
+  fallback `connection-closed` only when an established connection's
+  worker-side release notification was not reported.
 - Transport dispatch reserves capacity synchronously with
   `new-connection-processing`, so rapid accepts cannot over-assign a worker
   before its asynchronous `connection-open` report arrives.
@@ -212,10 +215,11 @@ active_connections + reserved_connections < max_conn_per_thread
 - TPBA reserves capacity synchronously during dispatch with
   `new-connection-processing`.
 - Worker `connection-open` notifications reconcile an existing reservation
-  instead of double-counting the same connection.
+  instead of double-counting the same connection. An open without a positive
+  reservation is a protocol error.
 - Worker-side `connection-closed` notifications release one capacity slot;
-  reactor-side fallback notifications release reservations when startup fails
-  before the worker can report a normal close.
+  reactor-side `connection-reservation-cancelled` notifications release
+  reservations when startup fails before the worker can report an open.
 - A worker returns to `idle` only when its active connection count reaches zero.
 - The global runtime setting is `conn_max_per_thread`; it is passed into the
   connection pool policy as `max_conn_per_thread`. The default is `5`.

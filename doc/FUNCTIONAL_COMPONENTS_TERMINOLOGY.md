@@ -131,7 +131,8 @@ Connection worker thread
 
 TransportReactor
   removes the connection from its per-worker maps
-  falls back to connection-closed only if the worker did not report it
+  falls back to connection-closed only if an established connection did not report it
+  reports connection-reservation-cancelled if startup did not establish it
   releases the worker only when that worker has no active connections left
 ```
 
@@ -147,7 +148,8 @@ Connection-worker workload transitions:
 | --- | --- |
 | `new-connection-processing` | Reactor has synchronously reserved one worker capacity slot. |
 | `connection-open` | Worker has successfully created the connection agent object. |
-| `connection-closed` | One live connection has closed or one startup reservation has been released. |
+| `connection-closed` | One established connection has closed. |
+| `connection-reservation-cancelled` | Startup or dispatch failed before a reserved connection was established. |
 | `idle-connection-agent` | Worker has no active connection role left. |
 | `thread-start` | Worker thread has been created. |
 | `thread-exit` | Worker thread is exiting. |
