@@ -367,7 +367,8 @@ oo::class create ::example::Application {
         encoding utf-8]
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
-        set script [$dispatcher worker_script [$dispatcher application default]]
+        set script [$dispatcher worker_script \
+            [$dispatcher application default] app:default]
         list \
             [expr {[string first [list source $application_file] $script] >= 0}] \
             [expr {[string first {package require tclwire::application 0.1} \
@@ -385,7 +386,7 @@ test application-dispatcher-1.9 {package-backed applications remain supported} -
         set descriptor [$dispatcher application default]
         expr {[string first \
             {package require tclwire::application 0.1} \
-            [$dispatcher worker_script $descriptor]] >= 0}
+            [$dispatcher worker_script $descriptor app:default]] >= 0}
     } finally {
         $dispatcher destroy
     }
@@ -402,7 +403,7 @@ test application-dispatcher-1.9a {
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
         set descriptor [$dispatcher application default]
-        set script [$dispatcher worker_script $descriptor]
+        set script [$dispatcher worker_script $descriptor app:default]
         set docroot_index [string first $docroot $script]
         set libdir_index [string first $libdir $script]
         set package_index [string first \
@@ -432,6 +433,19 @@ test application-dispatcher-1.9b {
         $dispatcher destroy
     }
 } -result {1 1 1}
+
+test application-dispatcher-1.9ba {
+    application worker scripts require a pool key
+} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        set descriptor [$dispatcher application default]
+        catch {$dispatcher worker_script $descriptor {   }} message
+        set message
+    } finally {
+        $dispatcher destroy
+    }
+} -result {application worker pool key must not be empty}
 
 test application-dispatcher-1.9c {
     application descriptors include worker application paths

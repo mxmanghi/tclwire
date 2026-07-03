@@ -333,6 +333,10 @@ namespace eval ::tclwire {
         if {![info object isa class $agent_class]} {
             error "unknown connection agent class: $agent_class"
         }
+        set pool_key [string trim $pool_key]
+        if {$pool_key eq {}} {
+            error "connection agent pool key must not be empty"
+        }
 
         ::tclwire::accounting change_thread_status [::thread::id] running [list $agent_class $connection_id]
         set channel_key $conn_channel
@@ -371,12 +375,10 @@ namespace eval ::tclwire {
             }
             return {}
         }
-        if {$pool_key ne {}} {
-            set response [::tclwire::tpba notify_workload_transition \
-                $pool_key connection-open]
-            if {![dict get $response ok]} {
-                error [dict get $response error]
-            }
+        set response [::tclwire::tpba notify_workload_transition \
+            $pool_key connection-open]
+        if {![dict get $response ok]} {
+            error [dict get $response error]
         }
         return $connection_agent
     }
@@ -401,13 +403,11 @@ namespace eval ::tclwire {
         set connection_finished_command [dict get $descriptor finished_command]
         set workload_released 0
 
-        if {$pool_key ne {}} {
-            if {![catch {
-                ::tclwire::tpba notify_workload_transition \
-                    $pool_key connection-closed
-            } response] && [dict get $response ok]} {
-                set workload_released 1
-            }
+        if {![catch {
+            ::tclwire::tpba notify_workload_transition \
+                $pool_key connection-closed
+        } response] && [dict get $response ok]} {
+            set workload_released 1
         }
 
         if {($connection_finished_thread ne {}) && \

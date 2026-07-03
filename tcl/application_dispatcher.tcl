@@ -197,7 +197,11 @@ oo::class create ::tclwire::ApplicationDispatcher {
         return [dict get $response result]
     }
 
-    method worker_script {application_descriptor {pool_key {}}} {
+    method worker_script {application_descriptor pool_key} {
+        set pool_key [string trim $pool_key]
+        if {$pool_key eq {}} {
+            error "application worker pool key must not be empty"
+        }
         set application_paths [dict get $application_descriptor application_paths]
 
         set loader {}
@@ -207,16 +211,13 @@ oo::class create ::tclwire::ApplicationDispatcher {
             set loader [list package require \
                 [dict get $application_descriptor package] 0.1]
         }
-        set exit_pool_notification {}
-        if {$pool_key ne {}} {
-            set exit_pool_notification [format {
-                catch {::tclwire::tpba notify_workload_transition %s thread-exit}
-                catch {::tclwire::tpba request \
-                        [dict create operation remove_worker \
-                                     pool_key %s \
-                                     worker_id [::thread::id]]}
-            } [list $pool_key] [list $pool_key]]
-        }
+        set exit_pool_notification [format {
+            catch {::tclwire::tpba notify_workload_transition %s thread-exit}
+            catch {::tclwire::tpba request \
+                    [dict create operation remove_worker \
+                                 pool_key %s \
+                                 worker_id [::thread::id]]}
+        } [list $pool_key] [list $pool_key]]
         return [format {
             set application_paths %s
             set inherited_paths {}
