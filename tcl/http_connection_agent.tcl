@@ -6,6 +6,7 @@ package require TclOO
 package require tclwire::connection_agent 0.1
 package require tclwire::http::protocol 0.1
 package require tclwire::http::errors 0.1
+package require tclwire::http::multipart 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::logger::client 0.1
 
@@ -16,12 +17,16 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     variable protocol_session application_dispatcher closed channel connection_key
     variable next_transaction_id default_encoding log_protocol
+    variable upload_area max_request_bytes max_header_bytes
 
     constructor {conn_channel id host port args} {
         array set options {
             -applicationconfig {}
             -connectionkey {}
             -protocol http
+            -uploadarea /tmp
+            -maxrequestbytes 16777216
+            -maxheaderbytes 65536
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -43,6 +48,17 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
         set log_protocol $options(-protocol)
+        set upload_area $options(-uploadarea)
+        foreach {option variable_name} {
+            -maxrequestbytes max_request_bytes
+            -maxheaderbytes max_header_bytes
+        } {
+            if {![string is integer -strict $options($option)] ||
+                    $options($option) < 1} {
+                error "$option must be a positive integer"
+            }
+            set $variable_name $options($option)
+        }
         set next_transaction_id 0
         my start
     }
@@ -54,13 +70,52 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     method readable {} {
-        set chunk [my read_available]
+        set buffered [my input_buffer]
+        if {[string first "\r\n\r\n" $buffered] < 0} {
+            set read_limit [expr {$max_header_bytes - [string length $buffered] + 1}]
+        } else {
+            set read_limit [expr {$max_request_bytes - [string length $buffered] + 1}]
+        }
+        set chunk [my read_available [expr {max(1, min(65536, $read_limit))}]]
         if {$chunk eq {} || $closed} {
             return
         }
 
+        set buffered [my input_buffer]
+        set header_end [string first "\r\n\r\n" $buffered]
+        if {$header_end < 0 && [string length $buffered] > $max_header_bytes} {
+            my send_error 431 {} [my request_is_head $buffered]
+            return
+        }
+        if {[string length $buffered] > $max_request_bytes} {
+            my send_error 413 {} [my request_is_head $buffered]
+            return
+        }
+        if {$header_end >= 0} {
+            set declared_too_large 0
+            if {[catch {
+                set headers [$protocol_session parse_headers $buffered]
+                set framing [$protocol_session request_body_framing $headers]
+                if {$framing eq "content-length"} {
+                    set declared_size [expr {
+                        $header_end + 4 + [dict get $headers content-length]
+                    }]
+                    if {$declared_size > $max_request_bytes} {
+                        set declared_too_large 1
+                    }
+                }
+            }]} {
+                my send_error 400 {} [my request_is_head $buffered]
+                return
+            }
+            if {$declared_too_large} {
+                my send_error 413 {} [my request_is_head $buffered]
+                return
+            }
+        }
+
         if {[catch {
-            set request_data [my request_complete [my input_buffer]]
+            set request_data [my request_complete $buffered]
         }]} {
             my send_error 400 {} [my request_is_head [my input_buffer]]
             return
@@ -79,6 +134,17 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     method build_request_descriptor {request_data} {
         set descriptor [$protocol_session parse_request $request_data]
+        if {$upload_area ne {} && [dict exists $descriptor headers content-type]} {
+            set content_type [dict get $descriptor headers content-type]
+            set content_info [::tclwire::http::message parse_content_type $content_type]
+            if {[string match multipart/* [dict get $content_info media_type]]} {
+                set parts [::tclwire::http::multipart parse $content_type [dict get $descriptor body]]
+                set parts [::tclwire::http::multipart store_files $parts $upload_area]
+                dict set descriptor multipart_parts $parts
+                dict unset descriptor body
+                dict set descriptor body_mode multipart
+            }
+        }
         set peer [my peer]
         dict set descriptor protocol $log_protocol
         dict set descriptor connection_id [my connection_id]
@@ -119,6 +185,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             my send_error 400 {} [my request_is_head $request_data]
             return {}
         }
+        my clear_input_buffer
         catch {
             ::tclwire::accounting set_thread_http_host \
                 [::thread::id] [my request_host $request_d]

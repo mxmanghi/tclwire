@@ -155,8 +155,12 @@ oo::class create ::tclwire::HttpRequest {
         variable multipart_parts_cached
 
         if {!$multipart_parts_cached} {
-            set multipart_parts_cache [::tclwire::http::multipart parse \
-                [my content_type] [my body]]
+            if {[dict exists $descriptor multipart_parts]} {
+                set multipart_parts_cache [dict get $descriptor multipart_parts]
+            } else {
+                set multipart_parts_cache [::tclwire::http::multipart parse \
+                    [my content_type] [my body]]
+            }
             set multipart_parts_cached 1
         }
         return $multipart_parts_cache

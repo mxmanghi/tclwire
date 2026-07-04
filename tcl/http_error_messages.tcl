@@ -22,9 +22,13 @@ namespace eval ::tclwire::http::errors {
             404 [dict create \
                 reason "Not Found" \
                 body "TclWire could not find {{path}}.\n"] \
+            413 [dict create reason "Content Too Large" \
+                             body "The request exceeds the configured size limit.\n"] \
             405 [dict create \
                 reason "Method Not Allowed" \
                 body "The requested method is not supported for this resource.\n"] \
+            431 [dict create reason "Request Header Fields Too Large" \
+                             body "The request headers exceed the configured size limit.\n"] \
             500 [dict create \
                 reason "Internal Server Error" \
                 body "TclWire could not complete the request because of an internal error.\n"] \

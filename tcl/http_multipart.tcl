@@ -106,8 +106,7 @@ namespace eval ::tclwire::http::multipart {
     }
 
     proc parse {content_type body} {
-        set content_info [::tclwire::http::message parse_content_type \
-            $content_type]
+        set content_info [::tclwire::http::message parse_content_type $content_type]
         set media_type [dict get $content_info media_type]
         if {![string match multipart/* $media_type]} {
             error "request Content-Type is not multipart"
@@ -187,7 +186,48 @@ namespace eval ::tclwire::http::multipart {
         return $files
     }
 
-    namespace export parse form_fields field_values files
+    proc store_files {parts upload_area} {
+        if {$upload_area eq {}} {
+            error "multipart upload area must not be empty"
+        }
+        file mkdir $upload_area
+        if {![file isdirectory $upload_area] || ![file writable $upload_area]} {
+            error "multipart upload area is not writable: $upload_area"
+        }
+
+        set stored {}
+        try {
+            foreach part $parts {
+                if {![dict exists $part filename]} {
+                    lappend stored $part
+                    continue
+                }
+                set channel [file tempfile path \
+                    [file join $upload_area tclwire-upload-XXXXXXXX]]
+                try {
+                    chan configure $channel -translation binary -encoding binary
+                    puts -nonewline $channel [dict get $part body]
+                } finally {
+                    close $channel
+                }
+                dict set part body_mode spooled_file
+                dict set part path $path
+                dict set part body_size [string length [dict get $part body]]
+                dict unset part body
+                lappend stored $part
+            }
+        } on error {message options} {
+            foreach part $stored {
+                if {[dict exists $part path]} {
+                    catch {file delete [dict get $part path]}
+                }
+            }
+            return -options $options $message
+        }
+        return $stored
+    }
+
+    namespace export parse form_fields field_values files store_files
     namespace ensemble create
 }
 

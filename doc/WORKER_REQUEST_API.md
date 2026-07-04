@@ -127,7 +127,7 @@ The request object exposes:
 | `body_mode` | Request body storage mode. |
 | `body` | In-memory decoded request body. |
 | `body_size` | Request body length. |
-| `multipart_parts` | Parsed in-memory MIME multipart parts. |
+| `multipart_parts` | Parsed MIME multipart parts. File bodies may be spooled to the configured upload area. |
 | `form_fields` | Dictionary of non-file multipart form fields. |
 | `form_values name` | All non-file multipart values for one field name. |
 | `form_value name ?default?` | Last non-file multipart value for one field name. |
@@ -288,7 +288,7 @@ Parses a `multipart/*` request body and returns a Tcl list of part
 dictionaries. The parsed list is cached by the immutable request object, so
 subsequent calls do not reparse the body.
 
-This method requires:
+Without an upload area, this method requires:
 
 - an in-memory request body
 - a `Content-Type` whose media type is `multipart/*`
@@ -297,7 +297,7 @@ This method requires:
 
 If any of those requirements is not met, it raises an error.
 
-Every returned part dictionary contains:
+Every in-memory part dictionary contains:
 
 | Key | Meaning |
 | --- | --- |
@@ -340,6 +340,37 @@ dict create \
     name upload \
     filename hello.txt
 ```
+
+When `upload_area` is configured, the connection agent parses the multipart
+body before application dispatch. Each part with a `filename` parameter is
+written to a distinct, server-generated file. Such parts omit `body` and add:
+
+| Key | Meaning |
+| --- | --- |
+| `body_mode` | `spooled_file`. |
+| `path` | Absolute path of the stored file. |
+| `body_size` | File size in bytes. |
+
+Non-file form fields remain in memory. `uploaded_files` returns every uploaded
+file in request order, so repeated names and requests containing multiple file
+fields are supported. Stored files are not automatically deleted after the
+request; application or upload-area maintenance policy owns their lifecycle.
+
+The upload area defaults to `/tmp`. Configure a global area for HTTP and HTTPS with either
+`--upload-area <path>` or `tclwire.upload_area` in TOML. A protocol service can
+override it with `http.upload_area` / `https.upload_area`, or a custom service
+can use `--service 'http:8080;upload_area=/path'`. Intentionally setting the
+global or service value to an empty string disables file storage and selects
+the existing in-memory behavior.
+
+The multipart storage procedure requires a nonempty upload area and fails if
+called with an empty value. The HTTP connection agent does not call it while
+file storage is disabled.
+
+This mode removes file bodies and the raw multipart body before the request is
+copied to the application worker. The connection agent still receives the
+complete HTTP body before parsing it; incremental socket-to-file streaming is
+not yet implemented.
 
 ### Multipart Form Helpers
 
@@ -401,7 +432,12 @@ Example:
 ```tcl
 foreach file [$request uploaded_files attachment] {
     set filename [dict get $file filename]
-    set bytes [dict get $file body]
+    if {[dict exists $file body_mode] &&
+            [dict get $file body_mode] eq "spooled_file"} {
+        set path [dict get $file path]
+    } else {
+        set bytes [dict get $file body]
+    }
 }
 ```
 

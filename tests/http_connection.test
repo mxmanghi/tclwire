@@ -226,6 +226,18 @@ test http-protocol-1.8 {ambiguous and unsupported request framing is rejected} -
     1 "unsupported Transfer-Encoding" \
     1 "invalid Content-Length"]
 
+test http-protocol-1.8a {request body framing is available to connection agents} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        list \
+            [$protocol request_body_framing [dict create]] \
+            [$protocol request_body_framing [dict create content-length 4]] \
+            [$protocol request_body_framing [dict create transfer-encoding chunked]]
+    } finally {
+        $protocol destroy
+    }
+} -result {none content-length chunked}
+
 test http-protocol-1.9 {malformed chunk framing is rejected} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
@@ -378,6 +390,29 @@ test http-connection-1.4 {malformed request lines receive a protocol error} -bod
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
 } -result {1 1}
+
+test http-connection-1.4a {declared oversized requests are rejected before their body arrives} -body {
+    ::tclwire::runtime start [list \
+        --max-request-bytes 100 \
+        --docroot $project_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set response [::tclwire::http_connection_test::request \
+        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000\r\n\r\n"]
+    string match "HTTP/1.1 413 Content Too Large*" $response
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result 1
+
+test http-connection-1.4b {oversized request headers receive 431} -body {
+    ::tclwire::runtime start [list \
+        --docroot $project_root \
+        --logfile $::tclwire::http_connection_test::logfile]
+    set request "GET / HTTP/1.1\r\nX-Fill: [string repeat x 65536]"
+    set response [::tclwire::http_connection_test::request $request]
+    string match "HTTP/1.1 431 Request Header Fields Too Large*" $response
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+} -result 1
 
 test http-connection-1.5 {sequential connections reuse a TPBA pool worker} -body {
     ::tclwire::runtime start [list \

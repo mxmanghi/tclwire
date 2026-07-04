@@ -165,6 +165,46 @@ test http-request-1.4 {multipart requests require a boundary parameter} -body {
     }
 } -result {multipart Content-Type is missing boundary}
 
+test http-request-1.5 {multipart storage preserves multiple uploaded files} -setup {
+    set upload_area [file join [temporaryDirectory] tclwire-uploads-[pid]]
+    file delete -force $upload_area
+} -body {
+    set parts [list \
+        [dict create name title body report] \
+        [dict create name attachments filename one.bin body "one\0data"] \
+        [dict create name attachments filename two.bin body "two\0data"]]
+    set stored [::tclwire::http::multipart store_files $parts $upload_area]
+    set files [::tclwire::http::multipart files $stored attachments]
+    set contents {}
+    foreach part $files {
+        set channel [open [dict get $part path] rb]
+        try {
+            lappend contents [read $channel]
+        } finally {
+            close $channel
+        }
+    }
+    list \
+        [llength $files] \
+        [dict get [lindex $stored 0] body] \
+        [lmap part $files {dict get $part body_mode}] \
+        [lmap part $files {dict get $part body_size}] \
+        [expr {[dict get [lindex $files 0] path] ne \
+               [dict get [lindex $files 1] path]}] \
+        $contents
+} -cleanup {
+    file delete -force $upload_area
+} -result [list 2 report {spooled_file spooled_file} {8 8} 1 \
+    [list "one\0data" "two\0data"]]
+
+test http-request-1.6 {multipart storage rejects an empty upload area} -body {
+    catch {
+        ::tclwire::http::multipart store_files \
+            [list [dict create filename upload.bin body data]] {}
+    } message
+    set message
+} -result {multipart upload area must not be empty}
+
 test application-tools-1.1 {makeurl builds URLs from the current request} -body {
     try {
         ::tclwire::tools::begin [dict create \

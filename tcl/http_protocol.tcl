@@ -237,19 +237,19 @@ oo::class create ::tclwire::HttpProtocolSession {
             set body [string range $request [expr {$header_end + 4}] end]
         }
 
-        return [dict create     method $method \
-                                target $target \
-                                path   $path \
-                                query  $query \
-                                query_dict [::tclwire::http::query decode $query] \
-                                version $version \
-                                headers $headers \
-                                body_framing $framing \
-                                transfer_codings $codings \
-                                body_mode in_memory \
-                                body   $body \
-                                body_size [string length $body] \
-                                trailers $trailers]
+        return [dict create method      $method     \
+                            target      $target     \
+                            path        $path       \
+                            query       $query      \
+                            query_dict [::tclwire::http::query decode $query] \
+                            version     $version    \
+                            headers     $headers    \
+                            body_framing $framing   \
+                            transfer_codings $codings \
+                            body_mode   in_memory   \
+                            body        $body       \
+                            body_size   [string length $body] \
+                            trailers    $trailers]
     }
 
     method build_response {
@@ -320,8 +320,9 @@ oo::class create ::tclwire::HttpProtocolSession {
         return [encoding convertto ascii "0\r\n\r\n"]
     }
 
+    export request_body_framing
     unexport decode_transfer_codings parse_chunked_body parse_trailers \
-        request_body_framing transfer_codings
+        transfer_codings
 }
 
 package provide tclwire::http::protocol 0.1

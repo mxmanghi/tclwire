@@ -67,6 +67,21 @@ For a general-purpose web server, this approach is not scalable:
 In practice, the memory cost can be larger than the raw request size because of
 intermediate Tcl object allocations and copying.
 
+## Size Limits
+
+To bound this cost, the connection agent rejects request headers larger than
+64 KiB with status 431 and rejects a complete buffered request larger than
+`max_request_bytes` with status 413. The default request limit is 16 MiB.
+
+For `Content-Length` requests, the declared final size is checked immediately
+after the headers arrive. Chunked requests are limited by the encoded bytes
+actually received. Reads are capped at the remaining allowance so one channel
+event cannot cause an unbounded allocation.
+
+Configure the request limit globally with `--max-request-bytes <count>` or
+`tclwire.max_request_bytes` in TOML. An HTTP or HTTPS service can override it
+with `max_request_bytes` in its protocol table.
+
 ## Design Alternatives
 
 There is more than one way to evolve beyond full in-memory buffering.

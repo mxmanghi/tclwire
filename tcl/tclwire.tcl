@@ -106,8 +106,12 @@ namespace eval ::tclwire::runtime {
         puts $channel "  --proxyport <port>  Default: 8992"
         puts $channel "  --service <protocol:port>"
         puts $channel "      Add a service. TLS overrides may follow as"
-        puts $channel "      ';certfile=<path>;keyfile=<path>'."
+        puts $channel "      ';certfile=<path>;keyfile=<path>;upload_area=<path>'."
         puts $channel "  --docroot <path>"
+        puts $channel "  --upload-area <path>"
+        puts $channel "      Store HTTP multipart file parts in this directory."
+        puts $channel "  --max-request-bytes <count>"
+        puts $channel "      Maximum buffered HTTP request size. Default: 16777216"
         puts $channel "  --ftproot <path>"
         puts $channel "  --certfile <path>"
         puts $channel "  --keyfile <path>"
@@ -162,11 +166,18 @@ namespace eval ::tclwire::runtime {
                                  port     [parse_port_value --service $port]]
 
         foreach field [lrange $fields 1 end] {
-            if {![regexp {^(certfile|keyfile)=(.+)$} \
-                    $field -> name value]} {
+            if {![regexp {^(certfile|keyfile)=(.+)$|^(upload_area)=(.*)$} \
+                    $field -> tls_name tls_value upload_name upload_value]} {
                 error "invalid service option: $field"
             }
-            dict set service $name [file normalize $value]
+            if {$upload_name ne {}} {
+                set name $upload_name
+                set value $upload_value
+            } else {
+                set name $tls_name
+                set value $tls_value
+            }
+            dict set service $name [expr {$value eq {} ? {} : [file normalize $value]}]
         }
         return $service
     }
@@ -251,6 +262,8 @@ namespace eval ::tclwire::runtime {
         set debug_connection 0
         set help 0
         set docroot [::tclwire::support default_doc_root]
+        set upload_area [file normalize /tmp]
+        set max_request_bytes 16777216
         set ftproot [::tclwire::support default_ftp_root]
         set certfile {}
         set keyfile {}
@@ -287,6 +300,8 @@ namespace eval ::tclwire::runtime {
                             debug_connection $debug_connection \
                             encoding     $default_encoding \
                             docroot      $docroot \
+                            upload_area  $upload_area \
+                            max_request_bytes $max_request_bytes \
                             ftproot      $ftproot \
                             certfile     $certfile \
                             keyfile      $keyfile \
@@ -361,7 +376,7 @@ namespace eval ::tclwire::runtime {
             }]
             set paths [dict map {field value} \
                     [dict filter $global key \
-                        docroot ftproot certfile keyfile logfile logerr libdir \
+                        docroot ftproot certfile keyfile logfile logerr libdir upload_area \
                         unix_socket] {
                 resolve_config_path $config_dir $value
             }]
@@ -370,6 +385,7 @@ namespace eval ::tclwire::runtime {
                 conn_max_wait 0
                 conn_max_workers 1
                 conn_max_per_thread 1
+                max_request_bytes 1
             } {
                 if {[dict exists $global $field]} {
                     dict set config $field [parse_integer_min \
@@ -407,6 +423,17 @@ namespace eval ::tclwire::runtime {
             }
 
             set service [dict create protocol $protocol port $port]
+            if {$protocol in {http https} &&
+                    [dict exists $protocol_config upload_area]} {
+                dict set service upload_area [resolve_config_path $config_dir \
+                    [dict get $protocol_config upload_area]]
+            }
+            if {$protocol in {http https} &&
+                    [dict exists $protocol_config max_request_bytes]} {
+                dict set service max_request_bytes [parse_integer_min \
+                    "$protocol.max_request_bytes" \
+                    [dict get $protocol_config max_request_bytes] 1]
+            }
             if {[dict exists $protocol_config log_level]} {
                 dict set service log_level \
                     [normalize_log_level "$protocol.log_level" \
@@ -455,7 +482,7 @@ namespace eval ::tclwire::runtime {
                     $config_dir [dict get $protocol_config libdir]]
             }
             dict for {application_id descriptor} $protocol_config {
-                if {$application_id in {enabled port certfile keyfile libdir log_level}} {
+                if {$application_id in {enabled port certfile keyfile libdir log_level upload_area max_request_bytes}} {
                     continue
                 }
                 if {[catch {dict size $descriptor}]} {
@@ -580,6 +607,15 @@ namespace eval ::tclwire::runtime {
                     if {!$ftproot_set} {
                         dict set config ftproot $docroot
                     }
+                }
+                --upload-area {
+                    set value [require_value $argv [incr i] $option]
+                    dict set config upload_area \
+                        [expr {$value eq {} ? {} : [file normalize $value]}]
+                }
+                --max-request-bytes {
+                    dict set config max_request_bytes [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 1]
                 }
                 --ftproot {
                     dict set config ftproot [file normalize \
@@ -719,6 +755,14 @@ namespace eval ::tclwire::runtime {
         set services [dict get $config services]
         set normalized_services {}
         foreach service $services {
+            if {[dict get $service protocol] in {http https} &&
+                    ![dict exists $service upload_area]} {
+                dict set service upload_area [dict get $config upload_area]
+            }
+            if {[dict get $service protocol] in {http https} &&
+                    ![dict exists $service max_request_bytes]} {
+                dict set service max_request_bytes [dict get $config max_request_bytes]
+            }
             lappend normalized_services [normalize_service \
                 $service [dict get $config certfile] [dict get $config keyfile]]
         }
@@ -781,7 +825,9 @@ namespace eval ::tclwire::runtime {
     proc http_service_agent_args {config service} {
         ensure_application_dispatcher $config
         return [list -applicationconfig $config \
-                     -protocol [dict get $service protocol]]
+                     -protocol [dict get $service protocol] \
+                     -uploadarea [dict get $service upload_area] \
+                     -maxrequestbytes [dict get $service max_request_bytes]]
     }
 
     proc ftp_service_agent_args {config service} {

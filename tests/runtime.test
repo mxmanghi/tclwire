@@ -63,7 +63,9 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     127.0.0.1 \
     http \
     [list [dict create \
-        protocol http port 8990 id http:8990 secure 0]] \
+        protocol http port 8990 upload_area [file normalize /tmp] \
+        max_request_bytes 16777216 \
+        id http:8990 secure 0]] \
     default \
     0 \
     utf-8 \
@@ -105,9 +107,13 @@ test runtime-1.2 {legacy service options are normalized without starting service
 } -result [list \
     0.0.0.0 \
     [list \
-        [dict create protocol http port 8080 id http:8080 secure 0] \
+        [dict create protocol http port 8080 upload_area [file normalize /tmp] \
+            max_request_bytes 16777216 \
+            id http:8080 secure 0] \
         [dict create \
-            protocol https port 8443 id https:8443 secure 1 \
+            protocol https port 8443 upload_area [file normalize /tmp] \
+            max_request_bytes 16777216 \
+            id https:8443 secure 1 \
             certfile {} keyfile {}]] \
     [file normalize ./www] \
     [file normalize ./www] \
@@ -147,6 +153,34 @@ test runtime-1.2b {connection queue limits are parsed from CLI aliases} -body {
         [dict get $config conn_max_workers] \
         [dict get $config conn_max_per_thread]
 } -result {250 3 4}
+
+test runtime-1.2c {HTTP services inherit and override the upload area} -body {
+    set global_area [file normalize ./global-uploads]
+    set service_area [file normalize ./service-uploads]
+    set config [::tclwire::runtime parse_args [list \
+        --upload-area $global_area \
+        --service http:8080 \
+        --service "https:8443;upload_area=$service_area"]]
+    set services [dict get $config services]
+    list \
+        [dict get $config upload_area] \
+        [dict get [lindex $services 0] protocol] \
+        [dict get [lindex $services 0] upload_area] \
+        [dict get [lindex $services 1] upload_area]
+} -result [list \
+    [file normalize ./global-uploads] http [file normalize ./global-uploads] \
+    [file normalize ./service-uploads]]
+
+test runtime-1.2d {an empty upload area explicitly selects in-memory uploads} -body {
+    set config [::tclwire::runtime parse_args [list \
+        --upload-area {} \
+        --service http:8080 \
+        --service {https:8443;upload_area=}]]
+    list \
+        [dict get $config upload_area] \
+        [dict get [lindex [dict get $config services] 0] upload_area] \
+        [dict get [lindex [dict get $config services] 1] upload_area]
+} -result {{} {} {}}
 
 test runtime-1.3 {invalid arguments fail before internal agents start} -body {
     set status [catch {
@@ -190,7 +224,9 @@ test runtime-1.5 {runtime starts internal agents and the hardcoded HTTP listener
     ::tclwire::runtime_test::cleanup
 } -result [list \
     [list [dict create \
-        protocol http port 8990 id http:8990 secure 0]] \
+        protocol http port 8990 upload_area [file normalize /tmp] \
+        max_request_bytes 16777216 \
+        id http:8990 secure 0]] \
     1 1 1 1 127.0.0.1 8990 1]
 
 test runtime-1.5a {missing document root is seeded from generated documentation} -body {
@@ -439,7 +475,9 @@ port = 8081
     4 \
     {https ftp} \
     [list \
-        [dict create protocol https port 8443 id https:8443 secure 1 \
+        [dict create protocol https port 8443 upload_area [file normalize /tmp] \
+            max_request_bytes 16777216 \
+            id https:8443 secure 1 \
             certfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.crt]] \
             keyfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.key]]] \
         [dict create protocol ftp port 2121 id ftp:2121 secure 0]] \
@@ -499,7 +537,9 @@ port = 8180
     [file normalize ./cli.err] \
     {http proxy} \
     [list \
-        [dict create protocol http port 8181 id http:8181 secure 0] \
+        [dict create protocol http port 8181 upload_area [file normalize /tmp] \
+            max_request_bytes 16777216 \
+            id http:8181 secure 0] \
         [dict create protocol proxy port 8180 id proxy:8180 secure 0]]]
 
 test runtime-1.13a {log levels can be configured globally by service and by host} -body {
@@ -621,6 +661,25 @@ maximum_workers = 12
         package example::application \
         hosts {two.example.test www.two.example.test} \
         pool_policy [dict create minimum_workers 2 maximum_workers 12]]]
+
+test runtime-1.17 {request memory limits are configurable globally and per service} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+max_request_bytes = 4096
+
+[http]
+max_request_bytes = 2048
+}]
+    set from_file [::tclwire::runtime parse_args [list --config $config_file]]
+    set from_cli [::tclwire::runtime parse_args [list --max-request-bytes 8192]]
+    list \
+        [dict get $from_file max_request_bytes] \
+        [dict get [lindex [dict get $from_file services] 0] max_request_bytes] \
+        [dict get $from_cli max_request_bytes] \
+        [dict get [lindex [dict get $from_cli services] 0] max_request_bytes]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {4096 2048 8192 8192}
 
 ::tclwire::runtime_test::cleanup
 cleanupTests

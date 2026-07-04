@@ -71,7 +71,7 @@ oo::class create ::tclwire::ConnectionAgent {
         error "readable must be implemented by a protocol-specific subclass"
     }
 
-    method read_available {} {
+    method read_available {{max_bytes {}}} {
         if {$closed} {
             return {}
         }
@@ -80,7 +80,11 @@ oo::class create ::tclwire::ConnectionAgent {
             return {}
         }
 
-        set chunk [read $channel]
+        if {$max_bytes eq {}} {
+            set chunk [read $channel]
+        } else {
+            set chunk [read $channel $max_bytes]
+        }
         if {$chunk eq {}} {
             return {}
         }
