@@ -18,6 +18,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     variable protocol_session application_dispatcher closed channel connection_key
     variable next_transaction_id default_encoding log_protocol
     variable upload_area max_request_bytes max_header_bytes
+    variable dump_multipart_requests
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -27,6 +28,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             -uploadarea /tmp
             -maxrequestbytes 16777216
             -maxheaderbytes 65536
+            -dumpmultipartrequests 0
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -49,6 +51,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
         set log_protocol $options(-protocol)
         set upload_area $options(-uploadarea)
+        if {![string is boolean -strict $options(-dumpmultipartrequests)]} {
+            error "-dumpmultipartrequests must be a boolean"
+        }
+        set dump_multipart_requests \
+            [expr {!!$options(-dumpmultipartrequests)}]
         foreach {option variable_name} {
             -maxrequestbytes max_request_bytes
             -maxheaderbytes max_header_bytes
@@ -178,6 +185,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     method handle_request {request_data} {
+        my dump_multipart_request $request_data
         if {[catch {
             set request_d [my build_request_descriptor $request_data]
         }]} {
@@ -231,6 +239,36 @@ oo::class create ::tclwire::HttpConnectionAgent {
         $transaction set application_pool_key [dict get $dispatch_info pool_key]
         $transaction set response_encoding    [dict get $dispatch_info encoding]
         return [$transaction snapshot]
+    }
+
+    method dump_multipart_request {request_data} {
+        if {!$dump_multipart_requests} {
+            return
+        }
+        set is_multipart 0
+        if {[catch {
+            set headers [$protocol_session parse_headers $request_data]
+            if {[dict exists $headers content-type]} {
+                set content_info [::tclwire::http::message parse_content_type \
+                    [dict get $headers content-type]]
+                set is_multipart [string match multipart/* \
+                    [dict get $content_info media_type]]
+            }
+        }]} {
+            return
+        }
+        if {!$is_multipart} {
+            return
+        }
+
+        catch {
+            puts stderr \
+                "--- TclWire HTTP multipart request dump ([string length $request_data] bytes) ---"
+            puts stderr $request_data
+            puts stderr "--- end TclWire HTTP multipart request dump ---"
+            flush stderr
+        }
+        return
     }
 
     method header_name {header} {

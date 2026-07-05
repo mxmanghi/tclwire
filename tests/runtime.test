@@ -681,5 +681,22 @@ max_request_bytes = 2048
     ::tclwire::runtime_test::cleanup
 } -result {4096 2048 8192 8192}
 
+test runtime-1.18 {multipart request dumps are explicitly configurable} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+dump_multipart_requests = true
+}]
+    set defaults [::tclwire::runtime parse_args {}]
+    set from_file [::tclwire::runtime parse_args [list --config $config_file]]
+    set from_cli [::tclwire::runtime parse_args \
+        [list --dump-multipart-requests]]
+    list \
+        [dict exists $defaults dump_multipart_requests] \
+        [dict get $from_file dump_multipart_requests] \
+        [dict get $from_cli dump_multipart_requests]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {0 1 1}
+
 ::tclwire::runtime_test::cleanup
 cleanupTests

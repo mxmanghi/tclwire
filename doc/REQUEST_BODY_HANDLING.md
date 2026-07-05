@@ -82,6 +82,17 @@ Configure the request limit globally with `--max-request-bytes <count>` or
 `tclwire.max_request_bytes` in TOML. An HTTP or HTTPS service can override it
 with `max_request_bytes` in its protocol table.
 
+## Multipart Request Diagnostics
+
+Complete multipart requests can be written to the server's standard error
+stream by setting `dump_multipart_requests = true` in the `[tclwire]` TOML
+table or by passing `--dump-multipart-requests`. The feature is disabled by
+default and does not dump non-multipart requests.
+
+Request dumps include HTTP headers and all multipart field and file content.
+Enable this only for short-lived diagnostics, and protect the resulting logs
+as sensitive data.
+
 ## Design Alternatives
 
 There is more than one way to evolve beyond full in-memory buffering.

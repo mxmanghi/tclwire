@@ -5,6 +5,7 @@
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::http::message {
+
     # split_parameters value
     #
     # Split a semicolon-separated HTTP field value while preserving semicolons
@@ -38,7 +39,7 @@ namespace eval ::tclwire::http::message {
                 set escaped 1
                 continue
             }
-            if {$character eq {"}} {
+            if {$character eq "\""} {
                 append current $character
                 set in_quote [expr {!$in_quote}]
                 continue

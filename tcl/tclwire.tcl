@@ -112,6 +112,8 @@ namespace eval ::tclwire::runtime {
         puts $channel "      Store HTTP multipart file parts in this directory."
         puts $channel "  --max-request-bytes <count>"
         puts $channel "      Maximum buffered HTTP request size. Default: 16777216"
+        puts $channel "  --dump-multipart-requests"
+        puts $channel "      Dump complete multipart HTTP requests to stderr. Default: off"
         puts $channel "  --ftproot <path>"
         puts $channel "  --certfile <path>"
         puts $channel "  --keyfile <path>"
@@ -371,7 +373,8 @@ namespace eval ::tclwire::runtime {
             # the transformed values without exposing unrelated TOML keys.
             set booleans [dict map {field value} \
                     [dict filter $global key \
-                        quiet debug debug_connection ftp_user_check] {
+                        quiet debug debug_connection ftp_user_check \
+                        dump_multipart_requests] {
                 parse_boolean "tclwire.$field" $value
             }]
             set paths [dict map {field value} \
@@ -617,6 +620,9 @@ namespace eval ::tclwire::runtime {
                     dict set config max_request_bytes [parse_integer_min $option \
                         [require_value $argv [incr i] $option] 1]
                 }
+                --dump-multipart-requests {
+                    dict set config dump_multipart_requests 1
+                }
                 --ftproot {
                     dict set config ftproot [file normalize \
                         [require_value $argv [incr i] $option]]
@@ -824,10 +830,16 @@ namespace eval ::tclwire::runtime {
 
     proc http_service_agent_args {config service} {
         ensure_application_dispatcher $config
+        set dump_multipart_requests 0
+        if {[dict exists $config dump_multipart_requests]} {
+            set dump_multipart_requests \
+                [dict get $config dump_multipart_requests]
+        }
         return [list -applicationconfig $config \
                      -protocol [dict get $service protocol] \
                      -uploadarea [dict get $service upload_area] \
-                     -maxrequestbytes [dict get $service max_request_bytes]]
+                     -maxrequestbytes [dict get $service max_request_bytes] \
+                     -dumpmultipartrequests $dump_multipart_requests]
     }
 
     proc ftp_service_agent_args {config service} {
