@@ -437,6 +437,7 @@ namespace eval ::tclwire::runtime {
                     "$protocol.max_request_bytes" \
                     [dict get $protocol_config max_request_bytes] 1]
             }
+
             if {[dict exists $protocol_config log_level]} {
                 dict set service log_level \
                     [normalize_log_level "$protocol.log_level" \

@@ -157,29 +157,26 @@ test runtime-1.2b {connection queue limits are parsed from CLI aliases} -body {
 test runtime-1.2c {HTTP services inherit and override the upload area} -body {
     set global_area [file normalize ./global-uploads]
     set service_area [file normalize ./service-uploads]
-    set config [::tclwire::runtime parse_args [list \
-        --upload-area $global_area \
-        --service http:8080 \
-        --service "https:8443;upload_area=$service_area"]]
+    set config [::tclwire::runtime parse_args \
+                    [list   --upload-area $global_area \
+                            --service http:8080 \
+                            --service "https:8443;upload_area=$service_area"]]
     set services [dict get $config services]
-    list \
-        [dict get $config upload_area] \
-        [dict get [lindex $services 0] protocol] \
-        [dict get [lindex $services 0] upload_area] \
-        [dict get [lindex $services 1] upload_area]
+    list [dict get $config upload_area] \
+         [dict get [lindex $services 0] protocol] \
+         [dict get [lindex $services 0] upload_area] \
+         [dict get [lindex $services 1] upload_area]
 } -result [list \
     [file normalize ./global-uploads] http [file normalize ./global-uploads] \
     [file normalize ./service-uploads]]
 
 test runtime-1.2d {an empty upload area explicitly selects in-memory uploads} -body {
-    set config [::tclwire::runtime parse_args [list \
-        --upload-area {} \
-        --service http:8080 \
-        --service {https:8443;upload_area=}]]
-    list \
-        [dict get $config upload_area] \
-        [dict get [lindex [dict get $config services] 0] upload_area] \
-        [dict get [lindex [dict get $config services] 1] upload_area]
+    set config [::tclwire::runtime parse_args [list --upload-area {} \
+                                                    --service http:8080 \
+                                                    --service {https:8443;upload_area=}]]
+    list [dict get $config upload_area] \
+         [dict get [lindex [dict get $config services] 0] upload_area] \
+         [dict get [lindex [dict get $config services] 1] upload_area]
 } -result {{} {} {}}
 
 test runtime-1.3 {invalid arguments fail before internal agents start} -body {
