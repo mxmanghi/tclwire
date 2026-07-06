@@ -225,6 +225,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
             set dispatch_info [$application_dispatcher dispatch [$transaction snapshot]]
         } message]} {
             set request_d [my finish_transaction $transaction_id]
+            if {[dict exists $request_d multipart_parts]} {
+                ::tclwire::http::multipart cleanup_files \
+                    [dict get $request_d multipart_parts]
+            }
             if {[string match "no application is configured for Host *" $message]} {
                 my log_request $request_d 404 0
                 my send_error 404 [dict create path [dict get $request_d path]] \

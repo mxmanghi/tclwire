@@ -17,6 +17,7 @@
 # providers while retaining the HTTP request and response machinery.
 
 package require TclOO
+package require tclwire::application_configuration 0.1
 package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
 package require tclwire::http::errors 0.1
@@ -28,7 +29,7 @@ package require fileutil
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::CApplication {
-    variable configuration document_root content_encoding
+    variable configuration configuration_object document_root content_encoding
 
     constructor {application_descriptor} {
         if {[catch {dict size $application_descriptor}]} {
@@ -41,12 +42,39 @@ oo::class create ::tclwire::CApplication {
             error "application descriptor is missing encoding"
         }
         set configuration $application_descriptor
+        set application_id application
+        if {[dict exists $application_descriptor application_id]} {
+            set application_id [dict get $application_descriptor application_id]
+        }
+        set complete_descriptor $application_descriptor
+        foreach {property value} [list \
+            class [info object class [self]] \
+            hosts {} \
+            application_paths [list [dict get $application_descriptor docroot]] \
+            package tclwire::application] {
+            if {![dict exists $complete_descriptor $property]} {
+                dict set complete_descriptor $property $value
+            }
+        }
+        set configuration_object [::tclwire::ApplicationConfiguration new \
+            $application_id $complete_descriptor]
         set document_root [file normalize [dict get $application_descriptor docroot]]
         set content_encoding [dict get $application_descriptor encoding]
     }
 
     method configuration {} {
         return $configuration
+    }
+
+    method configuration_object {} {
+        return $configuration_object
+    }
+
+    destructor {
+        if {[info exists configuration_object] &&
+                $configuration_object ne {}} {
+            $configuration_object destroy
+        }
     }
 
     method document_root {} {

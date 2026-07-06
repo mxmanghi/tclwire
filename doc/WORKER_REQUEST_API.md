@@ -51,13 +51,32 @@ The dispatcher adds these values to the request descriptor sent to the worker:
 
 - `application_id`
 - `application_pool_key`
-- `application_descriptor`
 
 If no worker is available, dispatch fails and the connection receives a
 `503 Service Unavailable` response. An unknown nonempty `Host` receives
 `404 Not Found`.
 
 ## Application Lifecycle and Entry Point
+
+Effective application settings are represented internally by an immutable
+`::tclwire::ApplicationConfiguration` object. Its constructor validates the
+required settings and supplies defaults for every standard optional property.
+Configuration objects expose named accessors such as `docroot`, `encoding`,
+`reload_on_request`, and `retain_uploaded_files`, plus `get` and `snapshot`.
+They expose no mutation methods. Modifying a returned snapshot cannot alter
+the object.
+
+TclOO objects belong to one interpreter and cannot cross worker-thread
+boundaries. `ApplicationConfiguration serialize` therefore produces a
+versioned, dictionary-based wire envelope containing its type, schema version,
+application ID, and values. The worker calls the class-level `deserialize`
+method, which validates the envelope and reconstructs its own configuration
+object. This serialization format is an internal dispatcher/CGA agreement, not
+an application configuration-file format or public persistence format.
+`CApplication configuration_object` exposes the worker-local object.
+The existing `configuration` method continues to return a dictionary for
+compatibility with application constructors and code written against earlier
+versions.
 
 The application package or file is loaded when each worker interpreter is
 initialized. For each request, the CGA invokes:
@@ -80,6 +99,27 @@ For a package-backed application, `package require` runs only after those paths
 have been added. An application may therefore place `pkgIndex.tcl` directly in
 its document root or effective library directory. A file-backed application is
 loaded with `source` after the same `auto_path` initialization.
+
+### Development Reloading
+
+A file-backed application can opt into per-request class reloading:
+
+```toml
+[http.my_application]
+class = "::example::Application"
+file = "application.tcl"
+reload_on_request = true
+```
+
+Immediately before constructing an application instance, the worker destroys
+the configured TclOO class and sources the application file again. Each worker
+does this independently. This allows files using `oo::class create` to be
+edited without restarting TclWire. A syntax or initialization error produces
+a 500 response and is retried from the updated file on the next request.
+
+This option is intended only for development: it adds file I/O and class
+creation to every request and discards class-level state. It is rejected for
+package-backed applications because `package require` caches loaded packages.
 
 The application constructor receives its effective configuration dictionary.
 The request entry point is:
@@ -353,8 +393,20 @@ written to a distinct, server-generated file. Such parts omit `body` and add:
 
 Non-file form fields remain in memory. `uploaded_files` returns every uploaded
 file in request order, so repeated names and requests containing multiple file
-fields are supported. Stored files are not automatically deleted after the
-request; application or upload-area maintenance policy owns their lifecycle.
+fields are supported. After request processing and application destruction,
+TclWire deletes every spool path that still exists. An application retains an
+upload by moving it to an application-owned location before returning.
+
+For temporary development diagnostics, automatic deletion can be disabled for
+one application:
+
+```toml
+[http.my_application]
+retain_uploaded_files = true
+```
+
+Retained uploads contain untrusted client data and require an external cleanup
+policy. This option should not be enabled in production.
 
 The upload area defaults to `/tmp`. Configure a global area for HTTP and HTTPS with either
 `--upload-area <path>` or `tclwire.upload_area` in TOML. A protocol service can

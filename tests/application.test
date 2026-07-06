@@ -14,6 +14,7 @@ package require tclwire::http::request 0.1
 package require tclwire::transaction_descriptor 0.1
 package require tclwire::application 0.1
 package require tclwire::application_dispatcher 0.1
+package require tclwire::content_generator_agent 0.1
 package require tclwire::connection_agent 0.1
 package require tclwire::http::errors 0.1
 
@@ -33,12 +34,11 @@ test transaction-descriptor-1.1 {
         $transaction set response_status 201
         $transaction append response_body alpha
         $transaction append response_body beta
-        list \
-            $immutable_result \
-            $immutable_error \
-            [$transaction get method] \
-            [$transaction get response_status] \
-            [$transaction get response_body]
+        list $immutable_result \
+             $immutable_error \
+             [$transaction get method] \
+             [$transaction get response_status] \
+             [$transaction get response_body]
     } finally {
         $transaction destroy
     }
@@ -46,52 +46,49 @@ test transaction-descriptor-1.1 {
     1 {transaction field is immutable: method} GET 201 alphabeta]
 
 test http-request-1.1 {HTTP request exposes a read-only semantic interface} -body {
-    set request [::tclwire::HttpRequest new [dict create \
-        method GET \
-        target /search?q=Tcl \
-        path /search \
-        query q=Tcl \
-        query_dict [dict create q Tcl] \
-        version 1.1 \
-        headers [dict create host localhost x-test yes] \
-        body_mode in_memory \
-        body payload \
-        body_size 7 \
-        transaction_id 3]]
+    set request [::tclwire::HttpRequest new [dict create    method GET \
+                                                            target /search?q=Tcl \
+                                                            path /search \
+                                                            query q=Tcl \
+                                                            query_dict [dict create q Tcl] \
+                                                            version 1.1 \
+                                                            headers [dict create host localhost x-test yes] \
+                                                            body_mode in_memory \
+                                                            body payload \
+                                                            body_size 7 \
+                                                            transaction_id 3]]
     try {
-        list \
-            [$request method] \
-            [$request path] \
-            [$request query_dict] \
-            [$request query_parameter q] \
-            [$request header X-Test] \
-            [$request body] \
-            [expr {"set" ni [info object methods $request -all]}]
+        list [$request method] \
+             [$request path] \
+             [$request query_dict] \
+             [$request query_parameter q] \
+             [$request header X-Test] \
+             [$request body] \
+             [expr {"set" ni [info object methods $request -all]}]
     } finally {
         $request destroy
     }
 } -result {GET /search {q Tcl} Tcl yes payload 1}
 
 test http-request-1.2 {HTTP request exposes Content-Type parameters} -body {
-    set request [::tclwire::HttpRequest new [dict create \
-        method POST \
-        target /upload \
-        path /upload \
-        query {} \
-        version 1.1 \
-        headers [dict create \
-            content-type {Multipart/Form-Data; boundary="AaB03x"; charset=utf-8}] \
-        body_mode in_memory \
-        body {} \
-        body_size 0 \
-        transaction_id 3]]
+    set request [::tclwire::HttpRequest new \
+        [dict create    method      POST \
+                        target      /upload \
+                        path        /upload \
+                        query       {}    \
+                        version     1.1 \
+                        headers [dict create \
+                            content-type {Multipart/Form-Data; boundary="AaB03x"; charset=utf-8}] \
+                        body_mode   in_memory \
+                        body        {} \
+                        body_size   0 \
+                        transaction_id 3]]
     try {
-        list \
-            [$request content_type] \
-            [$request media_type] \
-            [$request content_type_parameter boundary] \
-            [$request content_type_parameter charset] \
-            [$request is_multipart]
+        list [$request content_type] \
+             [$request media_type] \
+             [$request content_type_parameter boundary] \
+             [$request content_type_parameter charset] \
+             [$request is_multipart]
     } finally {
         $request destroy
     }
@@ -191,10 +188,14 @@ test http-request-1.5 {multipart storage preserves multiple uploaded files} -set
         [lmap part $files {dict get $part body_size}] \
         [expr {[dict get [lindex $files 0] path] ne \
                [dict get [lindex $files 1] path]}] \
+        [lmap part $files {
+            string match tclwire-upload_* \
+                [file tail [dict get $part path]]
+        }] \
         $contents
 } -cleanup {
     file delete -force $upload_area
-} -result [list 2 report {spooled_file spooled_file} {8 8} 1 \
+} -result [list 2 report {spooled_file spooled_file} {8 8} 1 {1 1} \
     [list "one\0data" "two\0data"]]
 
 test http-request-1.6 {multipart storage rejects an empty upload area} -body {
@@ -313,6 +314,136 @@ set application_config [dict create \
             package tclwire::application \
             hosts {localhost 127.0.0.1}]]]
 
+test application-configuration-1.1 {
+    construction defines optional properties and snapshots are value copies
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp]]]
+    try {
+        set snapshot [$configuration snapshot]
+        dict set snapshot retain_uploaded_files 1
+        list \
+            [$configuration id] \
+            [$configuration file] \
+            [$configuration reload_on_request] \
+            [$configuration retain_uploaded_files] \
+            [dict get [$configuration pool_policy] maximum_workers]
+    } finally {
+        $configuration destroy
+    }
+} -result {example {} 0 0 20}
+
+test application-configuration-1.2 {
+    dispatcher exposes validated immutable application configurations
+} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        set configuration [$dispatcher application_configuration default]
+        list \
+            [info object isa typeof $configuration \
+                ::tclwire::ApplicationConfiguration] \
+            [$configuration class] \
+            [$configuration encoding]
+    } finally {
+        $dispatcher destroy
+    }
+} -result {1 ::tclwire::CApplication utf-8}
+
+test application-configuration-1.3 {
+    serialized configurations reconstruct validated immutable objects
+} -body {
+    set original [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp] \
+            retain_uploaded_files 1]]
+    try {
+        set restored [::tclwire::ApplicationConfiguration deserialize \
+            [$original serialize]]
+        try {
+            list \
+                [$restored id] \
+                [$restored class] \
+                [$restored retain_uploaded_files] \
+                [expr {[$restored snapshot] eq [$original snapshot]}]
+        } finally {
+            $restored destroy
+        }
+    } finally {
+        $original destroy
+    }
+} -result {example ::example::Application 1 1}
+
+test application-configuration-1.4 {
+    deserialization rejects unsupported wire versions
+} -body {
+    catch {
+        ::tclwire::ApplicationConfiguration deserialize [dict create \
+            type tclwire.application_configuration \
+            version 2 \
+            application_id example \
+            values {}]
+    } message
+    set message
+} -result {unsupported application configuration version: 2}
+
+test application-configuration-1.5 {
+    constructor failures reach the connection agent as error events
+} -setup {
+    oo::class create ::tclwire::application_test::FailingConstructor {
+        constructor {descriptor} {
+            error "constructor failed"
+        }
+    }
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set configuration [::tclwire::ApplicationConfiguration new failing \
+        [dict create \
+            class ::tclwire::application_test::FailingConstructor \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]]]]
+} -body {
+    ::tclwire::cga::execute app:failing \
+        ::tclwire::application_test::FailingConstructor \
+        [$configuration serialize] \
+        [dict create \
+            application_id failing \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 91 \
+            method GET \
+            path /]
+    update
+    lassign [lindex $::tclwire::application_test::events 0] \
+        transaction_id event
+    list \
+        $transaction_id \
+        [dict get $event type] \
+        [dict get $event data]
+} -cleanup {
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::application_test::FailingConstructor destroy}
+    catch {::tclwire::io end}
+} -result {91 error {constructor failed}}
+
 test application-dispatcher-1.1 {missing Host selects the default application} -body {
     set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
     try {
@@ -430,6 +561,119 @@ test application-dispatcher-1.9 {package-backed applications remain supported} -
     } finally {
         $dispatcher destroy
     }
+} -result 1
+
+test application-dispatcher-1.9r {
+    file-backed application classes can be replaced during development
+} -setup {
+    set application_file [makeFile {
+oo::class create ::example::ReloadableApplication {
+    method version {} { return first }
+}
+} reloadable-application.tcl]
+    source $application_file
+} -body {
+    set descriptor [dict create \
+        class ::example::ReloadableApplication \
+        hosts localhost \
+        docroot [temporaryDirectory] \
+        encoding utf-8 \
+        application_paths [list [temporaryDirectory]] \
+        file $application_file \
+        reload_on_request 1]
+    set configuration [::tclwire::ApplicationConfiguration new \
+        reload-test $descriptor]
+    ::fileutil::writeFile $application_file {
+oo::class create ::example::ReloadableApplication {
+    method version {} { return second }
+}
+}
+    ::tclwire::cga::reload_application_class \
+        ::example::ReloadableApplication $configuration
+    set application [::example::ReloadableApplication new]
+    try {
+        $application version
+    } finally {
+        $application destroy
+    }
+} -cleanup {
+    catch {$configuration destroy}
+    catch {::example::ReloadableApplication destroy}
+    removeFile $application_file
+} -result second
+
+test application-dispatcher-1.9s {
+    package-backed applications reject per-request reloading
+} -body {
+    set config $application_config
+    dict set config applications default reload_on_request 1
+    catch {::tclwire::ApplicationDispatcher new $config} message
+    set message
+} -result {application 'default' reload_on_request requires file}
+
+test application-dispatcher-1.9t {
+    request cleanup removes only files left in the spool area
+} -setup {
+    set removed_file [makeFile removed upload-cleanup-removed]
+    set moved_file [makeFile moved upload-cleanup-moved]
+    set moved_destination ${moved_file}.saved
+    file rename $moved_file $moved_destination
+} -body {
+    set request_descriptor [dict create multipart_parts [list \
+        [dict create name text body value] \
+        [dict create filename removed.txt body_mode spooled_file \
+            path $removed_file] \
+        [dict create filename moved.txt body_mode spooled_file \
+            path $moved_file]]]
+    set configuration [::tclwire::ApplicationConfiguration new cleanup-test \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]]]]
+    try {
+        ::tclwire::cga::cleanup_uploaded_files \
+            $configuration $request_descriptor
+    } finally {
+        $configuration destroy
+    }
+    list \
+        [file exists $removed_file] \
+        [file exists $moved_file] \
+        [file exists $moved_destination]
+} -cleanup {
+    catch {file delete $removed_file}
+    catch {file delete $moved_file}
+    catch {file delete $moved_destination}
+} -result {0 0 1}
+
+test application-dispatcher-1.9u {
+    application configuration can retain request spool files
+} -setup {
+    set retained_file [makeFile retained upload-cleanup-retained]
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new cleanup-test \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            retain_uploaded_files 1]]
+    try {
+        ::tclwire::cga::cleanup_uploaded_files $configuration \
+            [dict create multipart_parts [list \
+                [dict create filename retained.txt body_mode spooled_file \
+                    path $retained_file]]]
+    } finally {
+        $configuration destroy
+    }
+    file exists $retained_file
+} -cleanup {
+    catch {file delete $retained_file}
 } -result 1
 
 test application-dispatcher-1.9a {

@@ -96,7 +96,6 @@ CGA:
 | --- | --- | --- |
 | `application_id` | string | Selected application registration name. |
 | `application_pool_key` | string | TPBA worker-pool key. |
-| `application_descriptor` | dictionary | Effective application configuration. |
 
 The application descriptor contains fields such as `class`, `package` or
 `file`, `hosts`, `docroot`, `encoding`, and optionally `libdir` and

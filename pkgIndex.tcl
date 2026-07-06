@@ -49,6 +49,9 @@ package ifneeded tclwire::http::redirect 0.1 [subst {
 package ifneeded tclwire::application::tools 0.1 \
     [list source [file join $dir tcl application_tools.tcl]]
 
+package ifneeded tclwire::application_configuration 0.1 \
+    [list source [file join $dir tcl application_configuration.tcl]]
+
 package ifneeded tclwire::http::query 0.1 \
     [list source [file join $dir tcl http_query.tcl]]
 
@@ -95,6 +98,7 @@ package ifneeded tclwire::application 0.1 [subst {
 }]
 
 package ifneeded tclwire::content_generator_agent 0.1 [subst {
+    package require tclwire::application_configuration 0.1
     package require tclwire::application::io 0.1
     package require tclwire::application::tools 0.1
     package require tclwire::http::request 0.1
@@ -103,6 +107,7 @@ package ifneeded tclwire::content_generator_agent 0.1 [subst {
 }]
 
 package ifneeded tclwire::application_dispatcher 0.1 [subst {
+    package require tclwire::application_configuration 0.1
     package require tclwire::tpba::control 0.1
     source [list [file join $dir tcl application_dispatcher.tcl]]
 }]

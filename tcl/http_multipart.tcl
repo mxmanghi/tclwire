@@ -203,7 +203,7 @@ namespace eval ::tclwire::http::multipart {
                     continue
                 }
                 set channel [file tempfile path \
-                    [file join $upload_area tclwire-upload-XXXXXXXX]]
+                    [file join $upload_area tclwire-upload]]
                 try {
                     chan configure $channel -translation binary -encoding binary
                     puts -nonewline $channel [dict get $part body]
@@ -227,7 +227,29 @@ namespace eval ::tclwire::http::multipart {
         return $stored
     }
 
-    namespace export parse form_fields field_values files store_files
+    proc cleanup_files {parts} {
+        set failures {}
+        foreach part $parts {
+            if {![dict exists $part body_mode] ||
+                    [dict get $part body_mode] ne "spooled_file" ||
+                    ![dict exists $part path]} {
+                continue
+            }
+            set path [dict get $part path]
+            if {![file exists $path] &&
+                    [catch {file lstat $path path_info}]} {
+                continue
+            }
+            if {[catch {file delete $path} message options]} {
+                lappend failures [dict create \
+                    path $path message $message options $options]
+            }
+        }
+        return $failures
+    }
+
+    namespace export parse form_fields field_values files store_files \
+        cleanup_files
     namespace ensemble create
 }
 

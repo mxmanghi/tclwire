@@ -497,11 +497,19 @@ namespace eval ::tclwire::runtime {
                 # representation. Paths and worker limits are normalized
                 # separately below.
                 set application [dict filter $descriptor key \
-                    class package hosts encoding log_level]
+                    class package hosts encoding log_level reload_on_request \
+                    retain_uploaded_files]
                 if {[dict exists $application log_level]} {
                     dict set application log_level \
                         [normalize_log_level "$protocol.$application_id.log_level" \
                             [dict get $application log_level]]
+                }
+                foreach option {reload_on_request retain_uploaded_files} {
+                    if {[dict exists $application $option]} {
+                        dict set application $option [parse_boolean \
+                            "$protocol.$application_id.$option" \
+                            [dict get $application $option]]
+                    }
                 }
                 if {![dict exists $application hosts]} {
                     dict set application hosts [list $application_id]

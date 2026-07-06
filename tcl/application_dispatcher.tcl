@@ -4,19 +4,22 @@
 
 package require TclOO
 package require Thread
+package require tclwire::application_configuration 0.1
 package require tclwire::support 0.1
 package require tclwire::tpba::control 0.1
 
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ApplicationDispatcher {
-    variable applications default_application project_root owned_pools
+    variable applications application_configurations
+    variable default_application project_root owned_pools
 
     constructor {application_config} {
         if {[catch {dict size $application_config}]} {
             error "application configuration must be a dictionary"
         }
         set applications        [dict get $application_config applications]
+        set application_configurations [dict create]
         set default_application [dict get $application_config default_application]
         set project_root        [::tclwire::support project_root]
         set owned_pools         {}
@@ -82,13 +85,19 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 dict set descriptor file \
                     [my resolve_application_file $application_id $descriptor]
             }
-            my validate_descriptor $application_id $descriptor
-            dict set applications $application_id $descriptor
+            set configuration [::tclwire::ApplicationConfiguration new \
+                $application_id $descriptor]
+            dict set application_configurations \
+                $application_id $configuration
+            dict set applications $application_id [$configuration snapshot]
         }
     }
 
     destructor {
         my stop
+        dict for {application_id configuration} $application_configurations {
+            $configuration destroy
+        }
     }
 
     method resolve_application_file {application_id descriptor} {
@@ -129,26 +138,6 @@ oo::class create ::tclwire::ApplicationDispatcher {
         return $unique_paths
     }
 
-    method validate_descriptor {application_id descriptor} {
-        foreach field {class hosts docroot encoding application_paths} {
-            if {![dict exists $descriptor $field]} {
-                error "application '$application_id' is missing $field"
-            }
-        }
-        if {![dict exists $descriptor package] &&
-                ![dict exists $descriptor file]} {
-            error "application '$application_id' must define package or file"
-        }
-        if {[dict exists $descriptor file] &&
-                ![file isfile [dict get $descriptor file]]} {
-            error "application '$application_id' file does not exist: [dict get $descriptor file]"
-        }
-        if {[dict get $descriptor encoding] ni [encoding names]} {
-            error "application '$application_id' has an unknown encoding: [dict get $descriptor encoding]"
-        }
-        return
-    }
-
     method normalize_host {host} {
         set host [string tolower [string trim $host]]
         if {[regexp {^\[([^\]]+)\](?::[0-9]+)?$} $host -> address]} {
@@ -185,6 +174,13 @@ oo::class create ::tclwire::ApplicationDispatcher {
         return [dict get $applications $application_id]
     }
 
+    method application_configuration {application_id} {
+        if {![dict exists $application_configurations $application_id]} {
+            error "unknown application: $application_id"
+        }
+        return [dict get $application_configurations $application_id]
+    }
+
     method pool_key {application_id} {
         set response [::tclwire::tpba request [dict create \
             operation pool_key \
@@ -205,7 +201,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
         set application_paths [dict get $application_descriptor application_paths]
 
         set loader {}
-        if {[dict exists $application_descriptor file]} {
+        if {[dict exists $application_descriptor file] &&
+                [dict get $application_descriptor file] ne {}} {
             set loader [list source [dict get $application_descriptor file]]
         } else {
             set loader [list package require \
@@ -293,6 +290,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
     method dispatch {request_descriptor} {
         set application_id [my select_application $request_descriptor]
         set descriptor [my application $application_id]
+        set configuration [my application_configuration $application_id]
         set key [my pool_key $application_id]
 
         # getting a worker thread handle from the TPBA
@@ -309,12 +307,11 @@ oo::class create ::tclwire::ApplicationDispatcher {
 
         dict set request_descriptor application_id $application_id
         dict set request_descriptor application_pool_key $key
-        dict set request_descriptor application_descriptor $descriptor
         if {[catch {
             ::thread::send -async $worker_id \
                 [list ::tclwire::cga::execute $key \
-                                              [dict get $descriptor class] \
-                                              $descriptor \
+                                              [$configuration class] \
+                                              [$configuration serialize] \
                                               $request_descriptor]
         } message options]} {
             catch {::tclwire::tpba request [dict create operation   release_worker \
