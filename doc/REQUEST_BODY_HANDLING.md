@@ -4,6 +4,10 @@ This note describes how request uploads are handled by the current threaded
 HTTP implementation and outlines the likely evolution path for larger
 request-body support.
 
+For a focused description of the current large-body threshold mechanism and
+the application-facing `HttpRequest` abstraction, see
+[`LARGE_REQUEST_DATA_HANDLING.md`](LARGE_REQUEST_DATA_HANDLING.md).
+
 ## Current Behavior
 
 The current implementation parses each HTTP request incrementally. Small
@@ -225,9 +229,10 @@ A practical step-by-step evolution could be:
 
 ## Summary
 
-The current server buffers the whole upload in memory before request handling.
-That is acceptable for small bodies, but not sufficient for a general-purpose
-server handling large or many concurrent uploads.
+The current server buffers small uploads in memory and spools larger uploads
+to temporary files before request handling. That complete-request model is
+simple and bounded by the threshold, but it is still less flexible than a true
+streaming application API for very large or long-running uploads.
 
 Temporary files are one valid solution, but they are not the only one and not
 necessarily the final one. The current worker API leaves room for future

@@ -218,9 +218,12 @@ dictionary with `headers` and `body`; form-data parts also expose `name`, and
 file parts expose `filename`. Parts with their own `Content-Type` include
 `content_type`. Parsed parts are cached by the immutable request object.
 
-There is currently no spooled-file or streaming request-body API. Large
-uploads are therefore buffered in the connection thread and copied to the CGA
-worker.
+Large request bodies may be represented by `body_mode spooled_file` and
+accessed through `$request body_path`. The current API is still a
+complete-request API: request bodies are parsed incrementally in the connection
+thread, but `handle_request` starts only after the request is complete. See
+[`LARGE_REQUEST_DATA_HANDLING.md`](LARGE_REQUEST_DATA_HANDLING.md) for the
+threshold and ownership rules.
 
 ## Content-Type and Multipart Reference
 

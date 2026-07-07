@@ -57,9 +57,11 @@ wrapped in an `HttpRequest` object before application dispatch.
 | `headers` | dictionary | Request headers keyed by lowercase field name. |
 | `body_framing` | string | `none`, `content-length`, or `chunked`. |
 | `transfer_codings` | list | Applied transfer codings in request order. |
-| `body_mode` | string | Currently always `in_memory`. |
-| `body` | byte string | Decoded request body. |
-| `body_size` | integer | Length of `body` in bytes. |
+| `body_mode` | string | Request-body storage mode: `in_memory`, `spooled_file`, or `multipart`. |
+| `body` | byte string | Decoded request body when `body_mode` is `in_memory`. |
+| `body_path` | path | Temporary body file when `body_mode` is `spooled_file`. |
+| `body_size` | integer | Decoded request body length in bytes. |
+| `multipart_parts` | list | Parsed multipart parts when `body_mode` is `multipart`. |
 | `trailers` | dictionary | Decoded chunk trailers keyed by lowercase field name. |
 
 `query_dict` uses `application/x-www-form-urlencoded` conventions: `+`
@@ -121,7 +123,7 @@ The object exposes read-only semantic methods:
 | `query_parameter name ?default?` | One decoded query parameter. |
 | `headers` | Complete normalized request-header dictionary. |
 | `header name ?default?` | Case-insensitive request-header access. |
-| `body_mode`, `body`, `body_size` | Request-body access. |
+| `body_mode`, `body`, `body_path`, `body_size` | Request-body access. |
 | `trailers` | Request trailer dictionary. |
 | `connection_id`, `transaction_id` | Request identity. |
 | `remote_host`, `remote_port` | Peer endpoint. |
@@ -131,14 +133,18 @@ There are no mutation methods and the underlying dictionary is not exposed.
 Modifying values returned by an accessor cannot mutate the Connection Agent's
 state because Tcl thread messages and values use copy semantics.
 
-The request body must be interpreted according to `body_mode`. Only
-`in_memory` is implemented; future modes may replace the direct `body` field
-with another access mechanism.
+The request body must be interpreted according to `body_mode`. `in_memory`
+bodies are accessed through `body`; whole-body spool files are accessed through
+`body_path`; multipart requests with parsed parts are accessed through
+`multipart_parts`. See
+[`LARGE_REQUEST_DATA_HANDLING.md`](LARGE_REQUEST_DATA_HANDLING.md) for
+threshold, ownership, and cleanup rules.
 
 `HttpRequest` adds convenience methods over these descriptor fields. Multipart
-helpers parse `Content-Type: multipart/*` request bodies from the in-memory
-`body` field and expose each part as a dictionary containing `headers`, `body`,
-and, for `form-data`, optional `name`, `filename`, and `content_type` fields.
+helpers use parsed `multipart_parts` when available, or parse an in-memory
+`multipart/*` body. Each part is a dictionary containing `headers` and either
+`body` or `body_path`; `form-data` parts may also include `name`, `filename`,
+and `content_type` fields.
 
 ## Transaction Descriptor
 
