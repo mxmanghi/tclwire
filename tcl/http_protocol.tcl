@@ -29,11 +29,11 @@ oo::class create ::tclwire::HttpProtocolSession {
             set options($name) $value
         }
         if {![string is integer -strict $options(-bodythreshold)] ||
-                $options(-bodythreshold) < 0} {
+             $options(-bodythreshold) < 0} {
             error "-bodythreshold must be a non-negative integer"
         }
         if {![string is integer -strict $options(-maxbodybytes)] ||
-                $options(-maxbodybytes) < 1} {
+             $options(-maxbodybytes) < 1} {
             error "-maxbodybytes must be a positive integer"
         }
         set body_threshold $options(-bodythreshold)
@@ -450,7 +450,7 @@ oo::class create ::tclwire::HttpProtocolSession {
             set size_line [string range $body $cursor [expr {$line_end - 1}]]
             set size_token [string trim [lindex [split $size_line ";"] 0]]
             if {![regexp {^[0-9A-Fa-f]+$} $size_token] ||
-                    [scan $size_token %x chunk_size] != 1} {
+                 [scan $size_token %x chunk_size] != 1} {
                 error "invalid chunk size"
             }
 
@@ -481,8 +481,7 @@ oo::class create ::tclwire::HttpProtocolSession {
             if {[string length $body] < $data_end + 2} {
                 return [dict create complete 0]
             }
-            if {[string range $body $data_end \
-                    [expr {$data_end + 1}]] ne "\r\n"} {
+            if {[string range $body $data_end [expr {$data_end + 1}]] ne "\r\n"} {
                 error "chunk data is not terminated by CRLF"
             }
 

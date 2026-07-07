@@ -52,12 +52,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {$options(-uploadarea) eq {}} {
             set protocol_threshold $options(-maxrequestbytes)
         }
-        set protocol_session [::tclwire::HttpProtocolSession new \
-            -bodythreshold $protocol_threshold \
-            -spooldirectory $options(-uploadarea) \
-            -maxbodybytes $options(-maxrequestbytes)]
-        set application_dispatcher \
-            [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
+        set protocol_session [::tclwire::HttpProtocolSession new -bodythreshold $protocol_threshold \
+                                                                 -spooldirectory $options(-uploadarea) \
+                                                                 -maxbodybytes $options(-maxrequestbytes)]
+        set application_dispatcher [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
         set log_protocol $options(-protocol)
@@ -65,11 +63,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {![string is boolean -strict $options(-dumpmultipartrequests)]} {
             error "-dumpmultipartrequests must be a boolean"
         }
-        set dump_multipart_requests \
-            [expr {!!$options(-dumpmultipartrequests)}]
+        set dump_multipart_requests [expr {!!$options(-dumpmultipartrequests)}]
         foreach {option variable_name} {
             -maxrequestbytes max_request_bytes
-            -maxheaderbytes max_header_bytes
+            -maxheaderbytes  max_header_bytes
         } {
             if {![string is integer -strict $options($option)] ||
                     $options($option) < 1} {
@@ -140,8 +137,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 return
             }
             if {[dict exists $result phase] &&
-                    [dict get $result phase] eq "headers" &&
-                    $request_bytes > $max_header_bytes} {
+                [dict get $result phase] eq "headers" &&
+                ($request_bytes > $max_header_bytes)} {
                 my send_error 431 {} $request_head
             }
             return
