@@ -36,6 +36,15 @@ meaningfully implemented by the legacy server.
 These facilities should be HTTP application support components rather than
 methods placed directly in the default `::tclwire::CApplication`.
 
+## Runtime Reconfiguration
+
+- [ ] Support runtime application reconfiguration by creating replacement
+      application worker pools, routing new requests to the replacement pools,
+      and consistently retiring the threads owned by the superseded pools.
+
+Application configuration is worker-pool initialization state. A request must
+not carry an alternate application configuration to an existing CGA worker.
+
 ## Application Output Bridge
 
 - [x] Make `::tclwire::io::flush` forward buffered output to the Connection

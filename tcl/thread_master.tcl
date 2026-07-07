@@ -60,6 +60,7 @@ namespace eval ::tclwire {}
 }
 
 ::oo::class create ::tclwire::ConcurrentConnectionMetric {
+    variable accounting
     variable metric_options
     variable connection_reservations
 
@@ -90,7 +91,11 @@ namespace eval ::tclwire {}
                 dict incr record running_workload
                 dict incr record cumulative_workload
                 dict incr connection_reservations $thread_id
-                my unmark_thread_eligible $thread_id
+                # A reservation consumes one concurrent-connection slot.  It
+                # must not make the worker unavailable by itself: if the worker
+                # still has spare capacity, another accepted socket may be
+                # queued to the same worker even before the previous
+                # start_connection_agent command reaches connection-open.
             }
             connection-open {
                 set reservations [dict get $connection_reservations $thread_id]
@@ -98,7 +103,15 @@ namespace eval ::tclwire {}
                     error "connection-open without a reservation for thread $thread_id"
                 }
                 dict incr connection_reservations $thread_id -1
-                my unmark_thread_eligible $thread_id
+                # A connection-open notification is the pool-side confirmation
+                # that the reserved worker now owns an established connection.
+                # The worker normally publishes its running status before this
+                # transition, but the pool should not depend on that cross-thread
+                # ordering to reinsert a worker that still has spare concurrent
+                # connection capacity.
+                if {[my thread_status $thread_id] eq "allocated"} {
+                    $accounting change_thread_status $thread_id running
+                }
             }
             connection-closed {
                 # This transition always describes an established connection.
@@ -145,7 +158,7 @@ namespace eval ::tclwire {}
     }
 
     method thread_eligible_for_workload {thread_id record status} {
-        if {$status ni {idle running}} {
+        if {$status ni {idle running allocated}} {
             return false
         }
         set running_workload [dict get $record running_workload]

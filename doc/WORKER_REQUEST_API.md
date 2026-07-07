@@ -69,12 +69,19 @@ the object.
 TclOO objects belong to one interpreter and cannot cross worker-thread
 boundaries. `ApplicationConfiguration serialize` therefore produces a
 versioned, dictionary-based wire envelope containing its type, schema version,
-application ID, and values. The worker calls the class-level `deserialize`
-method, which validates the envelope and reconstructs its own configuration
-object. This serialization format is an internal dispatcher/CGA agreement, not
-an application configuration-file format or public persistence format.
-`CApplication configuration_object` exposes the worker-local object.
-The existing `configuration` method continues to return a dictionary for
+application ID, and values. The application worker script installs that
+envelope once as worker bootstrap state; the CGA reconstructs and keeps a
+worker-local configuration object for the lifetime of the worker. This
+serialization format is an internal dispatcher/CGA agreement, not an
+application configuration-file format or public persistence format.
+
+The request descriptor does not carry application configuration. A CGA worker
+belongs to one application pool, so runtime reconfiguration must replace pools
+and retire their worker threads rather than changing a worker's application
+configuration request by request.
+
+`CApplication configuration_object` exposes the worker-local object. The
+existing `configuration` method continues to return a dictionary for
 compatibility with application constructors and code written against earlier
 versions.
 
@@ -165,6 +172,7 @@ The request object exposes:
 | `content_type_parameter name ?default?` | One lowercase-keyed `Content-Type` parameter. |
 | `is_multipart` | True if the request media type is `multipart/*`. |
 | `body_mode` | Request body storage mode. |
+| `body_path` | Path of a request body whose mode is `spooled_file`. |
 | `body` | In-memory decoded request body. |
 | `body_size` | Request body length. |
 | `multipart_parts` | Parsed MIME multipart parts. File bodies may be spooled to the configured upload area. |
@@ -419,10 +427,12 @@ The multipart storage procedure requires a nonempty upload area and fails if
 called with an empty value. The HTTP connection agent does not call it while
 file storage is disabled.
 
-This mode removes file bodies and the raw multipart body before the request is
-copied to the application worker. The connection agent still receives the
-complete HTTP body before parsing it; incremental socket-to-file streaming is
-not yet implemented.
+Request framing and body storage are incremental. If the decoded whole body
+crosses `request_memory_threshold`, the request uses `body_mode spooled_file`
+with `body_path` and is not reparsed into `multipart_parts`. Applications
+handling such requests should consume or move that file directly. Selective
+incremental parsing and spooling of individual multipart parts is a later
+stage; multipart form helpers remain available for bodies that stay in memory.
 
 ### Multipart Form Helpers
 

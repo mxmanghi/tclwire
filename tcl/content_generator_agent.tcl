@@ -14,16 +14,154 @@ package require tclwire::tpba::control 0.1
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::cga {
+    variable initialized 0
+    variable pool_key {}
+    variable application_class {}
+    variable application_descriptor {}
+    variable configuration {}
+    variable pending_pool_key {}
+    variable pending_serialized_configuration {}
+    variable initialization_error {}
+    variable initialization_options {}
+
+    proc install_configuration_envelope {worker_pool_key serialized_configuration} {
+        variable pending_pool_key
+        variable pending_serialized_configuration
+        variable initialization_error
+        variable initialization_options
+
+        # Keep worker creation lightweight.  Some thread implementations do
+        # not return from thread::create until the startup script reaches
+        # thread::wait.  The worker script therefore installs the immutable
+        # configuration envelope here and schedules object construction on the
+        # worker event loop.  execute still receives only request data.
+        set pending_pool_key $worker_pool_key
+        set pending_serialized_configuration $serialized_configuration
+        set initialization_error {}
+        set initialization_options {}
+        after 0 ::tclwire::cga::initialize_pending
+        return
+    }
+
+    proc initialize {worker_pool_key serialized_configuration} {
+        variable initialized
+        variable pool_key
+        variable application_class
+        variable application_descriptor
+        variable configuration
+
+        set worker_pool_key [string trim $worker_pool_key]
+        if {$worker_pool_key eq {}} {
+            error "content generator worker pool key must not be empty"
+        }
+
+        if {$initialized} {
+            shutdown
+        }
+
+        # A CGA worker belongs to one application pool.  The immutable
+        # application configuration is therefore worker initialization state,
+        # not request payload.  Runtime reconfiguration should replace pools
+        # and retire their workers instead of sending a different application
+        # configuration with each request.
+
+        set configuration [::tclwire::ApplicationConfiguration deserialize $serialized_configuration]
+        set pool_key $worker_pool_key
+        set application_class [$configuration class]
+        set application_descriptor [$configuration snapshot]
+        dict set application_descriptor application_id [$configuration id]
+        set initialized 1
+        return
+    }
+
+    proc initialize_pending {} {
+        variable initialized
+        variable pending_pool_key
+        variable pending_serialized_configuration
+        variable initialization_error
+        variable initialization_options
+
+        if {$initialized || $pending_pool_key eq {}} {
+            return
+        }
+        set worker_pool_key $pending_pool_key
+        set serialized_configuration $pending_serialized_configuration
+        set pending_pool_key {}
+        set pending_serialized_configuration {}
+
+        if {[catch {
+            initialize $worker_pool_key $serialized_configuration
+        } message options]} {
+            set initialization_error $message
+            set initialization_options $options
+        }
+        return
+    }
+
+    proc ensure_initialized {} {
+        variable initialized
+        variable configuration
+        variable pending_pool_key
+        variable initialization_error
+        variable initialization_options
+
+        if {!$initialized && $initialization_error eq {} &&
+                $pending_pool_key ne {}} {
+            initialize_pending
+        }
+        if {$initialized && $configuration ne {}} {
+            return
+        }
+        if {$initialization_error ne {}} {
+            return -options $initialization_options $initialization_error
+        }
+        error "content generator worker is not initialized"
+    }
+
+    proc shutdown {} {
+        variable initialized
+        variable pool_key
+        variable application_class
+        variable application_descriptor
+        variable configuration
+        variable pending_pool_key
+        variable pending_serialized_configuration
+        variable initialization_error
+        variable initialization_options
+
+        if {$configuration ne {}} {
+            catch {$configuration destroy}
+        }
+        set initialized 0
+        set pool_key {}
+        set application_class {}
+        set application_descriptor {}
+        set configuration {}
+        set pending_pool_key {}
+        set pending_serialized_configuration {}
+        set initialization_error {}
+        set initialization_options {}
+        return
+    }
+
     proc cleanup_uploaded_files {configuration request_descriptor} {
         if {[$configuration retain_uploaded_files]} {
             return
         }
-        if {![dict exists $request_descriptor multipart_parts]} {
-            return
+        if {[dict exists $request_descriptor body_mode] &&
+                [dict get $request_descriptor body_mode] eq "spooled_file" &&
+                [dict exists $request_descriptor body_path]} {
+            set path [dict get $request_descriptor body_path]
+            if {[catch {file delete $path} message options] && [file exists $path]} {
+                catch {::tclwire::logger log_error upload_cleanup \
+                    "path=$path error=$message" warn}
+            }
         }
-
-        set failures [::tclwire::http::multipart cleanup_files \
-            [dict get $request_descriptor multipart_parts]]
+        set failures {}
+        if {[dict exists $request_descriptor multipart_parts]} {
+            set failures [::tclwire::http::multipart cleanup_files \
+                [dict get $request_descriptor multipart_parts]]
+        }
         foreach failure $failures {
             set details [join [list \
                 "path=[::tclwire::logger::log_value \
@@ -98,31 +236,34 @@ namespace eval ::tclwire::cga {
         return
     }
 
-    proc execute {
-        pool_key application_class serialized_configuration request_descriptor
-    } {
+    proc execute {request_descriptor} {
+        variable initialized
+        variable pool_key
+        variable application_class
+        variable application_descriptor
+        variable configuration
+
+        ensure_initialized
+
         set worker_id [::thread::id]
         ::tclwire::accounting change_thread_status $worker_id running \
                 [list $application_class [dict get $request_descriptor transaction_id]]
 
         set application {}
-        set configuration {}
         set request {}
         try {
             # Establish the error-reporting path before any application-owned
-            # configuration, reload, or constructor code can fail.
-            ::tclwire::io begin \
-                [dict get $request_descriptor connection_thread_id] \
-                [dict get $request_descriptor connection_agent_id] \
-                [dict get $request_descriptor transaction_id]
-            set configuration \
-                [::tclwire::ApplicationConfiguration deserialize \
-                    $serialized_configuration]
-            reload_application_class \
-                $application_class $configuration
-            set application_descriptor [$configuration snapshot]
-            dict set application_descriptor application_id \
-                [$configuration id]
+            # reload, constructor, or request-handling code can fail.
+            ::tclwire::io begin [dict get $request_descriptor connection_thread_id] \
+                                [dict get $request_descriptor connection_agent_id]  \
+                                [dict get $request_descriptor transaction_id]
+
+            # The configuration and application descriptor are owned by the
+            # worker and are stable for the lifetime of this CGA pool member.
+            # Per-request work may read them, but cleanup must not destroy the
+            # configuration object; it is released by cga::shutdown on worker
+            # exit.
+            reload_application_class $application_class $configuration
             set application [$application_class new $application_descriptor]
             ::tclwire::tools::begin $request_descriptor
             set request [::tclwire::HttpRequest new $request_descriptor]
@@ -142,10 +283,7 @@ namespace eval ::tclwire::cga {
             if {$application ne {}} {
                 catch {$application destroy}
             }
-            if {$configuration ne {}} {
-                cleanup_uploaded_files $configuration $request_descriptor
-                $configuration destroy
-            }
+            cleanup_uploaded_files $configuration $request_descriptor
             catch {
                 ::tclwire::tpba notify_workload_transition \
                     $pool_key request-processed

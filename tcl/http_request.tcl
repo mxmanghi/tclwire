@@ -146,6 +146,13 @@ oo::class create ::tclwire::HttpRequest {
         return [my optional body {}]
     }
 
+    method body_path {} {
+        if {[my body_mode] ne "spooled_file"} {
+            error "HTTP request body is not stored in a spooled file"
+        }
+        return [my required body_path]
+    }
+
     method body_size {} {
         return [my optional body_size 0]
     }

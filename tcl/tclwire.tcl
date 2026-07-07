@@ -112,6 +112,8 @@ namespace eval ::tclwire::runtime {
         puts $channel "      Store HTTP multipart file parts in this directory."
         puts $channel "  --max-request-bytes <count>"
         puts $channel "      Maximum buffered HTTP request size. Default: 16777216"
+        puts $channel "  --request-memory-threshold <count>"
+        puts $channel "      Spool larger HTTP request bodies to disk. Default: 1048576"
         puts $channel "  --dump-multipart-requests"
         puts $channel "      Dump complete multipart HTTP requests to stderr. Default: off"
         puts $channel "  --ftproot <path>"
@@ -266,6 +268,7 @@ namespace eval ::tclwire::runtime {
         set docroot [::tclwire::support default_doc_root]
         set upload_area [file normalize /tmp]
         set max_request_bytes 16777216
+        set request_memory_threshold 1048576
         set ftproot [::tclwire::support default_ftp_root]
         set certfile {}
         set keyfile {}
@@ -304,6 +307,7 @@ namespace eval ::tclwire::runtime {
                             docroot      $docroot \
                             upload_area  $upload_area \
                             max_request_bytes $max_request_bytes \
+                            request_memory_threshold $request_memory_threshold \
                             ftproot      $ftproot \
                             certfile     $certfile \
                             keyfile      $keyfile \
@@ -389,6 +393,7 @@ namespace eval ::tclwire::runtime {
                 conn_max_workers 1
                 conn_max_per_thread 1
                 max_request_bytes 1
+                request_memory_threshold 0
             } {
                 if {[dict exists $global $field]} {
                     dict set config $field [parse_integer_min \
@@ -436,6 +441,12 @@ namespace eval ::tclwire::runtime {
                 dict set service max_request_bytes [parse_integer_min \
                     "$protocol.max_request_bytes" \
                     [dict get $protocol_config max_request_bytes] 1]
+            }
+            if {$protocol in {http https} &&
+                    [dict exists $protocol_config request_memory_threshold]} {
+                dict set service request_memory_threshold [parse_integer_min \
+                    "$protocol.request_memory_threshold" \
+                    [dict get $protocol_config request_memory_threshold] 0]
             }
 
             if {[dict exists $protocol_config log_level]} {
@@ -486,7 +497,7 @@ namespace eval ::tclwire::runtime {
                     $config_dir [dict get $protocol_config libdir]]
             }
             dict for {application_id descriptor} $protocol_config {
-                if {$application_id in {enabled port certfile keyfile libdir log_level upload_area max_request_bytes}} {
+                if {$application_id in {enabled port certfile keyfile libdir log_level upload_area max_request_bytes request_memory_threshold}} {
                     continue
                 }
                 if {[catch {dict size $descriptor}]} {
@@ -628,6 +639,10 @@ namespace eval ::tclwire::runtime {
                 --max-request-bytes {
                     dict set config max_request_bytes [parse_integer_min $option \
                         [require_value $argv [incr i] $option] 1]
+                }
+                --request-memory-threshold {
+                    dict set config request_memory_threshold [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 0]
                 }
                 --dump-multipart-requests {
                     dict set config dump_multipart_requests 1
@@ -778,6 +793,11 @@ namespace eval ::tclwire::runtime {
                     ![dict exists $service max_request_bytes]} {
                 dict set service max_request_bytes [dict get $config max_request_bytes]
             }
+            if {[dict get $service protocol] in {http https} &&
+                    ![dict exists $service request_memory_threshold]} {
+                dict set service request_memory_threshold \
+                    [dict get $config request_memory_threshold]
+            }
             lappend normalized_services [normalize_service \
                 $service [dict get $config certfile] [dict get $config keyfile]]
         }
@@ -848,6 +868,8 @@ namespace eval ::tclwire::runtime {
                      -protocol [dict get $service protocol] \
                      -uploadarea [dict get $service upload_area] \
                      -maxrequestbytes [dict get $service max_request_bytes] \
+                     -requestmemorythreshold \
+                         [dict get $service request_memory_threshold] \
                      -dumpmultipartrequests $dump_multipart_requests]
     }
 

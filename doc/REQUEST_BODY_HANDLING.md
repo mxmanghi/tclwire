@@ -6,18 +6,18 @@ request-body support.
 
 ## Current Behavior
 
-The current implementation fully buffers each HTTP request in the
-`HttpConnectionAgent` before application logic starts in a Content Generator
-Agent (CGA) worker.
+The current implementation parses each HTTP request incrementally. Small
+bodies remain in memory; bodies larger than `request_memory_threshold` are
+spooled to `upload_area`. Application logic still starts only after the whole
+request has arrived.
 
 The relevant flow is:
 
-1. `HttpConnectionAgent::readable` reads available bytes from the client
-   channel into its input buffer.
-2. `HttpProtocolSession::complete_request` checks whether a complete request
-   has arrived.
-3. `HttpProtocolSession::parse_request` parses the completed request and
-   returns a request descriptor with `body_mode in_memory`.
+1. `HttpConnectionAgent::readable` reads a bounded chunk from the client.
+2. `HttpProtocolSession::feed` incrementally parses request framing and writes
+   decoded body bytes to its current body sink.
+3. The sink starts in memory and migrates existing and subsequent bytes to a
+   temporary file when the configured threshold is crossed.
 4. `HttpConnectionAgent` adds connection and transaction metadata.
 5. `ApplicationDispatcher` sends the descriptor to a CGA worker.
 6. The CGA wraps the descriptor in a read-only `HttpRequest` object and calls
@@ -32,45 +32,34 @@ Relevant code:
 
 ### Fixed-Length Bodies
 
-For requests with `Content-Length`, the server keeps buffering until it has at
-least:
+For requests with `Content-Length`, the server consumes exactly the declared
+number of body bytes without retaining the complete wire request. The declared
+final request size is rejected as soon as the headers are parsed when it
+exceeds `max_request_bytes`.
 
-- end of headers
-- plus the exact body length declared by `Content-Length`
-
-This means a large `POST` or `PUT` request produces a similarly large in-memory
-buffer.
+At or below `request_memory_threshold`, the descriptor uses `body_mode
+in_memory`. Above it, the descriptor uses `body_mode spooled_file` and exposes
+`body_path`.
 
 ### Chunked Uploads
 
-For requests with `Transfer-Encoding: chunked`, the connection agent still
-buffers the full request body in memory until the terminating chunk is present.
-
-The protocol session parses chunk framing while locating the end of the
-request. During `parse_request`, it removes chunk framing, decodes the
-supported transfer-coding chain, and stores the decoded body in the request
-descriptor. It does not expose upload bytes incrementally to application code.
+For requests with `Transfer-Encoding: chunked`, the protocol session consumes
+chunk framing incrementally and sends decoded chunk payload bytes to the same
+hybrid sink. Trailers remain available in the completed descriptor.
 
 ## Consequence
 
 The current model is acceptable for small request bodies and keeps the worker
 API simple.
 
-For a general-purpose web server, this approach is not scalable:
-
-- memory usage grows with upload size
-- memory usage grows independently for each active uploading connection
-- the application cannot start processing the body until the upload is fully
-  received
-- the connection thread remains responsible for buffering all request bytes
-
-In practice, the memory cost can be larger than the raw request size because of
-intermediate Tcl object allocations and copying.
+Memory use is bounded by the configured threshold per active request, including
+for chunked and gzip transfer decoding. The remaining buffered-model limitation
+is that application processing cannot begin until the upload is complete.
 
 ## Size Limits
 
 To bound this cost, the connection agent rejects request headers larger than
-64 KiB with status 431 and rejects a complete buffered request larger than
+64 KiB with status 431 and rejects a request larger than
 `max_request_bytes` with status 413. The default request limit is 16 MiB.
 
 For `Content-Length` requests, the declared final size is checked immediately
@@ -81,6 +70,11 @@ event cannot cause an unbounded allocation.
 Configure the request limit globally with `--max-request-bytes <count>` or
 `tclwire.max_request_bytes` in TOML. An HTTP or HTTPS service can override it
 with `max_request_bytes` in its protocol table.
+
+Configure the in-memory threshold with `--request-memory-threshold <count>` or
+`tclwire.request_memory_threshold`. HTTP and HTTPS protocol tables can override
+it with `request_memory_threshold`. The default is 1 MiB. A value of zero
+spools every non-empty request body.
 
 ## Multipart Request Diagnostics
 
@@ -99,7 +93,8 @@ There is more than one way to evolve beyond full in-memory buffering.
 
 ### 1. Full In-Memory Buffering
 
-This is the current strategy.
+This is available by configuring a threshold at least as large as the request
+limit, but is no longer the default strategy.
 
 Advantages:
 
@@ -129,8 +124,7 @@ Disadvantages:
 - requires temporary-file lifecycle management
 - still delays application processing until the full upload is complete
 
-This is a reasonable intermediate design if preserving a buffered request model
-is important.
+This is the current request-body strategy.
 
 ### 3. Incremental Streaming
 

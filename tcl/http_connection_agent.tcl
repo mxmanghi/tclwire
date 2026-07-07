@@ -19,6 +19,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
     variable next_transaction_id default_encoding log_protocol
     variable upload_area max_request_bytes max_header_bytes
     variable dump_multipart_requests
+    variable request_memory_threshold request_bytes
+    variable request_head
+    variable request_prefix
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -28,6 +31,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             -uploadarea /tmp
             -maxrequestbytes 16777216
             -maxheaderbytes 65536
+            -requestmemorythreshold 1048576
             -dumpmultipartrequests 0
         }
         foreach {name value} $args {
@@ -44,7 +48,14 @@ oo::class create ::tclwire::HttpConnectionAgent {
         }
 
         next $conn_channel $id $host $port $options(-connectionkey)
-        set protocol_session [::tclwire::HttpProtocolSession new]
+        set protocol_threshold $options(-requestmemorythreshold)
+        if {$options(-uploadarea) eq {}} {
+            set protocol_threshold $options(-maxrequestbytes)
+        }
+        set protocol_session [::tclwire::HttpProtocolSession new \
+            -bodythreshold $protocol_threshold \
+            -spooldirectory $options(-uploadarea) \
+            -maxbodybytes $options(-maxrequestbytes)]
         set application_dispatcher \
             [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
         set default_application [dict get $options(-applicationconfig) default_application]
@@ -66,7 +77,15 @@ oo::class create ::tclwire::HttpConnectionAgent {
             }
             set $variable_name $options($option)
         }
+        if {![string is integer -strict $options(-requestmemorythreshold)] ||
+                $options(-requestmemorythreshold) < 0} {
+            error "-requestmemorythreshold must be a non-negative integer"
+        }
+        set request_memory_threshold $options(-requestmemorythreshold)
         set next_transaction_id 0
+        set request_bytes 0
+        set request_head 0
+        set request_prefix {}
         my start
     }
 
@@ -77,62 +96,60 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     method readable {} {
-        set buffered [my input_buffer]
-        if {[string first "\r\n\r\n" $buffered] < 0} {
-            set read_limit [expr {$max_header_bytes - [string length $buffered] + 1}]
-        } else {
-            set read_limit [expr {$max_request_bytes - [string length $buffered] + 1}]
-        }
+        set read_limit [expr {$max_request_bytes - $request_bytes + 1}]
         set chunk [my read_available [expr {max(1, min(65536, $read_limit))}]]
         if {$chunk eq {} || $closed} {
             return
         }
-
-        set buffered [my input_buffer]
-        set header_end [string first "\r\n\r\n" $buffered]
-        if {$header_end < 0 && [string length $buffered] > $max_header_bytes} {
-            my send_error 431 {} [my request_is_head $buffered]
+        my clear_input_buffer
+        if {[string first " " $request_prefix] < 0 &&
+                [string length $request_prefix] < 16} {
+            append request_prefix [string range $chunk 0 \
+                [expr {15 - [string length $request_prefix]}]]
+            set request_head [regexp {^HEAD[ \t]} $request_prefix]
+        }
+        incr request_bytes [string length $chunk]
+        if {$request_bytes > $max_request_bytes} {
+            my send_error 413 {} $request_head
             return
         }
-        if {[string length $buffered] > $max_request_bytes} {
-            my send_error 413 {} [my request_is_head $buffered]
-            return
-        }
-        if {$header_end >= 0} {
-            set declared_too_large 0
-            if {[catch {
-                set headers [$protocol_session parse_headers $buffered]
-                set framing [$protocol_session request_body_framing $headers]
-                if {$framing eq "content-length"} {
-                    set declared_size [expr {
-                        $header_end + 4 + [dict get $headers content-length]
-                    }]
-                    if {$declared_size > $max_request_bytes} {
-                        set declared_too_large 1
-                    }
-                }
-            }]} {
-                my send_error 400 {} [my request_is_head $buffered]
-                return
-            }
-            if {$declared_too_large} {
-                my send_error 413 {} [my request_is_head $buffered]
-                return
-            }
-        }
-
         if {[catch {
-            set request_data [my request_complete $buffered]
-        }]} {
-            my send_error 400 {} [my request_is_head [my input_buffer]]
+            set result [$protocol_session feed $chunk]
+        } message options]} {
+            if {[dict exists $options -errorcode] &&
+                    [dict get $options -errorcode] eq \
+                        {TCLWIRE HTTP BODY_TOO_LARGE}} {
+                my send_error 413 {} $request_head
+            } else {
+                my send_error 400 {} $request_head
+            }
             return
         }
-        if {$request_data eq {}} {
+        if {[dict exists $result method]} {
+            set request_head [expr {[dict get $result method] eq "HEAD"}]
+        }
+        if {[dict exists $result header_size] &&
+                [dict get $result header_size] > $max_header_bytes} {
+            my send_error 431 {} $request_head
+            return
+        }
+        if {[dict get $result status] eq "need_more"} {
+            if {[dict exists $result declared_request_size] &&
+                    [dict get $result declared_request_size] > $max_request_bytes} {
+                my send_error 413 {} $request_head
+                return
+            }
+            if {[dict exists $result phase] &&
+                    [dict get $result phase] eq "headers" &&
+                    $request_bytes > $max_header_bytes} {
+                my send_error 431 {} $request_head
+            }
             return
         }
 
+        set request_d [dict get $result descriptor]
         chan event $channel readable {}
-        my handle_request $request_data
+        my handle_request_descriptor $request_d
     }
 
     method request_complete {request_data} {
@@ -140,8 +157,13 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     method build_request_descriptor {request_data} {
-        set descriptor [$protocol_session parse_request $request_data]
-        if {$upload_area ne {} && [dict exists $descriptor headers content-type]} {
+        if {[catch {dict get $request_data method}]} {
+            set descriptor [$protocol_session parse_request $request_data]
+        } else {
+            set descriptor $request_data
+        }
+        if {[dict get $descriptor body_mode] eq "in_memory" &&
+                $upload_area ne {} && [dict exists $descriptor headers content-type]} {
             set content_type [dict get $descriptor headers content-type]
             set content_info [::tclwire::http::message parse_content_type $content_type]
             if {[string match multipart/* [dict get $content_info media_type]]} {
@@ -193,6 +215,19 @@ oo::class create ::tclwire::HttpConnectionAgent {
             my send_error 400 {} [my request_is_head $request_data]
             return {}
         }
+        return [my dispatch_request_descriptor $request_d]
+    }
+
+    method cleanup_request_body {request_d} {
+        if {[dict exists $request_d body_mode] &&
+                [dict get $request_d body_mode] eq "spooled_file" &&
+                [dict exists $request_d body_path]} {
+            catch {file delete [dict get $request_d body_path]}
+        }
+        return
+    }
+
+    method dispatch_request_descriptor {request_d} {
         my clear_input_buffer
         catch {
             ::tclwire::accounting set_thread_http_host \
@@ -229,6 +264,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 ::tclwire::http::multipart cleanup_files \
                     [dict get $request_d multipart_parts]
             }
+            my cleanup_request_body $request_d
             if {[string match "no application is configured for Host *" $message]} {
                 my log_request $request_d 404 0
                 my send_error 404 [dict create path [dict get $request_d path]] \
@@ -243,6 +279,51 @@ oo::class create ::tclwire::HttpConnectionAgent {
         $transaction set application_pool_key [dict get $dispatch_info pool_key]
         $transaction set response_encoding    [dict get $dispatch_info encoding]
         return [$transaction snapshot]
+    }
+
+    method handle_request_descriptor {request_d} {
+        my dump_multipart_descriptor $request_d
+        if {[catch {
+            set request_d [my build_request_descriptor $request_d]
+        }]} {
+            my cleanup_request_body $request_d
+            my log_request {} 400 0
+            my send_error 400 {} [expr {[dict get $request_d method] eq "HEAD"}]
+            return {}
+        }
+        return [my dispatch_request_descriptor $request_d]
+    }
+
+    method dump_multipart_descriptor {request_d} {
+        if {!$dump_multipart_requests ||
+                ![dict exists $request_d headers content-type]} {
+            return
+        }
+        if {[catch {
+            set content_info [::tclwire::http::message parse_content_type \
+                [dict get $request_d headers content-type]]
+            set is_multipart [string match multipart/* \
+                [dict get $content_info media_type]]
+        }] || !$is_multipart} {
+            return
+        }
+        catch {
+            puts stderr "--- TclWire HTTP multipart request dump ([dict get $request_d body_size] body bytes) ---"
+            puts stderr "[dict get $request_d method] [dict get $request_d target] HTTP/[dict get $request_d version]"
+            dict for {name value} [dict get $request_d headers] {
+                puts stderr "$name: $value"
+            }
+            puts stderr {}
+            if {[dict get $request_d body_mode] eq "in_memory"} {
+                puts -nonewline stderr [dict get $request_d body]
+            } else {
+                set dump_channel [open [dict get $request_d body_path] rb]
+                try { fcopy $dump_channel stderr } finally { close $dump_channel }
+            }
+            puts stderr "\n--- end TclWire HTTP multipart request dump ---"
+            flush stderr
+        }
+        return
     }
 
     method dump_multipart_request {request_data} {
@@ -539,9 +620,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
                             [dict create current_transaction_id {} \
                                          current_command {}]
                     }
-                    my log_request $descriptor \
-                        [dict get $descriptor response_status] \
-                        [dict get $descriptor response_bytes]
+                    my log_request $descriptor [dict get $descriptor response_status] \
+                                               [dict get $descriptor response_bytes]
                     my close
                     return
                 }
@@ -622,7 +702,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     unexport abort_application_response apply_header_event \
-        chunked_response commit_chunked_response head_only header_name header_value \
+        chunked_response cleanup_request_body commit_chunked_response \
+        dispatch_request_descriptor dump_multipart_descriptor \
+        handle_request_descriptor head_only header_name header_value \
         log_request request_host request_is_head response_header_values
 }
 

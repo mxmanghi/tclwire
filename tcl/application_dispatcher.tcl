@@ -193,11 +193,12 @@ oo::class create ::tclwire::ApplicationDispatcher {
         return [dict get $response result]
     }
 
-    method worker_script {application_descriptor pool_key} {
+    method worker_script {application_configuration pool_key} {
         set pool_key [string trim $pool_key]
         if {$pool_key eq {}} {
             error "application worker pool key must not be empty"
         }
+        set application_descriptor [$application_configuration snapshot]
         set application_paths [dict get $application_descriptor application_paths]
 
         set loader {}
@@ -210,11 +211,13 @@ oo::class create ::tclwire::ApplicationDispatcher {
         }
         set exit_pool_notification [format {
             catch {::tclwire::tpba notify_workload_transition %s thread-exit}
-            catch {::tclwire::tpba request \
-                    [dict create operation remove_worker \
-                                 pool_key %s \
-                                 worker_id [::thread::id]]}
+            catch {::tclwire::tpba request [dict create operation remove_worker \
+                                                        pool_key %s \
+                                                        worker_id [::thread::id]]}
         } [list $pool_key] [list $pool_key]]
+        set install_cga_configuration [list \
+            ::tclwire::cga::install_configuration_envelope \
+            $pool_key [$application_configuration serialize]]
         return [format {
             set application_paths %s
             set inherited_paths {}
@@ -236,15 +239,23 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
             }
             %s
+            # This command runs in the new CGA worker interpreter.  It installs
+            # the application configuration envelope once in that worker.  The
+            # worker is tied to this application pool; future runtime
+            # reconfiguration should replace the pool and retire these threads,
+            # not alter the application contract request by request.
+            %s
 
             proc demand_thread_exit {} {
                 ::thread::release [::thread::id]
             }
 
             ::thread::wait
+            ::tclwire::cga::shutdown
             %s
             ::tclwire::accounting remove_thread [::thread::id]
-        } [list $application_paths] $loader $exit_pool_notification]
+        } [list $application_paths] $loader $install_cga_configuration \
+            $exit_pool_notification]
     }
 
     method start {} {
@@ -261,7 +272,9 @@ oo::class create ::tclwire::ApplicationDispatcher {
             set response [::tclwire::tpba request \
                         [dict create operation      create_pool  \
                                      pool_key       $key         \
-                                     worker_script  [my worker_script $descriptor $key] \
+                                     worker_script  [my worker_script \
+                                                        [my application_configuration $application_id] \
+                                                        $key] \
                                      policy         $policy \
                                      descriptor     [dict create kind        application \
                                                                  application $application_id \
@@ -290,7 +303,6 @@ oo::class create ::tclwire::ApplicationDispatcher {
     method dispatch {request_descriptor} {
         set application_id [my select_application $request_descriptor]
         set descriptor [my application $application_id]
-        set configuration [my application_configuration $application_id]
         set key [my pool_key $application_id]
 
         # getting a worker thread handle from the TPBA
@@ -309,10 +321,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
         dict set request_descriptor application_pool_key $key
         if {[catch {
             ::thread::send -async $worker_id \
-                [list ::tclwire::cga::execute $key \
-                                              [$configuration class] \
-                                              [$configuration serialize] \
-                                              $request_descriptor]
+                [list ::tclwire::cga::execute $request_descriptor]
         } message options]} {
             catch {::tclwire::tpba request [dict create operation   release_worker \
                                                         pool_key    $key \

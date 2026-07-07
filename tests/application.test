@@ -419,9 +419,8 @@ test application-configuration-1.5 {
             encoding utf-8 \
             application_paths [list [temporaryDirectory]]]]
 } -body {
-    ::tclwire::cga::execute app:failing \
-        ::tclwire::application_test::FailingConstructor \
-        [$configuration serialize] \
+    ::tclwire::cga::initialize app:failing [$configuration serialize]
+    ::tclwire::cga::execute \
         [dict create \
             application_id failing \
             connection_thread_id [::thread::id] \
@@ -437,12 +436,14 @@ test application-configuration-1.5 {
         [dict get $event type] \
         [dict get $event data]
 } -cleanup {
+    catch {::tclwire::cga::shutdown}
     catch {$configuration destroy}
     catch {$receiver destroy}
     catch {::tclwire::accounting remove_thread $worker_id}
     catch {::tclwire::application_test::FailingConstructor destroy}
     catch {::tclwire::io end}
-} -result {91 error {constructor failed}}
+} -match glob -result {91 error {constructor failed}} -errorOutput \
+{application level=error *constructor failed*}
 
 test application-dispatcher-1.1 {missing Host selects the default application} -body {
     set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
@@ -539,7 +540,7 @@ oo::class create ::example::Application {
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
         set script [$dispatcher worker_script \
-            [$dispatcher application default] app:default]
+            [$dispatcher application_configuration default] app:default]
         list \
             [expr {[string first [list source $application_file] $script] >= 0}] \
             [expr {[string first {package require tclwire::application 0.1} \
@@ -554,10 +555,10 @@ oo::class create ::example::Application {
 test application-dispatcher-1.9 {package-backed applications remain supported} -body {
     set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
     try {
-        set descriptor [$dispatcher application default]
+        set configuration [$dispatcher application_configuration default]
         expr {[string first \
             {package require tclwire::application 0.1} \
-            [$dispatcher worker_script $descriptor app:default]] >= 0}
+            [$dispatcher worker_script $configuration app:default]] >= 0}
     } finally {
         $dispatcher destroy
     }
@@ -649,6 +650,27 @@ test application-dispatcher-1.9t {
     catch {file delete $moved_destination}
 } -result {0 0 1}
 
+test application-dispatcher-1.9ta {
+    request cleanup removes a whole-body spool file
+} -setup {
+    set body_file [makeFile payload request-body-cleanup]
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new cleanup-test \
+        [dict create class ::tclwire::CApplication \
+            package tclwire::application hosts localhost \
+            docroot [temporaryDirectory] encoding utf-8 \
+            application_paths [list [temporaryDirectory]]]]
+    try {
+        ::tclwire::cga::cleanup_uploaded_files $configuration \
+            [dict create body_mode spooled_file body_path $body_file]
+        file exists $body_file
+    } finally {
+        $configuration destroy
+    }
+} -cleanup {
+    catch {file delete $body_file}
+} -result 0
+
 test application-dispatcher-1.9u {
     application configuration can retain request spool files
 } -setup {
@@ -686,8 +708,8 @@ test application-dispatcher-1.9a {
     dict set config applications default libdir $libdir
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
-        set descriptor [$dispatcher application default]
-        set script [$dispatcher worker_script $descriptor app:default]
+        set configuration [$dispatcher application_configuration default]
+        set script [$dispatcher worker_script $configuration app:default]
         set docroot_index [string first $docroot $script]
         set libdir_index [string first $libdir $script]
         set package_index [string first \
@@ -706,8 +728,8 @@ test application-dispatcher-1.9b {
 } -body {
     set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
     try {
-        set descriptor [$dispatcher application default]
-        set script [$dispatcher worker_script $descriptor app:default]
+        set configuration [$dispatcher application_configuration default]
+        set script [$dispatcher worker_script $configuration app:default]
         list \
             [expr {[string first {operation remove_worker} $script] >= 0}] \
             [expr {[string first {pool_key app:default} $script] >= 0}] \
@@ -723,8 +745,8 @@ test application-dispatcher-1.9ba {
 } -body {
     set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
     try {
-        set descriptor [$dispatcher application default]
-        catch {$dispatcher worker_script $descriptor {   }} message
+        set configuration [$dispatcher application_configuration default]
+        catch {$dispatcher worker_script $configuration {   }} message
         set message
     } finally {
         $dispatcher destroy
