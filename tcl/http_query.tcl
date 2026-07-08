@@ -19,8 +19,8 @@ namespace eval ::tclwire::http::query {
                     error "incomplete percent escape in URL query"
                 }
                 set hexadecimal_octet [string range $urlencoded_component \
-                    [expr {$character_index + 1}] \
-                    [expr {$character_index + 2}]]
+                    $character_index+1 \
+                    $character_index+2]
                 if {![regexp {^[0-9A-Fa-f]{2}$} $hexadecimal_octet]} {
                     error "invalid percent escape in URL query"
                 }
@@ -48,9 +48,9 @@ namespace eval ::tclwire::http::query {
                 set urlencoded_value {}
             } else {
                 set urlencoded_name [string range $urlencoded_field \
-                    0 [expr {$separator_index - 1}]]
+                    0 $separator_index-1]
                 set urlencoded_value [string range $urlencoded_field \
-                    [expr {$separator_index + 1}] end]
+                    $separator_index+1 end]
             }
             dict set parameters \
                 [decode_component $urlencoded_name] \

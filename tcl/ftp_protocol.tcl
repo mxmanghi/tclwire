@@ -10,8 +10,8 @@ oo::class create ::tclwire::FtpProtocolSession {
     method extract_commands {buffer} {
         set commands {}
         while {[set line_end [string first "\n" $buffer]] >= 0} {
-            set line [string range $buffer 0 [expr {$line_end - 1}]]
-            set buffer [string range $buffer [expr {$line_end + 1}] end]
+            set line [string range $buffer 0 $line_end-1]
+            set buffer [string range $buffer $line_end+1 end]
             set line [string trimright $line "\r"]
             if {$line eq {}} {
                 continue

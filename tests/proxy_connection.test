@@ -29,7 +29,7 @@ namespace eval ::tclwire::proxy_connection_test {
             append response [read $channel]
             set separator [string first "\r\n\r\n" $response]
             if {$separator >= 0 && $expected_length eq {}} {
-                set headers [string range $response 0 [expr {$separator - 1}]]
+                set headers [string range $response 0 $separator-1]
                 if {[regexp -nocase \
                         {\r\nContent-Length:\s*([0-9]+)} \
                         "\r\n$headers" -> length]} {
@@ -39,7 +39,7 @@ namespace eval ::tclwire::proxy_connection_test {
             if {$expected_length ne {} &&
                     [string length $response] >= $expected_length} {
                 return [string range $response 0 \
-                    [expr {$expected_length - 1}]]
+                    $expected_length-1]
             }
             if {[eof $channel]} {
                 return $response
@@ -139,8 +139,8 @@ test proxy-connection-1.1 {
     set response [::tclwire::proxy_connection_test::request \
         "GET http://127.0.0.1:8990/ HTTP/1.1\r\nHost: 127.0.0.1:8990\r\nConnection: close\r\n\r\n"]
     set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 [expr {$separator - 1}]]
-    set body [string range $response [expr {$separator + 4}] end]
+    set headers [string range $response 0 $separator-1]
+    set body [string range $response $separator+4 end]
     set expected [::fileutil::cat -translation binary \
         [file join $project_root index.html]]
     set proxy_pool [[::tclwire::runtime transport_reactor proxy] pool_key]

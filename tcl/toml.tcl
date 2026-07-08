@@ -55,7 +55,7 @@ proc ::toml::stripComment {line} {
 
         if {$quote eq ""} {
             if {$character eq "#"} {
-                return [string range $line 0 [expr {$index - 1}]]
+                return [string range $line 0 $index-1]
             }
             if {$character eq "\"" || $character eq "'"} {
                 set quote $character
@@ -242,8 +242,8 @@ proc ::toml::loadArray {string} {
 #
 proc ::toml::keyValuePair {line} {
     set poseq [string first "=" $line]
-    set key   [string trim [string range $line 0 [expr {$poseq-1}]]]
-    set value [string trim [string range $line [expr {$poseq+1}] end]]
+    set key   [string trim [string range $line 0 $poseq-1]]
+    set value [string trim [string range $line $poseq+1 end]]
 
     #
     # Get the actual key and check for emptiness
@@ -289,7 +289,7 @@ proc ::toml::tableName {line} {
         return -code error "Syntax error in table name: $line"
     }
 
-    set name [string range $line [expr {$posopen + 1}] [expr {$posclose - 1}]]
+    set name [string range $line $posopen+1 $posclose-1]
     set components {}
     set component ""
     set quote ""

@@ -60,8 +60,8 @@ oo::class create ::tclwire::ConsoleConnectionAgent {
 
         while {[set newline [string first "\n" $input_buffer]] >= 0} {
             set line [string trimright \
-                [string range $input_buffer 0 [expr {$newline - 1}]] "\r"]
-            set input_buffer [string range $input_buffer [expr {$newline + 1}] end]
+                [string range $input_buffer 0 $newline-1] "\r"]
+            set input_buffer [string range $input_buffer $newline+1 end]
             my handle_command $line
             if {$closed} {
                 break

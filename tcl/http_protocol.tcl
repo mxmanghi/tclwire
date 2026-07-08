@@ -94,8 +94,8 @@ oo::class create ::tclwire::HttpProtocolSession {
         set path $target
         set query_start [string first ? $target]
         if {$query_start >= 0} {
-            set path [string range $target 0 [expr {$query_start - 1}]]
-            set query [string range $target [expr {$query_start + 1}] end]
+            set path [string range $target 0 $query_start-1]
+            set query [string range $target $query_start+1 end]
         }
         set headers [my parse_headers "${head}\r\n\r\n"]
         return [dict create method $method target $target path $path query $query \
@@ -215,13 +215,13 @@ oo::class create ::tclwire::HttpProtocolSession {
                             header_size $header_size \
                             method [dict get $request_info method]]
                     }
-                    set size_line [string range $chunk_buffer 0 [expr {$line_end - 1}]]
+                    set size_line [string range $chunk_buffer 0 $line_end-1]
                     set size_token [string trim [lindex [split $size_line ";"] 0]]
                     if {![regexp {^[0-9A-Fa-f]+$} $size_token] ||
                             [scan $size_token %x chunk_remaining] != 1} {
                         error "invalid chunk size"
                     }
-                    set chunk_buffer [string range $chunk_buffer [expr {$line_end + 2}] end]
+                    set chunk_buffer [string range $chunk_buffer $line_end+2 end]
                     if {$chunk_remaining == 0} { set input_state chunk_trailers } \
                     else { set input_state chunk_data }
                 }
@@ -237,7 +237,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                     }
                     if {$chunk_remaining > 0} {
                         my append_transfer_data [string range $chunk_buffer 0 \
-                            [expr {$chunk_remaining - 1}]]
+                            $chunk_remaining-1]
                         set chunk_buffer [string range $chunk_buffer \
                             $chunk_remaining end]
                     }
@@ -269,9 +269,9 @@ oo::class create ::tclwire::HttpProtocolSession {
                             method [dict get $request_info method]]
                     }
                     set trailers [my parse_trailers \
-                        [string range $chunk_buffer 0 [expr {$trailer_end - 1}]]]
+                        [string range $chunk_buffer 0 $trailer_end-1]]
                     set chunk_buffer [string range $chunk_buffer \
-                        [expr {$trailer_end + 4}] end]
+                        $trailer_end+4 end]
                     return [my finish_incremental_request]
                 }
             }
@@ -288,9 +288,9 @@ oo::class create ::tclwire::HttpProtocolSession {
             if {$header_end < 0} {
                 return [dict create status need_more phase headers]
             }
-            set head [string range $header_buffer 0 [expr {$header_end - 1}]]
+            set head [string range $header_buffer 0 $header_end-1]
             set header_size [expr {$header_end + 4}]
-            set bytes [string range $header_buffer [expr {$header_end + 4}] end]
+            set bytes [string range $header_buffer $header_end+4 end]
             set header_buffer {}
             set request_info [my parse_request_head $head]
             set headers [dict get $request_info headers]
@@ -303,9 +303,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 none { return [my finish_incremental_request] }
                 content-length {
                     set body_remaining [dict get $headers content-length]
-                    set declared_request_size [expr {
-                        $header_end + 4 + $body_remaining
-                    }]
+                    set declared_request_size [expr $header_end + 4 + $body_remaining]
                     set input_state fixed_body
                 }
                 chunked { set input_state chunk_size }
@@ -314,7 +312,7 @@ oo::class create ::tclwire::HttpProtocolSession {
         if {$input_state eq "fixed_body"} {
             set take [expr {min($body_remaining, [string length $bytes])}]
             if {$take > 0} {
-                my append_body [string range $bytes 0 [expr {$take - 1}]]
+                my append_body [string range $bytes 0 $take-1]
                 incr body_remaining -$take
             }
             if {$body_remaining == 0} { return [my finish_incremental_request] }
@@ -336,7 +334,7 @@ oo::class create ::tclwire::HttpProtocolSession {
             return [dict create]
         }
 
-        set header_block [string range $request 0 [expr {$header_end - 1}]]
+        set header_block [string range $request 0 $header_end-1]
         set lines [regexp -all -inline {[^\r\n]+} $header_block]
         set headers [dict create]
 
@@ -447,7 +445,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 return [dict create complete 0]
             }
 
-            set size_line [string range $body $cursor [expr {$line_end - 1}]]
+            set size_line [string range $body $cursor $line_end-1]
             set size_token [string trim [lindex [split $size_line ";"] 0]]
             if {![regexp {^[0-9A-Fa-f]+$} $size_token] ||
                  [scan $size_token %x chunk_size] != 1} {
@@ -459,7 +457,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 if {[string length $body] < $data_start + 2} {
                     return [dict create complete 0]
                 }
-                if {[string range $body $data_start [expr {$data_start + 1}]] eq "\r\n"} {
+                if {[string range $body $data_start $data_start+1] eq "\r\n"} {
                     return [dict create complete 1 \
                                         body     $decoded \
                                         trailers {} \
@@ -470,7 +468,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 if {$trailer_end < 0} {
                     return [dict create complete 0]
                 }
-                set trailer_block [string range $body $data_start [expr {$trailer_end - 1}]]
+                set trailer_block [string range $body $data_start $trailer_end-1]
                 return [dict create complete    1 \
                                     body        $decoded \
                                     trailers    [my parse_trailers $trailer_block] \
@@ -481,12 +479,12 @@ oo::class create ::tclwire::HttpProtocolSession {
             if {[string length $body] < $data_end + 2} {
                 return [dict create complete 0]
             }
-            if {[string range $body $data_end [expr {$data_end + 1}]] ne "\r\n"} {
+            if {[string range $body $data_end $data_end+1] ne "\r\n"} {
                 error "chunk data is not terminated by CRLF"
             }
 
             append decoded [string range $body $data_start \
-                [expr {$data_end - 1}]]
+                $data_end-1]
             set cursor [expr {$data_end + 2}]
         }
     }
@@ -507,7 +505,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 return {}
             }
             set request_length [expr {$body_start + [dict get $chunk_info consumed_length]}]
-            return [string range $request_data 0 [expr {$request_length - 1}]]
+            return [string range $request_data 0 $request_length-1]
         }
 
         set content_length 0
@@ -518,7 +516,7 @@ oo::class create ::tclwire::HttpProtocolSession {
         if {[string length $request_data] < $request_length} {
             return {}
         }
-        return [string range $request_data 0 [expr {$request_length - 1}]]
+        return [string range $request_data 0 $request_length-1]
     }
 
     method parse_request {request} {
@@ -532,8 +530,8 @@ oo::class create ::tclwire::HttpProtocolSession {
         set path $target
         set query_start [string first ? $target]
         if {$query_start >= 0} {
-            set path [string range $target 0 [expr {$query_start - 1}]]
-            set query [string range $target [expr {$query_start + 1}] end]
+            set path [string range $target 0 $query_start-1]
+            set query [string range $target $query_start+1 end]
         }
 
         set header_end [string first "\r\n\r\n" $request]
@@ -546,7 +544,7 @@ oo::class create ::tclwire::HttpProtocolSession {
         set trailers [dict create]
         if {$framing eq "chunked"} {
             set chunk_info [my parse_chunked_body \
-                [string range $request [expr {$header_end + 4}] end]]
+                [string range $request $header_end+4 end]]
             if {![dict get $chunk_info complete]} {
                 error "chunked HTTP request body is incomplete"
             }
@@ -554,7 +552,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 [dict get $chunk_info body] $codings]
             set trailers [dict get $chunk_info trailers]
         } else {
-            set body [string range $request [expr {$header_end + 4}] end]
+            set body [string range $request $header_end+4 end]
         }
 
         return [dict create method      $method     \

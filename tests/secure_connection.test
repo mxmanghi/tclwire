@@ -78,7 +78,7 @@ namespace eval ::tclwire::secure_connection_test {
             if {[set newline [string first "\n" $data]] >= 0} {
                 return [encoding convertfrom utf-8 \
                     [string trimright \
-                        [string range $data 0 [expr {$newline - 1}]] "\r"]]
+                        [string range $data 0 $newline-1] "\r"]]
             }
             after 5
         }

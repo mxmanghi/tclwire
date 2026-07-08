@@ -37,10 +37,10 @@ namespace eval ::tclwire::http::multipart {
                 error "invalid Content-Disposition parameter"
             }
             set name [string tolower [string trim \
-                [string range $field 0 [expr {$separator - 1}]]]]
+                [string range $field 0 $separator-1]]]
             dict set parameters $name \
                 [::tclwire::http::message unquote_parameter \
-                    [string range $field [expr {$separator + 1}] end]]
+                    [string range $field $separator+1 end]]
         }
         return [dict create type $disposition_type parameters $parameters]
     }
@@ -56,8 +56,8 @@ namespace eval ::tclwire::http::multipart {
                 return {}
             }
             if {$marker == 0 ||
-                    [string range $body [expr {$marker - 2}] \
-                        [expr {$marker - 1}]] eq "\r\n"} {
+                    [string range $body $marker-2 \
+                        $marker-1] eq "\r\n"} {
                 set line_end [string first "\r\n" $body $marker]
                 if {$line_end < 0} {
                     set line_end [string length $body]
@@ -66,7 +66,7 @@ namespace eval ::tclwire::http::multipart {
                     set next [expr {$line_end + 2}]
                 }
                 set line [string trimright \
-                    [string range $body $marker [expr {$line_end - 1}]] \
+                    [string range $body $marker $line_end-1] \
                     " \t"]
                 if {$line eq $delimiter} {
                     return [dict create final 0 marker $marker next $next]
@@ -85,8 +85,8 @@ namespace eval ::tclwire::http::multipart {
             error "multipart part headers are incomplete"
         }
         set headers [parse_part_headers \
-            [string range $part_body 0 [expr {$header_end - 1}]]]
-        set body [string range $part_body [expr {$header_end + 4}] end]
+            [string range $part_body 0 $header_end-1]]
+        set body [string range $part_body $header_end+4 end]
         set disposition [parse_content_disposition \
             [::tclwire::http::message header_value \
                 $headers content-disposition]]
@@ -135,7 +135,7 @@ namespace eval ::tclwire::http::multipart {
 
             set part_end [expr {[dict get $next marker] - 1}]
             if {$part_end >= 1 &&
-                    [string range $body [expr {$part_end - 1}] $part_end] \
+                    [string range $body $part_end-1 $part_end] \
                         eq "\r\n"} {
                 incr part_end -2
             }

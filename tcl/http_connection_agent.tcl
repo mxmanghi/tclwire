@@ -25,14 +25,14 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     constructor {conn_channel id host port args} {
         array set options {
-            -applicationconfig {}
-            -connectionkey {}
-            -protocol http
-            -uploadarea /tmp
-            -maxrequestbytes 16777216
-            -maxheaderbytes 65536
-            -requestmemorythreshold 1048576
-            -dumpmultipartrequests 0
+            -applicationconfig          {}
+            -connectionkey              {}
+            -protocol                   http
+            -uploadarea                 /tmp
+            -maxrequestbytes            16777216
+            -maxheaderbytes             65536
+            -requestmemorythreshold     1048576
+            -dumpmultipartrequests      0
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -52,9 +52,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {$options(-uploadarea) eq {}} {
             set protocol_threshold $options(-maxrequestbytes)
         }
-        set protocol_session [::tclwire::HttpProtocolSession new -bodythreshold $protocol_threshold \
+        set protocol_session [::tclwire::HttpProtocolSession new -bodythreshold  $protocol_threshold \
                                                                  -spooldirectory $options(-uploadarea) \
-                                                                 -maxbodybytes $options(-maxrequestbytes)]
+                                                                 -maxbodybytes   $options(-maxrequestbytes)]
         set application_dispatcher [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
@@ -99,10 +99,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
             return
         }
         my clear_input_buffer
-        if {[string first " " $request_prefix] < 0 &&
-                [string length $request_prefix] < 16} {
-            append request_prefix [string range $chunk 0 \
-                [expr {15 - [string length $request_prefix]}]]
+        if {([string first " " $request_prefix]) < 0 &&
+            ([string length $request_prefix] < 16)} {
+            append request_prefix \
+                [string range $chunk 0 15-[string length $request_prefix]]
             set request_head [regexp {^HEAD[ \t]} $request_prefix]
         }
         incr request_bytes [string length $chunk]
@@ -114,8 +114,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             set result [$protocol_session feed $chunk]
         } message options]} {
             if {[dict exists $options -errorcode] &&
-                    [dict get $options -errorcode] eq \
-                        {TCLWIRE HTTP BODY_TOO_LARGE}} {
+                [dict get $options -errorcode] eq {TCLWIRE HTTP BODY_TOO_LARGE}} {
                 my send_error 413 {} $request_head
             } else {
                 my send_error 400 {} $request_head

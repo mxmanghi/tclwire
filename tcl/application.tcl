@@ -97,7 +97,7 @@ oo::class create ::tclwire::CApplication {
                 if {$i + 2 >= [string length $path]} {
                     error "incomplete percent escape in URL path"
                 }
-                set hex [string range $path [expr {$i + 1}] [expr {$i + 2}]]
+                set hex [string range $path $i+1 $i+2]
                 if {![regexp {^[0-9A-Fa-f]{2}$} $hex]} {
                     error "invalid percent escape in URL path"
                 }

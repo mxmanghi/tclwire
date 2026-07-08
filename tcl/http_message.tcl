@@ -131,9 +131,9 @@ namespace eval ::tclwire::http::message {
                 error "invalid Content-Type parameter"
             }
             set name [string tolower [string trim \
-                [string range $field 0 [expr {$separator - 1}]]]]
+                [string range $field 0 $separator-1]]]
             set parameter_value [unquote_parameter \
-                [string range $field [expr {$separator + 1}] end]]
+                [string range $field $separator+1 end]]
             if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $name]} {
                 error "invalid Content-Type parameter name"
             }
