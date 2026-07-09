@@ -41,9 +41,9 @@ number of body bytes without retaining the complete wire request. The declared
 final request size is rejected as soon as the headers are parsed when it
 exceeds `max_request_bytes`.
 
-At or below `request_memory_threshold`, the descriptor uses `body_mode
-in_memory`. Above it, the descriptor uses `body_mode spooled_file` and exposes
-`body_path`.
+At or below `request_memory_threshold`, the descriptor uses `body_storage
+in_memory`. Above it, the descriptor uses `body_storage spooled_file` and
+exposes `body_path`.
 
 ### Chunked Uploads
 

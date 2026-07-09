@@ -113,9 +113,9 @@ Example with a 1 MiB threshold:
 
 | Body size | Result |
 | ---: | --- |
-| `0` bytes | `body_mode in_memory` |
-| `1 MiB` | `body_mode in_memory` |
-| `1 MiB + 1` byte | `body_mode spooled_file` |
+| `0` bytes | `body_media raw`, `body_storage in_memory` |
+| `1 MiB` | `body_media raw`, `body_storage in_memory` |
+| `1 MiB + 1` byte | `body_media raw`, `body_storage spooled_file` |
 
 When the threshold is crossed, `spill_body`:
 
@@ -129,10 +129,14 @@ When the threshold is crossed, `spill_body`:
 At request completion, the protocol session closes the file and transfers
 ownership of the file path to the completed request descriptor.
 
-## Resulting Body Modes
+## Resulting Body Representation
 
-The completed descriptor contains one of the request body modes described
-below.
+The completed descriptor separates body interpretation from body storage:
+
+- `body_media` describes how the body should be interpreted: `raw` or
+  `multipart`;
+- `body_storage` describes where the raw body bytes are stored, or whether the
+  body has been decomposed into structured parts.
 
 ### `in_memory`
 
@@ -140,7 +144,8 @@ The body is stored as a Tcl byte string in the descriptor.
 
 Descriptor fields:
 
-- `body_mode in_memory`
+- `body_media raw`
+- `body_storage in_memory`
 - `body`
 - `body_size`
 
@@ -159,7 +164,8 @@ The body is stored in a temporary file.
 
 Descriptor fields:
 
-- `body_mode spooled_file`
+- `body_media raw`
+- `body_storage spooled_file`
 - `body_path`
 - `body_size`
 
@@ -180,15 +186,19 @@ move or copy it to an application-owned location before returning.
 
 ### `multipart`
 
-Multipart handling has one extra compatibility layer.
+Multipart handling has one extra compatibility layer. Once the request headers
+are parsed, `HttpProtocolSession` detects a `multipart/*` `Content-Type` and
+switches the decoded body sink to an incremental multipart parser. The complete
+request descriptor is therefore already normalized as multipart when it reaches
+`HttpConnectionAgent`.
 
-If the whole request body stayed in memory and has a `multipart/*`
-`Content-Type`, `HttpConnectionAgent` parses the complete body after protocol
-parsing. With a nonempty `upload_area`, file parts are written to temporary
-files and represented as multipart part dictionaries. The original whole-body
-string is removed from the descriptor, and the descriptor uses:
+With a nonempty `upload_area`, file parts are written to temporary files and
+represented as multipart part dictionaries while decoded request bytes are
+still being fed. No aggregate multipart spool file is reread or materialized as
+a single Tcl byte string. The descriptor uses:
 
-- `body_mode multipart`
+- `body_media multipart`
+- `body_storage decomposed`
 - `multipart_parts`
 - `body_size`
 
@@ -205,14 +215,10 @@ or:
 set part [$request uploaded_file avatar]
 ```
 
-Multipart file parts may themselves use `body_mode spooled_file` and contain a
-`body_path`. Non-file form fields remain in memory.
-
-If the whole request crosses `request_memory_threshold` and becomes
-`body_mode spooled_file`, TclWire does not currently reparse that file into
-multipart parts. In that case applications should consume the whole spooled
-request body directly through `$request body_path`. Incremental multipart
-parsing with selective per-part spooling is a separate future step.
+Multipart file parts may themselves use `body_storage spooled_file` and contain a
+`body_path`. Non-file form fields remain in memory. Applications therefore use
+the same `HttpRequest` methods for multipart requests independently of the
+whole-body storage mode selected by the threshold.
 
 ## `HttpRequest` as the Opaque Application Interface
 
@@ -227,7 +233,8 @@ $request path
 $request query_parameters
 $request headers
 $request header Content-Type
-$request body_mode
+$request body_media
+$request body_storage
 $request body_size
 $request body
 $request body_path
@@ -235,6 +242,7 @@ $request multipart_parts
 $request form_fields
 $request uploaded_files
 $request trailers
+$request trailer X-Checksum
 ```
 
 The method layer provides two important properties:
@@ -246,21 +254,32 @@ The method layer provides two important properties:
    `spooled_file` request is an error; calling `$request body_path` for an
    `in_memory` request is an error.
 
+Trailer fields are exposed separately from header fields. They arrive only
+after the terminating chunk of a chunked request, so they cannot participate in
+message framing, routing, authentication, or body interpretation decisions that
+were already made from the header section. Typical use is optional late
+metadata, such as a checksum, digest, signature, or post-stream processing
+status computed while the sender produced the body.
+
 Typical storage-independent handling looks like this:
 
 ```tcl
-switch -- [$request body_mode] {
-    in_memory {
-        set data [$request body]
-        # Process $data.
-    }
-    spooled_file {
-        set path [$request body_path]
-        # Stream, move, or copy $path.
+switch -- [$request body_media] {
+    raw {
+        switch -- [$request body_storage] {
+            in_memory {
+                set data [$request body]
+                # Process $data.
+            }
+            spooled_file {
+                set path [$request body_path]
+                # Stream, move, or copy $path.
+            }
+        }
     }
     multipart {
         foreach file [$request uploaded_files] {
-            if {[dict get $file body_mode] eq "spooled_file"} {
+            if {[dict get $file body_storage] eq "spooled_file"} {
                 set path [dict get $file body_path]
                 # Stream, move, or copy the uploaded part.
             }
@@ -322,14 +341,14 @@ Defaults:
 
 ## Current Limitations
 
-The current implementation bounds memory for large whole request bodies, but
-it is not yet a streaming application API:
+The current implementation bounds memory for large whole request bodies and
+multipart file parts, but it is not yet a streaming application API:
 
 - `handle_request` starts after the request is complete;
 - application workers do not read from client sockets;
-- whole-body spooled multipart requests are not incrementally decomposed into
-  individual parts;
-- applications must branch on `body_mode` when they need raw body data.
+- multipart form fields are still retained in memory;
+- applications must branch on `body_storage` only when they need raw, non-multipart
+  body data.
 
 These limitations are deliberate boundaries of the current architecture. They
 leave room for a future streaming request-body interface without exposing

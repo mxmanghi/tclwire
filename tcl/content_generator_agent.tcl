@@ -148,8 +148,8 @@ namespace eval ::tclwire::cga {
         if {[$configuration retain_uploaded_files]} {
             return
         }
-        if {[dict exists $request_descriptor body_mode] &&
-                [dict get $request_descriptor body_mode] eq "spooled_file" &&
+        if {[dict exists $request_descriptor body_storage] &&
+                [dict get $request_descriptor body_storage] eq "spooled_file" &&
                 [dict exists $request_descriptor body_path]} {
             set path [dict get $request_descriptor body_path]
             if {[catch {file delete $path} message options] && [file exists $path]} {

@@ -8,6 +8,7 @@ lappend auto_path $project_root
 package require tclwire::runtime 0.1
 package require tclwire::http::protocol 0.1
 package require tclwire::http::query 0.1
+package require tclwire::http::request 0.1
 package require tclwire::connection_agent 0.1
 package require tclwire::http::connection_agent 0.1
 
@@ -54,6 +55,34 @@ namespace eval ::tclwire::http_connection_test {
         while {[clock milliseconds] < $deadline} {
             update
             append response [read $chan]
+            if {[eof $chan]} {
+                close $chan
+                return $response
+            }
+            after 5
+        }
+        catch {close $chan}
+        error "timed out waiting for HTTP response"
+    }
+
+    proc request_while_uploading {headers body} {
+        set chan [socket 127.0.0.1 8990]
+        chan configure $chan -blocking 0 -buffering none -translation binary
+        puts -nonewline $chan $headers
+        catch {
+            puts -nonewline $chan $body
+            flush $chan
+        }
+
+        set response {}
+        set deadline [expr {[clock milliseconds] + 3000}]
+        while {[clock milliseconds] < $deadline} {
+            update
+            append response [read $chan]
+            if {[string first "\r\n\r\n" $response] >= 0} {
+                catch {close $chan}
+                return $response
+            }
             if {[eof $chan]} {
                 close $chan
                 return $response
@@ -119,13 +148,45 @@ test http-protocol-1.2 {request completion waits for the declared body} -body {
     }
 } -result {{} 1}
 
+test http-protocol-1.2a {
+    incremental feed results have a stable dictionary contract
+} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set head "POST /upload HTTP/1.1\r\nContent-Length: 7"
+        set tail "\r\n\r\npayload"
+        set first [$protocol feed $head]
+        set second [$protocol feed $tail]
+        list \
+            [lsort [dict keys $first]] \
+            [dict get $first status] \
+            [dict get $first phase] \
+            [dict get $first method] \
+            [dict get $first declared_request_size] \
+            [dict get $first descriptor] \
+            [lsort [dict keys $second]] \
+            [dict get $second status] \
+            [dict get $second phase] \
+            [dict get $second method] \
+            [expr {[dict get $second declared_request_size] == \
+                [string length "$head$tail"]}] \
+            [dict get [dict get $second descriptor] body]
+    } finally {
+        $protocol destroy
+    }
+} -result [list \
+    {declared_request_size descriptor header_size method phase status} \
+    need_more headers {} 0 {} \
+    {declared_request_size descriptor header_size method phase status} \
+    complete complete POST 1 payload]
+
 test http-protocol-1.3 {uploaded data is retained in the request descriptor} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
         set request "POST /upload HTTP/1.1\r\nContent-Length: 7\r\n\r\npayload"
         set descriptor [$protocol parse_request $request]
         list \
-            [dict get $descriptor body_mode] \
+            [dict get $descriptor body_storage] \
             [dict get $descriptor body_size] \
             [dict get $descriptor body]
     } finally {
@@ -142,7 +203,7 @@ test http-protocol-1.3a {incremental bodies remain in memory through threshold} 
             "POST /upload HTTP/1.1\r\nContent-Length: 7\r\n\r\npay"]
         set second [$protocol feed load]
         set descriptor [dict get $second descriptor]
-        list [dict get $first status] [dict get $descriptor body_mode] \
+        list [dict get $first status] [dict get $descriptor body_storage] \
             [dict get $descriptor body_size] [dict get $descriptor body] \
             [file exists $area]
     } finally {
@@ -164,7 +225,7 @@ test http-protocol-1.3b {fixed-length body spills after threshold} -body {
         set path [dict get $descriptor body_path]
         set channel [open $path rb]
         try { set stored [read $channel] } finally { close $channel }
-        list [dict get $descriptor body_mode] \
+        list [dict get $descriptor body_storage] \
             [dict get $descriptor body_size] $stored
     } finally {
         if {$path ne {}} { file delete $path }
@@ -186,7 +247,7 @@ test http-protocol-1.3c {chunked body spills decoded payload incrementally} -bod
         set path [dict get $descriptor body_path]
         set channel [open $path rb]
         try { set stored [read $channel] } finally { close $channel }
-        list [dict get $descriptor body_mode] \
+        list [dict get $descriptor body_storage] \
             [dict get $descriptor body_size] $stored \
             [dict get $descriptor trailers x-end]
     } finally {
@@ -230,7 +291,7 @@ test http-protocol-1.3e {incremental gzip decoding uses the hybrid sink} -body {
         set path [dict get $descriptor body_path]
         set channel [open $path rb]
         try { set stored [read $channel] } finally { close $channel }
-        list [dict get $descriptor body_mode] \
+        list [dict get $descriptor body_storage] \
             [dict get $descriptor body_size] [expr {$stored eq $expected}]
     } finally {
         if {$path ne {}} { file delete $path }
@@ -238,6 +299,70 @@ test http-protocol-1.3e {incremental gzip decoding uses the hybrid sink} -body {
         file delete -force $area
     }
 } -result {spooled_file 700 1}
+
+test http-protocol-1.3f {
+    parsed request information is internal write-once session state
+} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set result [$protocol feed \
+            "POST /upload HTTP/1.1\r\nContent-Length: 7\r\n\r\npayload"]
+        list \
+            [dict get $result status] \
+            [expr {"install_request_info" ni \
+                [info object methods $protocol -all]}] \
+            [dict get [dict get $result descriptor] method]
+    } finally {
+        $protocol destroy
+    }
+} -result {complete 1 POST}
+
+test http-protocol-1.3g {
+    multipart bodies are decomposed incrementally without aggregate spooling
+} -body {
+    set area [file join [temporaryDirectory] tclwire-multipart-[pid]]
+    set protocol [::tclwire::HttpProtocolSession new \
+        -bodythreshold 16 -spooldirectory $area]
+    set file_path {}
+    try {
+        set boundary AaB03x
+        set body [binary format a* {}]
+        append body "--$boundary\r\n"
+        append body "Content-Disposition: form-data; name=\"field\"\r\n\r\n"
+        append body "value\r\n"
+        append body "--$boundary\r\n"
+        append body "Content-Disposition: form-data; name=\"upload\"; filename=\"hello.txt\"\r\n"
+        append body "Content-Type: text/plain\r\n\r\n"
+        append body "hello file\r\n"
+        append body "--$boundary--\r\n"
+
+        set head "POST /upload HTTP/1.1\r\n"
+        append head "Content-Type: multipart/form-data; boundary=$boundary\r\n"
+        append head "Content-Length: [string length $body]\r\n\r\n"
+        $protocol feed "${head}[string range $body 0 20]"
+        set result [$protocol feed [string range $body 21 end]]
+        set descriptor [dict get $result descriptor]
+        set request [::tclwire::HttpRequest new $descriptor]
+        set file [$request uploaded_file upload]
+        set file_path [dict get $file body_path]
+        set channel [open $file_path rb]
+        try { set stored [read $channel] } finally { close $channel }
+        list \
+            [dict get $descriptor body_media] \
+            [dict get $descriptor body_storage] \
+            [expr {[dict get $descriptor body_size] == [string length $body]}] \
+            [$request form_value field] \
+            [dict get $file filename] \
+            [dict get $file body_storage] \
+            $stored \
+            [llength [glob -nocomplain -directory $area tclwire-request*]]
+    } finally {
+        catch {$request destroy}
+        if {$file_path ne {}} { catch {file delete $file_path} }
+        $protocol destroy
+        file delete -force $area
+    }
+} -result {multipart decomposed 1 value hello.txt spooled_file {hello file} 0}
 
 test http-protocol-1.4 {UTF-8 response lengths count encoded bytes} -body {
     set protocol [::tclwire::HttpProtocolSession new]
@@ -504,10 +629,15 @@ test http-connection-1.4a {declared oversized requests are rejected before their
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
         "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000\r\n\r\n"]
-    string match "HTTP/1.1 413 Content Too Large*" $response
+    set upload_response [::tclwire::http_connection_test::request_while_uploading \
+        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000\r\n\r\n" \
+        [string repeat x 200000]]
+    list \
+        [string match "HTTP/1.1 413 Content Too Large*" $response] \
+        [string match "HTTP/1.1 413 Content Too Large*" $upload_response]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
-} -result 1
+} -result {1 1}
 
 test http-connection-1.4b {oversized request headers receive 431} -body {
     ::tclwire::runtime start [list \
@@ -932,6 +1062,95 @@ test http-connection-1.11 {gzip chunked requests reach the application} -body {
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
 } -result 1
+
+test http-connection-1.11a {
+    spooled multipart requests expose the same application interface
+} -setup {
+    set upload_area [file join [temporaryDirectory] tclwire-spooled-upload-[pid]]
+    file delete -force $upload_area
+    set multipart_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::MultipartApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request} {
+        set file [$request uploaded_file upload]
+        set channel [open [dict get $file body_path] rb]
+        try {
+            set file_body [read $channel]
+        } finally {
+            close $channel
+        }
+        ::tclwire::io response 200 OK \
+            [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+        ::tclwire::io out [list \
+            [$request body_media] \
+            [$request body_storage] \
+            [$request form_value field] \
+            [dict get $file filename] \
+            [dict get $file body_storage] \
+            $file_body]
+    }
+}
+} multipart-application.tcl]
+    set multipart_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+
+[http]
+enabled = true
+port = 8990
+upload_area = "%s"
+request_memory_threshold = 16
+
+[http.localhost]
+class = "::tclwire::http_connection_test::MultipartApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $upload_area \
+   $multipart_application \
+   $project_root] multipart-config.toml]
+} -body {
+    set boundary TclWireBoundary
+    set body [binary format a* {}]
+    append body "--$boundary\r\n"
+    append body "Content-Disposition: form-data; name=\"field\"\r\n\r\n"
+    append body "value\r\n"
+    append body "--$boundary\r\n"
+    append body "Content-Disposition: form-data; name=\"upload\"; filename=\"hello.txt\"\r\n"
+    append body "Content-Type: text/plain\r\n\r\n"
+    append body "hello from a spooled multipart request\r\n"
+    append body "--$boundary--\r\n"
+
+    ::tclwire::runtime start [list --config $multipart_config]
+    set request "POST / HTTP/1.1\r\n"
+    append request "Host: localhost\r\n"
+    append request "Connection: close\r\n"
+    append request "Content-Type: multipart/form-data; boundary=$boundary\r\n"
+    append request "Content-Length: [string length $body]\r\n\r\n"
+    append request $body
+    set response [::tclwire::http_connection_test::request $request]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 $separator-1]
+    set response_body [string range $response $separator+4 end]
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        $response_body \
+        [llength [glob -nocomplain -directory $upload_area *]]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $multipart_config
+    removeFile $multipart_application
+    file delete -force $upload_area
+} -result [list 1 \
+    {multipart decomposed value hello.txt spooled_file {hello from a spooled multipart request}} \
+    0]
 
 test http-connection-1.12 {applications can stream chunked responses} -setup {
     set streaming_status [makeFile {} streaming-status.txt]

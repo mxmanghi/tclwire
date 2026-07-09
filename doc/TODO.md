@@ -10,6 +10,13 @@ meaningfully implemented by the legacy server.
 
 - [x] Decode request bodies using `Transfer-Encoding: chunked`.
 - [x] Decode the `gzip, chunked` request transfer-coding chain.
+- [x] Parse HTTP requests incrementally in `HttpProtocolSession` instead of
+      constructing a complete wire request string before interpretation.
+- [x] Apply a decoded request-body memory threshold and spool larger
+      non-multipart bodies to temporary files.
+- [x] Incrementally decompose multipart request bodies while request bytes are
+      still being received, spooling uploaded file parts directly instead of
+      rereading an aggregate request spool file.
 - [x] Generate chunked HTTP responses.
 - [x] Support incremental and delayed response output without buffering the
       complete result in the Connection Agent.
@@ -17,6 +24,9 @@ meaningfully implemented by the legacy server.
       including the appropriate content length, but omit the response body.
 - [x] Implement single-range and multipart byte-range responses, including
       `206 Partial Content` and the appropriate range headers.
+- [ ] Add HTTP request progress protection against slow-drip clients:
+      header-completion deadlines, body-completion deadlines, or a minimum
+      sustained body input rate in addition to the existing idle timeout.
 
 ## HTTP Application Support
 
@@ -25,8 +35,9 @@ meaningfully implemented by the legacy server.
 - [x] Provide a semantic operation for discarding an unsent response body.
 - [x] Provide reusable request-header access.
 - [x] Provide reusable request `Content-Type` parsing helpers.
-- [x] Provide in-memory MIME multipart request parsing with form-field and
-      uploaded-file accessors.
+- [x] Provide MIME multipart request parsing with form-field and uploaded-file
+      accessors. File uploads are spooled incrementally when `upload_area` is
+      configured; non-file form fields are still retained in memory.
 - [x] Provide reusable byte-range parsing.
 - [x] Provide reusable response-cookie construction with URI path and
       expiration support.

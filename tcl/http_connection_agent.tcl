@@ -121,23 +121,28 @@ oo::class create ::tclwire::HttpConnectionAgent {
             }
             return
         }
-        if {[dict exists $result method]} {
+        if {[dict get $result method] ne {}} {
             set request_head [expr {[dict get $result method] eq "HEAD"}]
         }
-        if {[dict exists $result header_size] &&
-                [dict get $result header_size] > $max_header_bytes} {
+
+        # we protect the server from malformed abnormal headers by
+        # establishing a reasonable headers max length (max_header_bytes)
+
+        if {[dict get $result header_size] > $max_header_bytes} {
             my send_error 431 {} $request_head
             return
         }
+
         if {[dict get $result status] eq "need_more"} {
-            if {[dict exists $result declared_request_size] &&
-                    [dict get $result declared_request_size] > $max_request_bytes} {
+
+            # Again we protect the server from resource depletion by
+            # establishing a maximum message size (max_request_bytes)
+
+            if {[dict get $result declared_request_size] > $max_request_bytes} {
                 my send_error 413 {} $request_head
                 return
             }
-            if {[dict exists $result phase] &&
-                [dict get $result phase] eq "headers" &&
-                ($request_bytes > $max_header_bytes)} {
+            if {[dict get $result phase] eq "headers" && ($request_bytes > $max_header_bytes)} {
                 my send_error 431 {} $request_head
             }
             return
@@ -158,16 +163,23 @@ oo::class create ::tclwire::HttpConnectionAgent {
         } else {
             set descriptor $request_data
         }
-        if {[dict get $descriptor body_mode] eq "in_memory" &&
-                $upload_area ne {} && [dict exists $descriptor headers content-type]} {
+
+        if {([dict get $descriptor body_storage] eq "in_memory") && ($upload_area ne {}) && 
+            [dict exists $descriptor headers content-type]} {
+
             set content_type [dict get $descriptor headers content-type]
             set content_info [::tclwire::http::message parse_content_type $content_type]
+
             if {[string match multipart/* [dict get $content_info media_type]]} {
                 set parts [::tclwire::http::multipart parse $content_type [dict get $descriptor body]]
                 set parts [::tclwire::http::multipart store_files $parts $upload_area]
+
                 dict set descriptor multipart_parts $parts
-                dict unset descriptor body
-                dict set descriptor body_mode multipart
+                if {[dict exists $descriptor body]} {
+                    dict unset descriptor body
+                }
+                dict set descriptor body_media multipart
+                dict set descriptor body_storage decomposed
             }
         }
         set peer [my peer]
@@ -179,7 +191,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     method request_body {request_descriptor} {
-        if {[dict get $request_descriptor body_mode] ne "in_memory"} {
+        if {[dict get $request_descriptor body_storage] ne "in_memory"} {
             error "request body is not stored in memory"
         }
         return [dict get $request_descriptor body]
@@ -215,8 +227,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     method cleanup_request_body {request_d} {
-        if {[dict exists $request_d body_mode] &&
-                [dict get $request_d body_mode] eq "spooled_file" &&
+        if {[dict exists $request_d body_storage] &&
+                [dict get $request_d body_storage] eq "spooled_file" &&
                 [dict exists $request_d body_path]} {
             catch {file delete [dict get $request_d body_path]}
         }
@@ -310,11 +322,13 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 puts stderr "$name: $value"
             }
             puts stderr {}
-            if {[dict get $request_d body_mode] eq "in_memory"} {
+            if {[dict get $request_d body_storage] eq "in_memory"} {
                 puts -nonewline stderr [dict get $request_d body]
-            } else {
+            } elseif {[dict get $request_d body_storage] eq "spooled_file"} {
                 set dump_channel [open [dict get $request_d body_path] rb]
                 try { fcopy $dump_channel stderr } finally { close $dump_channel }
+            } else {
+                puts stderr "<multipart body decomposed into parts>"
             }
             puts stderr "\n--- end TclWire HTTP multipart request dump ---"
             flush stderr
@@ -668,7 +682,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             [dict get $error_response headers] \
             [dict get $error_response body_mode] \
             $head_only]
-        my write_and_close $response
+        my write_and_close_gracefully $response
     }
 
     method log_request {descriptor status bytes} {

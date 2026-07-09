@@ -171,7 +171,8 @@ The request object exposes:
 | `media_type ?default?` | Lowercase media type from `Content-Type`. |
 | `content_type_parameter name ?default?` | One lowercase-keyed `Content-Type` parameter. |
 | `is_multipart` | True if the request media type is `multipart/*`. |
-| `body_mode` | Request body storage mode. |
+| `body_media` | Request body interpretation: `raw` or `multipart`. |
+| `body_storage` | Request body storage: `in_memory`, `spooled_file`, or `decomposed`. |
 | `body_path` | Path of a request body whose mode is `spooled_file`. |
 | `body` | In-memory decoded request body. |
 | `body_size` | Request body length. |
@@ -203,22 +204,25 @@ session handles:
 - chunk trailer parsing
 - URL query decoding
 
-The current request body mode is always:
+The current request body representation is described by two fields:
 
 ```tcl
-in_memory
+body_media    raw | multipart
+body_storage  in_memory | spooled_file | decomposed
 ```
 
-`$request body` returns the decoded body value. It raises an error if a future
-descriptor uses another body mode. `body_size` reports the length of the
+`$request body` returns the decoded body value. It raises an error when
+`body_storage` is not `in_memory`. `body_size` reports the length of the
 decoded body.
 
-Multipart request helpers currently parse the in-memory body. Each part is a
-dictionary with `headers` and `body`; form-data parts also expose `name`, and
-file parts expose `filename`. Parts with their own `Content-Type` include
-`content_type`. Parsed parts are cached by the immutable request object.
+Multipart request helpers use parsed `multipart_parts` when the connection
+thread has already decomposed the request. They can also parse an in-memory
+multipart body for direct descriptor/test paths. Each part is a dictionary with
+`headers` and either `body` or per-part file storage metadata; form-data parts
+also expose `name`, and file parts expose `filename`. Parts with their own
+`Content-Type` include `content_type`.
 
-Large request bodies may be represented by `body_mode spooled_file` and
+Large raw request bodies may be represented by `body_storage spooled_file` and
 accessed through `$request body_path`. The current API is still a
 complete-request API: request bodies are parsed incrementally in the connection
 thread, but `handle_request` starts only after the request is complete. See
@@ -229,7 +233,8 @@ threshold and ownership rules.
 
 The request object includes convenience methods for inspecting request media
 types and for accessing `multipart/*` request bodies. These methods are
-read-only and operate on the already-decoded in-memory request body.
+read-only and operate on either parsed `multipart_parts` or an in-memory raw
+body.
 
 ### Summary
 
@@ -398,7 +403,7 @@ written to a distinct, server-generated file. Such parts omit `body` and add:
 
 | Key | Meaning |
 | --- | --- |
-| `body_mode` | `spooled_file`. |
+| `body_storage` | `spooled_file`. |
 | `path` | Absolute path of the stored file. |
 | `body_size` | File size in bytes. |
 
@@ -431,11 +436,9 @@ called with an empty value. The HTTP connection agent does not call it while
 file storage is disabled.
 
 Request framing and body storage are incremental. If the decoded whole body
-crosses `request_memory_threshold`, the request uses `body_mode spooled_file`
-with `body_path` and is not reparsed into `multipart_parts`. Applications
-handling such requests should consume or move that file directly. Selective
-incremental parsing and spooling of individual multipart parts is a later
-stage; multipart form helpers remain available for bodies that stay in memory.
+crosses `request_memory_threshold`, raw non-multipart requests use
+`body_storage spooled_file` with `body_path`. Multipart requests are decomposed
+incrementally and expose `multipart_parts` with per-part storage metadata.
 
 ### Multipart Form Helpers
 
@@ -497,8 +500,8 @@ Example:
 ```tcl
 foreach file [$request uploaded_files attachment] {
     set filename [dict get $file filename]
-    if {[dict exists $file body_mode] &&
-            [dict get $file body_mode] eq "spooled_file"} {
+    if {[dict exists $file body_storage] &&
+            [dict get $file body_storage] eq "spooled_file"} {
         set path [dict get $file path]
     } else {
         set bytes [dict get $file body]
@@ -525,9 +528,9 @@ if {$file ne {}} {
 
 ### Error Behavior
 
-Multipart parsing errors are application-facing request interpretation errors.
-They are raised when an application calls a multipart method, not while the
-connection thread parses the HTTP request.
+Multipart parsing errors can be raised while the connection thread parses an
+incremental multipart request, or when an application calls a multipart method
+on a direct in-memory descriptor that has not already been decomposed.
 
 Representative errors include:
 

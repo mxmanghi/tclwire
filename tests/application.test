@@ -53,7 +53,9 @@ test http-request-1.1 {HTTP request exposes a read-only semantic interface} -bod
                                                             query_dict [dict create q Tcl] \
                                                             version 1.1 \
                                                             headers [dict create host localhost x-test yes] \
-                                                            body_mode in_memory \
+                                                            trailers [dict create x-checksum accepted] \
+                                                            body_media raw \
+                                                            body_storage in_memory \
                                                             body payload \
                                                             body_size 7 \
                                                             transaction_id 3]]
@@ -63,12 +65,13 @@ test http-request-1.1 {HTTP request exposes a read-only semantic interface} -bod
              [$request query_dict] \
              [$request query_parameter q] \
              [$request header X-Test] \
+             [$request trailer X-Checksum] \
              [$request body] \
              [expr {"set" ni [info object methods $request -all]}]
     } finally {
         $request destroy
     }
-} -result {GET /search {q Tcl} Tcl yes payload 1}
+} -result {GET /search {q Tcl} Tcl yes accepted payload 1}
 
 test http-request-1.2 {HTTP request exposes Content-Type parameters} -body {
     set request [::tclwire::HttpRequest new \
@@ -79,7 +82,8 @@ test http-request-1.2 {HTTP request exposes Content-Type parameters} -body {
                         version     1.1 \
                         headers [dict create \
                             content-type {Multipart/Form-Data; boundary="AaB03x"; charset=utf-8}] \
-                        body_mode   in_memory \
+                        body_media  raw \
+                        body_storage in_memory \
                         body        {} \
                         body_size   0 \
                         transaction_id 3]]
@@ -122,7 +126,8 @@ test http-request-1.3 {HTTP request exposes multipart form fields and files} -bo
         version 1.1 \
         headers [dict create \
             content-type "multipart/form-data; boundary=$boundary"] \
-        body_mode in_memory \
+        body_media raw \
+        body_storage in_memory \
         body $body \
         body_size [string length $body] \
         transaction_id 3]]
@@ -150,7 +155,8 @@ test http-request-1.4 {multipart requests require a boundary parameter} -body {
         query {} \
         version 1.1 \
         headers [dict create content-type multipart/form-data] \
-        body_mode in_memory \
+        body_media raw \
+        body_storage in_memory \
         body {} \
         body_size 0 \
         transaction_id 3]]
@@ -184,8 +190,10 @@ test http-request-1.5 {multipart storage preserves multiple uploaded files} -set
     list \
         [llength $files] \
         [dict get [lindex $stored 0] body] \
-        [lmap part $files {dict get $part body_mode}] \
+        [lmap part $files {dict get $part body_storage}] \
         [lmap part $files {dict get $part body_size}] \
+        [expr {[lmap part $files {dict get $part path}] eq \
+            [lmap part $files {dict get $part body_path}]}] \
         [expr {[dict get [lindex $files 0] path] ne \
                [dict get [lindex $files 1] path]}] \
         [lmap part $files {
@@ -195,7 +203,7 @@ test http-request-1.5 {multipart storage preserves multiple uploaded files} -set
         $contents
 } -cleanup {
     file delete -force $upload_area
-} -result [list 2 report {spooled_file spooled_file} {8 8} 1 {1 1} \
+} -result [list 2 report {spooled_file spooled_file} {8 8} 1 1 {1 1} \
     [list "one\0data" "two\0data"]]
 
 test http-request-1.6 {multipart storage rejects an empty upload area} -body {
@@ -622,9 +630,9 @@ test application-dispatcher-1.9t {
 } -body {
     set request_descriptor [dict create multipart_parts [list \
         [dict create name text body value] \
-        [dict create filename removed.txt body_mode spooled_file \
+        [dict create filename removed.txt body_storage spooled_file \
             path $removed_file] \
-        [dict create filename moved.txt body_mode spooled_file \
+        [dict create filename moved.txt body_storage spooled_file \
             path $moved_file]]]
     set configuration [::tclwire::ApplicationConfiguration new cleanup-test \
         [dict create \
@@ -662,7 +670,7 @@ test application-dispatcher-1.9ta {
             application_paths [list [temporaryDirectory]]]]
     try {
         ::tclwire::cga::cleanup_uploaded_files $configuration \
-            [dict create body_mode spooled_file body_path $body_file]
+            [dict create body_storage spooled_file body_path $body_file]
         file exists $body_file
     } finally {
         $configuration destroy
@@ -688,7 +696,7 @@ test application-dispatcher-1.9u {
     try {
         ::tclwire::cga::cleanup_uploaded_files $configuration \
             [dict create multipart_parts [list \
-                [dict create filename retained.txt body_mode spooled_file \
+                [dict create filename retained.txt body_storage spooled_file \
                     path $retained_file]]]
     } finally {
         $configuration destroy

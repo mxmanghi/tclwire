@@ -135,19 +135,23 @@ oo::class create ::tclwire::HttpRequest {
         }]
     }
 
-    method body_mode {} {
-        return [my optional body_mode none]
+    method body_media {} {
+        return [my optional body_media raw]
+    }
+
+    method body_storage {} {
+        return [my optional body_storage none]
     }
 
     method body {} {
-        if {[my body_mode] ne "in_memory"} {
+        if {[my body_storage] ne "in_memory"} {
             error "HTTP request body is not stored in memory"
         }
         return [my optional body {}]
     }
 
     method body_path {} {
-        if {[my body_mode] ne "spooled_file"} {
+        if {[my body_storage] ne "spooled_file"} {
             error "HTTP request body is not stored in a spooled file"
         }
         return [my required body_path]
@@ -206,6 +210,15 @@ oo::class create ::tclwire::HttpRequest {
 
     method trailers {} {
         return [my optional trailers [dict create]]
+    }
+
+    method trailer {name {default_value {}}} {
+        set name [string tolower $name]
+        set trailers [my trailers]
+        if {[dict exists $trailers $name]} {
+            return [dict get $trailers $name]
+        }
+        return $default_value
     }
 
     method connection_id {} {

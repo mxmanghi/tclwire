@@ -4,12 +4,17 @@
 
 package require TclOO
 package require tclwire::http::query 0.1
+package require tclwire::http::message 0.1
+package require tclwire::http::multipart 0.1
 
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::HttpProtocolSession {
-    variable input_state header_buffer request_info body_framing transfer_codings
+    variable input_state header_buffer request_info request_info_status
+    variable request_method request_headers
+    variable body_framing transfer_codings
     variable body_threshold spool_directory body_data body_channel body_path body_size
+    variable body_sink
     variable body_remaining chunk_buffer chunk_remaining trailers completed_descriptor
     variable declared_request_size
     variable header_size
@@ -36,9 +41,9 @@ oo::class create ::tclwire::HttpProtocolSession {
              $options(-maxbodybytes) < 1} {
             error "-maxbodybytes must be a positive integer"
         }
-        set body_threshold $options(-bodythreshold)
+        set body_threshold  $options(-bodythreshold)
         set spool_directory $options(-spooldirectory)
-        set max_body_bytes $options(-maxbodybytes)
+        set max_body_bytes  $options(-maxbodybytes)
         my reset
     }
 
@@ -51,12 +56,16 @@ oo::class create ::tclwire::HttpProtocolSession {
         set input_state headers
         set header_buffer {}
         set request_info {}
+        set request_info_status empty
+        set request_method {}
+        set request_headers {}
         set body_framing none
         set transfer_codings {}
         set body_data [binary format a* {}]
         set body_channel {}
         set body_path {}
         set body_size 0
+        set body_sink {}
         set body_remaining 0
         set chunk_buffer [binary format a* {}]
         set chunk_remaining 0
@@ -66,6 +75,66 @@ oo::class create ::tclwire::HttpProtocolSession {
         set header_size 0
         set transfer_stream {}
         return
+    }
+
+    method install_request_info {info} {
+        if {$request_info_status ne "empty"} {
+            error "HTTP request information is already initialized"
+        }
+        set request_info $info
+        set request_method [dict get $info method]
+        set request_headers [dict get $info headers]
+        set request_info_status complete
+        return
+    }
+
+    method request_info_snapshot {} {
+        if {$request_info_status ne "complete"} {
+            error "HTTP request information is not initialized"
+        }
+        return $request_info
+    }
+
+    method request_headers {} {
+        if {$request_info_status ne "complete"} {
+            error "HTTP request information is not initialized"
+        }
+        return $request_headers
+    }
+
+    method request_method {} {
+        if {$request_info_status ne "complete"} {
+            error "HTTP request information is not initialized"
+        }
+        return $request_method
+    }
+
+    method feed_result {status phase {descriptor {}}} {
+        # Contract for HttpProtocolSession::feed callers:
+        #
+        #   status                need_more | complete
+        #   phase                 headers | body | complete
+        #   header_size           bytes currently held as headers, or the
+        #                         final parsed header-section size
+        #   method                parsed HTTP method, or empty before headers
+        #   declared_request_size final wire request size for Content-Length
+        #                         requests, otherwise 0
+        #   descriptor            completed request descriptor, or empty until
+        #                         status is complete
+        #
+        # Keep this dictionary shape stable so connection agents can treat it
+        # as a protocol-session contract rather than probing for optional keys.
+
+        set method {}
+        if {$request_info_status eq "complete"} {
+            set method $request_method
+        }
+        return [dict create     status      $status \
+                                phase       $phase \
+                                header_size $header_size \
+                                method      $method \
+                                declared_request_size $declared_request_size \
+                                descriptor $descriptor]
     }
 
     method abort {} {
@@ -80,6 +149,11 @@ oo::class create ::tclwire::HttpProtocolSession {
         if {[info exists transfer_stream] && $transfer_stream ne {}} {
             catch {$transfer_stream close}
             set transfer_stream {}
+        }
+        if {[info exists body_sink] && $body_sink ne {}} {
+            catch {$body_sink abort}
+            catch {$body_sink destroy}
+            set body_sink {}
         }
         return
     }
@@ -129,6 +203,11 @@ oo::class create ::tclwire::HttpProtocolSession {
             return -code error -errorcode {TCLWIRE HTTP BODY_TOO_LARGE} \
                 "decoded request body exceeds configured limit"
         }
+        if {$body_sink ne {}} {
+            $body_sink append $bytes
+            set body_size $new_size
+            return
+        }
         if {$body_channel eq {} && $new_size > $body_threshold} {
             my spill_body
         }
@@ -138,6 +217,19 @@ oo::class create ::tclwire::HttpProtocolSession {
             puts -nonewline $body_channel $bytes
         }
         set body_size $new_size
+        return
+    }
+
+    method select_body_sink {headers} {
+        if {$spool_directory eq {} || ![dict exists $headers content-type]} {
+            return
+        }
+        set content_type [dict get $headers content-type]
+        set content_info [::tclwire::http::message parse_content_type $content_type]
+        if {[string match multipart/* [dict get $content_info media_type]]} {
+            set body_sink \
+                [::tclwire::http::multipart::IncrementalParser new $content_type $spool_directory]
+        }
         return
     }
 
@@ -151,8 +243,7 @@ oo::class create ::tclwire::HttpProtocolSession {
             my drain_transfer_stream
         } message options]} {
             if {[dict exists $options -errorcode] &&
-                    [dict get $options -errorcode] eq \
-                        {TCLWIRE HTTP BODY_TOO_LARGE}} {
+                [dict get $options -errorcode] eq {TCLWIRE HTTP BODY_TOO_LARGE}} {
                 return -options $options $message
             }
             error "invalid gzip transfer coding"
@@ -177,31 +268,41 @@ oo::class create ::tclwire::HttpProtocolSession {
                 set transfer_stream {}
             } message options]} {
                 if {[dict exists $options -errorcode] &&
-                        [dict get $options -errorcode] eq \
-                            {TCLWIRE HTTP BODY_TOO_LARGE}} {
+                    [dict get $options -errorcode] eq {TCLWIRE HTTP BODY_TOO_LARGE}} {
                     return -options $options $message
                 }
                 error "invalid gzip transfer coding"
             }
         }
-        if {$body_channel ne {}} {
+        if {$body_sink ne {}} {
+            set parts [$body_sink finish]
+            $body_sink destroy
+            set body_sink {}
+            set body_descriptor [dict create body_media multipart       \
+                                             body_storage decomposed    \
+                                             multipart_parts $parts     \
+                                             body_size $body_size]
+        } elseif {$body_channel ne {}} {
             close $body_channel
             set body_channel {}
-            set body_descriptor [dict create body_mode spooled_file \
-                body_path $body_path body_size $body_size]
+            set body_descriptor [dict create body_media raw             \
+                                             body_storage spooled_file  \
+                                             body_path $body_path       \
+                                             body_size $body_size]
             # Ownership passes to the completed descriptor.
             set body_path {}
         } else {
-            set body_descriptor [dict create body_mode in_memory \
-                body $body_data body_size $body_size]
+            set body_descriptor [dict create body_media raw             \
+                                             body_storage in_memory     \
+                                             body      $body_data       \
+                                             body_size $body_size]
         }
-        set completed_descriptor [dict merge $request_info [dict create \
-            body_framing $body_framing transfer_codings $transfer_codings \
-            trailers $trailers] $body_descriptor]
+        set completed_descriptor [dict merge [my request_info_snapshot]             \
+                                 [dict create body_framing       $body_framing      \
+                                              transfer_codings   $transfer_codings  \
+                                              trailers           $trailers] $body_descriptor]
         set input_state complete
-        return [dict create status complete header_size $header_size \
-            method [dict get $request_info method] \
-            descriptor $completed_descriptor]
+        return [my feed_result complete complete $completed_descriptor]
     }
 
     method feed_chunked {bytes} {
@@ -211,9 +312,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 chunk_size {
                     set line_end [string first "\r\n" $chunk_buffer]
                     if {$line_end < 0} {
-                        return [dict create status need_more phase body \
-                            header_size $header_size \
-                            method [dict get $request_info method]]
+                        return [my feed_result need_more body]
                     }
                     set size_line [string range $chunk_buffer 0 $line_end-1]
                     set size_token [string trim [lindex [split $size_line ";"] 0]]
@@ -231,24 +330,18 @@ oo::class create ::tclwire::HttpProtocolSession {
                         my append_transfer_data $chunk_buffer
                         incr chunk_remaining -$available
                         set chunk_buffer [binary format a* {}]
-                        return [dict create status need_more phase body \
-                            header_size $header_size \
-                            method [dict get $request_info method]]
+                        return [my feed_result need_more body]
                     }
                     if {$chunk_remaining > 0} {
-                        my append_transfer_data [string range $chunk_buffer 0 \
-                            $chunk_remaining-1]
-                        set chunk_buffer [string range $chunk_buffer \
-                            $chunk_remaining end]
+                        my append_transfer_data [string range $chunk_buffer 0 $chunk_remaining-1]
+                        set chunk_buffer        [string range $chunk_buffer $chunk_remaining end]
                     }
                     set chunk_remaining 0
                     set input_state chunk_data_crlf
                 }
                 chunk_data_crlf {
                     if {[string length $chunk_buffer] < 2} {
-                        return [dict create status need_more phase body \
-                            header_size $header_size \
-                            method [dict get $request_info method]]
+                        return [my feed_result need_more body]
                     }
                     if {[string range $chunk_buffer 0 1] ne "\r\n"} {
                         error "chunk data is not terminated by CRLF"
@@ -257,6 +350,13 @@ oo::class create ::tclwire::HttpProtocolSession {
                     set input_state chunk_size
                 }
                 chunk_trailers {
+                    # The zero-size chunk has already ended the payload.  What
+                    # follows is the trailer section: either an immediate CRLF
+                    # for "no trailers", or field lines terminated by CRLFCRLF.
+                    # Keep these fields separate from the header dictionary;
+                    # applications can inspect them through HttpRequest, but
+                    # they must not affect framing/routing decisions already
+                    # made after the header section was parsed.
                     if {[string length $chunk_buffer] >= 2 &&
                             [string range $chunk_buffer 0 1] eq "\r\n"} {
                         set chunk_buffer [string range $chunk_buffer 2 end]
@@ -264,14 +364,10 @@ oo::class create ::tclwire::HttpProtocolSession {
                     }
                     set trailer_end [string first "\r\n\r\n" $chunk_buffer]
                     if {$trailer_end < 0} {
-                        return [dict create status need_more phase body \
-                            header_size $header_size \
-                            method [dict get $request_info method]]
+                        return [my feed_result need_more body]
                     }
-                    set trailers [my parse_trailers \
-                        [string range $chunk_buffer 0 $trailer_end-1]]
-                    set chunk_buffer [string range $chunk_buffer \
-                        $trailer_end+4 end]
+                    set trailers [my parse_trailers [string range $chunk_buffer 0 $trailer_end-1]]
+                    set chunk_buffer [string range $chunk_buffer $trailer_end+4 end]
                     return [my finish_incremental_request]
                 }
             }
@@ -286,19 +382,21 @@ oo::class create ::tclwire::HttpProtocolSession {
             append header_buffer $bytes
             set header_end [string first "\r\n\r\n" $header_buffer]
             if {$header_end < 0} {
-                return [dict create status need_more phase headers]
+                set header_size [string length $header_buffer]
+                return [my feed_result need_more headers]
             }
             set head [string range $header_buffer 0 $header_end-1]
-            set header_size [expr {$header_end + 4}]
+            set header_size [expr $header_end + 4]
             set bytes [string range $header_buffer $header_end+4 end]
             set header_buffer {}
-            set request_info [my parse_request_head $head]
-            set headers [dict get $request_info headers]
+            my install_request_info [my parse_request_head $head]
+            set headers [my request_headers]
             set body_framing [my request_body_framing $headers]
             set transfer_codings [my transfer_codings $headers]
             if {$transfer_codings eq {gzip chunked}} {
                 set transfer_stream [zlib stream gunzip]
             }
+            my select_body_sink $headers
             switch -exact -- $body_framing {
                 none { return [my finish_incremental_request] }
                 content-length {
@@ -316,10 +414,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                 incr body_remaining -$take
             }
             if {$body_remaining == 0} { return [my finish_incremental_request] }
-            return [dict create status need_more phase body \
-                header_size $header_size \
-                method [dict get $request_info method] \
-                declared_request_size $declared_request_size]
+            return [my feed_result need_more body]
         }
         return [my feed_chunked $bytes]
     }
@@ -369,6 +464,7 @@ oo::class create ::tclwire::HttpProtocolSession {
         # introduce parameters belonging to one coding. The currently
         # supported gzip and chunked codings do not define parameters, so a
         # parameterized coding is rejected rather than silently normalized.
+
         foreach value [split [dict get $headers transfer-encoding] ,] {
             set coding_parts [split $value ";"]
             if {[llength $coding_parts] != 1} {
@@ -564,7 +660,8 @@ oo::class create ::tclwire::HttpProtocolSession {
                             headers     $headers    \
                             body_framing $framing   \
                             transfer_codings $codings \
-                            body_mode   in_memory   \
+                            body_media  raw         \
+                            body_storage in_memory  \
                             body        $body       \
                             body_size   [string length $body] \
                             trailers    $trailers]
@@ -607,29 +704,24 @@ oo::class create ::tclwire::HttpProtocolSession {
         }
     }
 
-    method build_chunked_response_head {
-        status reason content_encoding headers body_mode
-    } {
-        set response_headers [list \
-            "HTTP/1.1 $status $reason" \
-            "Connection: close" \
-            "Transfer-Encoding: chunked"]
+    method build_chunked_response_head { status reason content_encoding headers body_mode } {
+        set response_headers [list  "HTTP/1.1 $status $reason"  \
+                                    "Connection: close"         \
+                                    "Transfer-Encoding: chunked"]
         foreach header $headers {
             if {[regexp -nocase {^(Content-Length|Transfer-Encoding):} $header]} {
                 continue
             }
             lappend response_headers $header
         }
-        return [encoding convertto ascii \
-            "[join $response_headers "\r\n"]\r\n\r\n"]
+        return [encoding convertto ascii "[join $response_headers "\r\n"]\r\n\r\n"]
     }
 
     method chunk_frame {body_bytes} {
         if {$body_bytes eq {}} {
             return {}
         }
-        set frame [encoding convertto ascii \
-            "[format %X [string length $body_bytes]]\r\n"]
+        set frame [encoding convertto ascii "[format %X [string length $body_bytes]]\r\n"]
         append frame $body_bytes "\r\n"
         return $frame
     }
@@ -639,8 +731,9 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     export request_body_framing
-    unexport decode_transfer_codings parse_chunked_body parse_trailers \
-        transfer_codings
+    unexport decode_transfer_codings feed_result install_request_info \
+        parse_chunked_body parse_trailers request_headers request_info_snapshot \
+        request_method transfer_codings
 }
 
 package provide tclwire::http::protocol 0.1

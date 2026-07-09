@@ -154,6 +154,26 @@ oo::class create ::tclwire::ConnectionAgent {
         my close
     }
 
+    method write_and_close_gracefully {data {grace_ms 250}} {
+        if {$closed} {
+            return
+        }
+        if {![my write_output $data 1]} {
+            return
+        }
+        catch {chan event $channel readable {}}
+        # When supported by the Tcl channel implementation, half-close the
+        # write side after the response has been flushed.  The delayed full
+        # close gives clients that are still uploading a chance to read the
+        # error response instead of observing only a reset/empty reply.
+        catch {chan close $channel write}
+        if {$timeout_id ne {}} {
+            after cancel $timeout_id
+        }
+        set timeout_id [after $grace_ms [list [self] close]]
+        return
+    }
+
     method write_output {data {flush_output 0}} {
         if {$closed} {
             return 0
@@ -230,7 +250,7 @@ oo::class create ::tclwire::ConnectionAgent {
 
     unexport begin_transaction clear_input_buffer clear_transaction \
         finish_transaction initial_read read_available refresh_timeout transaction_for \
-        write_and_close write_output
+        write_and_close write_and_close_gracefully write_output
 }
 
 namespace eval ::tclwire {
