@@ -7,7 +7,13 @@ package require tclwire::http::query 0.1
 package require tclwire::http::message 0.1
 package require tclwire::http::multipart 0.1
 
-namespace eval ::tclwire {}
+namespace eval ::tclwire {
+    if {[llength [info commands const]]} {
+        const empty_bytearray [binary format a* {}]
+    } else {
+        variable empty_bytearray [binary format a* {}]
+    }
+}
 
 oo::class create ::tclwire::HttpProtocolSession {
     variable input_state header_buffer request_info request_info_status
@@ -61,13 +67,13 @@ oo::class create ::tclwire::HttpProtocolSession {
         set request_headers {}
         set body_framing none
         set transfer_codings {}
-        set body_data [binary format a* {}]
+        set body_data $::tclwire::empty_bytearray
         set body_channel {}
         set body_path {}
         set body_size 0
         set body_sink {}
         set body_remaining 0
-        set chunk_buffer [binary format a* {}]
+        set chunk_buffer $::tclwire::empty_bytearray
         set chunk_remaining 0
         set trailers [dict create]
         set completed_descriptor {}
@@ -160,15 +166,14 @@ oo::class create ::tclwire::HttpProtocolSession {
 
     method parse_request_head {head} {
         set request_line [lindex [split $head "\r\n"] 0]
-        if {![regexp {^([A-Z]+) ([^ ]+) HTTP/([0-9.]+)$} \
-                $request_line -> method target version]} {
+        if {![regexp {^([A-Z]+) ([^ ]+) HTTP/([0-9.]+)$} $request_line -> method target version]} {
             error "invalid HTTP request line"
         }
         set query {}
         set path $target
         set query_start [string first ? $target]
         if {$query_start >= 0} {
-            set path [string range $target 0 $query_start-1]
+            set path  [string range $target 0 $query_start-1]
             set query [string range $target $query_start+1 end]
         }
         set headers [my parse_headers "${head}\r\n\r\n"]
@@ -186,12 +191,11 @@ oo::class create ::tclwire::HttpProtocolSession {
         if {![file isdirectory $spool_directory] || ![file writable $spool_directory]} {
             error "request body spool directory is not writable: $spool_directory"
         }
-        set body_channel [file tempfile body_path \
-            [file join $spool_directory tclwire-request]]
+        set body_channel [file tempfile body_path [file join $spool_directory tclwire-request]]
         chan configure $body_channel -translation binary -encoding binary
         if {$body_data ne {}} {
             puts -nonewline $body_channel $body_data
-            set body_data [binary format a* {}]
+            set body_data $::tclwire::empty_bytearray
         }
         return
     }
@@ -297,10 +301,11 @@ oo::class create ::tclwire::HttpProtocolSession {
                                              body      $body_data       \
                                              body_size $body_size]
         }
-        set completed_descriptor [dict merge [my request_info_snapshot]             \
-                                 [dict create body_framing       $body_framing      \
-                                              transfer_codings   $transfer_codings  \
-                                              trailers           $trailers] $body_descriptor]
+        set completed_descriptor [dict merge [my request_info_snapshot] \
+                                             [dict create body_framing       $body_framing      \
+                                                          transfer_codings   $transfer_codings  \
+                                                          trailers           $trailers]         \
+                                            $body_descriptor]
         set input_state complete
         return [my feed_result complete complete $completed_descriptor]
     }
@@ -321,15 +326,18 @@ oo::class create ::tclwire::HttpProtocolSession {
                         error "invalid chunk size"
                     }
                     set chunk_buffer [string range $chunk_buffer $line_end+2 end]
-                    if {$chunk_remaining == 0} { set input_state chunk_trailers } \
-                    else { set input_state chunk_data }
+                    if {$chunk_remaining == 0} {
+                        set input_state chunk_trailers
+                    } else {
+                        set input_state chunk_data
+                    }
                 }
                 chunk_data {
                     set available [string length $chunk_buffer]
                     if {$available < $chunk_remaining} {
                         my append_transfer_data $chunk_buffer
                         incr chunk_remaining -$available
-                        set chunk_buffer [binary format a* {}]
+                        set chunk_buffer $::tclwire::empty_bytearray
                         return [my feed_result need_more body]
                     }
                     if {$chunk_remaining > 0} {
@@ -532,7 +540,7 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     method parse_chunked_body {body} {
-        set decoded [binary format a* {}]
+        set decoded $::tclwire::empty_bytearray
         set cursor 0
 
         while 1 {

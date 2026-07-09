@@ -58,9 +58,7 @@ namespace eval ::tclwire::http::multipart {
             if {$marker < 0} {
                 return {}
             }
-            if {$marker == 0 ||
-                    [string range $body $marker-2 \
-                        $marker-1] eq "\r\n"} {
+            if {$marker == 0 || [string range $body $marker-2 $marker-1] eq "\r\n"} {
                 set line_end [string first "\r\n" $body $marker]
                 if {$line_end < 0} {
                     set line_end [string length $body]
@@ -293,7 +291,7 @@ oo::class create ::tclwire::http::multipart::IncrementalParser {
     }
 
     method abort {} {
-        if {[info exists current_channel] && $current_channel ne {}} {
+        if {[info exists current_channel] && ($current_channel ne {})} {
             catch {close $current_channel}
             set current_channel {}
         }
