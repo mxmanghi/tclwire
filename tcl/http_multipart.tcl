@@ -66,9 +66,7 @@ namespace eval ::tclwire::http::multipart {
                 } else {
                     set next [expr {$line_end + 2}]
                 }
-                set line [string trimright \
-                    [string range $body $marker $line_end-1] \
-                    " \t"]
+                set line [string trimright [string range $body $marker $line_end-1] " \t"]
                 if {$line eq $delimiter} {
                     return [dict create final 0 marker $marker next $next]
                 }

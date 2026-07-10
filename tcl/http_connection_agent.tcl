@@ -153,10 +153,6 @@ oo::class create ::tclwire::HttpConnectionAgent {
         my handle_request_descriptor $request_d
     }
 
-    method request_complete {request_data} {
-        return [$protocol_session complete_request $request_data]
-    }
-
     method build_request_descriptor {request_data} {
         if {[catch {dict get $request_data method}]} {
             set descriptor [$protocol_session parse_request $request_data]
@@ -190,40 +186,16 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return $descriptor
     }
 
-    method request_body {request_descriptor} {
-        if {[dict get $request_descriptor body_storage] ne "in_memory"} {
-            error "request body is not stored in memory"
-        }
-        return [dict get $request_descriptor body]
-    }
-
-    method request_is_head {request_data} {
-        return [regexp {^HEAD[ \t]} $request_data]
-    }
-
     method request_host {request_descriptor} {
         if {![dict exists $request_descriptor headers host]} {
             return {}
         }
-        set host [string tolower \
-            [string trim [dict get $request_descriptor headers host]]]
+        set host [string tolower [string trim [dict get $request_descriptor headers host]]]
         if {[regexp {^\[([^\]]+)\](?::[0-9]+)?$} $host -> address]} {
             return $address
         }
         regsub {:[0-9]+$} $host {} host
         return $host
-    }
-
-    method handle_request {request_data} {
-        my dump_multipart_request $request_data
-        if {[catch {
-            set request_d [my build_request_descriptor $request_data]
-        }]} {
-            my log_request {} 400 0
-            my send_error 400 {} [my request_is_head $request_data]
-            return {}
-        }
-        return [my dispatch_request_descriptor $request_d]
     }
 
     method cleanup_request_body {request_d} {
@@ -331,36 +303,6 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 puts stderr "<multipart body decomposed into parts>"
             }
             puts stderr "\n--- end TclWire HTTP multipart request dump ---"
-            flush stderr
-        }
-        return
-    }
-
-    method dump_multipart_request {request_data} {
-        if {!$dump_multipart_requests} {
-            return
-        }
-        set is_multipart 0
-        if {[catch {
-            set headers [$protocol_session parse_headers $request_data]
-            if {[dict exists $headers content-type]} {
-                set content_info [::tclwire::http::message parse_content_type \
-                    [dict get $headers content-type]]
-                set is_multipart [string match multipart/* \
-                    [dict get $content_info media_type]]
-            }
-        }]} {
-            return
-        }
-        if {!$is_multipart} {
-            return
-        }
-
-        catch {
-            puts stderr \
-                "--- TclWire HTTP multipart request dump ([string length $request_data] bytes) ---"
-            puts stderr $request_data
-            puts stderr "--- end TclWire HTTP multipart request dump ---"
             flush stderr
         }
         return
@@ -715,7 +657,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         chunked_response cleanup_request_body commit_chunked_response \
         dispatch_request_descriptor dump_multipart_descriptor \
         handle_request_descriptor head_only header_name header_value \
-        log_request request_host request_is_head response_header_values
+        log_request request_host response_header_values
 }
 
 package provide tclwire::http::connection_agent 0.1

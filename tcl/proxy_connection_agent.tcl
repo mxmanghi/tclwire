@@ -58,32 +58,24 @@ oo::class create ::tclwire::ProxyConnectionAgent {
             return
         }
 
-        set buffered [my input_buffer]
+        my clear_input_buffer
         if {[catch {
-            set request_data [$protocol_session complete_request $buffered]
-        }]} {
+            set result [$protocol_session feed_proxy_request $chunk]
+        } message]} {
             my send_generated_response 400 "Bad Request" "bad proxy request\n"
             return
         }
-        if {$request_data eq {}} {
+        if {[dict get $result status] eq "need_more"} {
             return
         }
 
-        set trailing [string range $buffered [string length $request_data] end]
-        my clear_input_buffer
         chan event $channel readable {}
-        my handle_proxy_request $request_data $trailing
+        my handle_proxy_request \
+            [dict get $result descriptor] \
+            [dict get $result trailing]
     }
 
-    method handle_proxy_request {request_data trailing} {
-        if {[catch {
-            set descriptor [$protocol_session parse_request $request_data]
-        }]} {
-            my log_request ? ? 400 0
-            my send_generated_response 400 "Bad Request" "bad proxy request\n"
-            return
-        }
-
+    method handle_proxy_request {descriptor trailing} {
         set method [dict get $descriptor method]
         set target [dict get $descriptor target]
         catch {

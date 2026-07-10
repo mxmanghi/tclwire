@@ -128,6 +128,27 @@ test proxy-protocol-1.3 {decoded chunked bodies use content length upstream} -bo
     }
 } -result "POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 7\r\nConnection: close\r\n\r\npayload"
 
+test proxy-protocol-1.4 {
+    incremental proxy parsing preserves bytes after a CONNECT request
+} -body {
+    set protocol [::tclwire::ProxyProtocolSession new]
+    try {
+        set first [$protocol feed_proxy_request \
+            "CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n"]
+        set result [$protocol feed_proxy_request "\r\nTLS"]
+        set descriptor [dict get $result descriptor]
+        list \
+            [dict get $first status] \
+            [dict get $first phase] \
+            [dict get $result status] \
+            [dict get $descriptor method] \
+            [dict get $descriptor target] \
+            [dict get $result trailing]
+    } finally {
+        $protocol destroy
+    }
+} -result {need_more headers complete CONNECT example.test:443 TLS}
+
 test proxy-connection-1.1 {
     proxy forwards HTTP requests through its TPBA connection pool
 } -body {

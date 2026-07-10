@@ -138,15 +138,18 @@ test http-query-1.4 {malformed query escapes are rejected} -body {
 test http-protocol-1.2 {request completion waits for the declared body} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
-        set partial "POST /submit HTTP/1.1\r\nContent-Length: 4\r\n\r\nab"
-        set complete "${partial}cd"
+        set head "POST /submit HTTP/1.1\r\nContent-Length: 4\r\n\r\n"
+        set first [$protocol feed "${head}ab"]
+        set second [$protocol feed cd]
         list \
-            [$protocol complete_request $partial] \
-            [expr {[$protocol complete_request $complete] eq $complete}]
+            [dict get $first status] \
+            [dict get $first phase] \
+            [dict get $second status] \
+            [dict get [dict get $second descriptor] body]
     } finally {
         $protocol destroy
     }
-} -result {{} 1}
+} -result {need_more body complete abcd}
 
 test http-protocol-1.2a {
     incremental feed results have a stable dictionary contract
@@ -400,16 +403,17 @@ test http-protocol-1.6 {chunked request completion waits for the terminator} -bo
     try {
         set headers \
             "POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n"
-        set partial "${headers}4\r\nWiki\r\n5\r\npedia\r\n"
-        set complete "${partial}0\r\n\r\n"
-        set trailing "${complete}NEXT"
+        set first [$protocol feed "${headers}4\r\nWiki\r\n5\r\npedia\r\n"]
+        set second [$protocol feed "0\r\n\r\n"]
         list \
-            [$protocol complete_request $partial] \
-            [expr {[$protocol complete_request $trailing] eq $complete}]
+            [dict get $first status] \
+            [dict get $first phase] \
+            [dict get $second status] \
+            [dict get [dict get $second descriptor] body]
     } finally {
         $protocol destroy
     }
-} -result {{} 1}
+} -result {need_more body complete Wikipedia}
 
 test http-protocol-1.7 {
     chunk extensions and trailers produce a decoded binary request body
@@ -442,13 +446,15 @@ test http-protocol-1.8 {ambiguous and unsupported request framing is rejected} -
             "POST / HTTP/1.1\r\nTransfer-Encoding: deflate, chunked\r\n\r\n0\r\n\r\n"
         set duplicate_length \
             "POST / HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\nbody!"
+        set ambiguous_status [catch {$protocol feed $ambiguous} ambiguous_error]
+        $protocol reset
+        set unsupported_status [catch {$protocol feed $unsupported} unsupported_error]
+        $protocol reset
+        set length_status [catch {$protocol feed $duplicate_length} length_error]
         list \
-            [catch {$protocol complete_request $ambiguous} ambiguous_error] \
-            $ambiguous_error \
-            [catch {$protocol complete_request $unsupported} unsupported_error] \
-            $unsupported_error \
-            [catch {$protocol complete_request $duplicate_length} length_error] \
-            $length_error
+            $ambiguous_status $ambiguous_error \
+            $unsupported_status $unsupported_error \
+            $length_status $length_error
     } finally {
         $protocol destroy
     }
@@ -476,11 +482,12 @@ test http-protocol-1.9 {malformed chunk framing is rejected} -body {
             "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\nbody\r\n0\r\n\r\n"
         set bad_ending \
             "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nbodyXX0\r\n\r\n"
+        set size_status [catch {$protocol feed $bad_size} size_error]
+        $protocol reset
+        set ending_status [catch {$protocol feed $bad_ending} ending_error]
         list \
-            [catch {$protocol complete_request $bad_size} size_error] \
-            $size_error \
-            [catch {$protocol complete_request $bad_ending} ending_error] \
-            $ending_error
+            $size_status $size_error \
+            $ending_status $ending_error
     } finally {
         $protocol destroy
     }
@@ -572,7 +579,7 @@ test http-connection-agent-1.1 {HTTP agent specializes the generic connection ag
             [info class methods ::tclwire::ConnectionAgent -all]}] \
         [expr {"application_output" in \
             [info class methods ::tclwire::HttpConnectionAgent -all]}] \
-        [expr {"handle_request" in \
+        [expr {"handle_request" ni \
             [info class methods ::tclwire::HttpConnectionAgent -all]}] \
         [expr {"build_request_descriptor" in \
             [info class methods ::tclwire::HttpConnectionAgent -all]}] \

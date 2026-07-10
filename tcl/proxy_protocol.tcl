@@ -10,6 +10,94 @@ namespace eval ::tclwire {}
 oo::class create ::tclwire::ProxyProtocolSession {
     superclass ::tclwire::HttpProtocolSession
 
+    # Feed connection bytes through the inherited incremental HTTP parser while
+    # preserving bytes that belong after the proxy request.  This matters for
+    # CONNECT: a client may send tunnel bytes in the same read as the request
+    # header, and those bytes must be forwarded upstream rather than consumed
+    # as HTTP parser input.
+    #
+    # HttpProtocolSession::feed intentionally reports the completed descriptor,
+    # not unconsumed input.  The proxy keeps that contract intact by deciding
+    # how much data is safe to feed at each parser state:
+    #
+    #   headers
+    #       Buffer until the complete header section is visible, then feed
+    #       exactly through CRLFCRLF.  Any bytes after CRLFCRLF wait until the
+    #       parser says whether the request has a body.
+    #
+    #   fixed_body
+    #       Feed at most body_remaining bytes, so bytes after Content-Length are
+    #       left as trailing data.
+    #
+    #   chunked body states
+    #       Feed conservatively.  Chunk framing determines completion, so this
+    #       wrapper advances one byte at a time to avoid crossing the terminal
+    #       chunk/trailer boundary.
+    #
+    # On completion the returned feed_result includes a proxy-only trailing key.
+    method feed_proxy_request {bytes} {
+        variable proxy_pending
+        variable input_state
+        variable body_remaining
+
+        if {![info exists proxy_pending]} {
+            set proxy_pending {}
+        }
+        append proxy_pending $bytes
+
+        set result {}
+        while {$proxy_pending ne {}} {
+            switch -exact -- $input_state {
+                headers {
+                    set header_end [string first "\r\n\r\n" $proxy_pending]
+                    if {$header_end < 0} {
+                        return [my feed_result need_more headers]
+                    } else {
+                        set take [expr {$header_end + 4}]
+                        set part [string range $proxy_pending 0 $take-1]
+                        set proxy_pending [string range $proxy_pending $take end]
+                    }
+                }
+                fixed_body {
+                    set take [expr {min($body_remaining, [string length $proxy_pending])}]
+                    if {$take <= 0} {
+                        break
+                    }
+                    set part [string range $proxy_pending 0 $take-1]
+                    set proxy_pending [string range $proxy_pending $take end]
+                }
+                chunk_size -
+                chunk_data -
+                chunk_data_crlf -
+                chunk_trailers {
+                    set part [string index $proxy_pending 0]
+                    set proxy_pending [string range $proxy_pending 1 end]
+                }
+                complete {
+                    set result [my feed_result complete complete [my descriptor]]
+                    dict set result trailing $proxy_pending
+                    set proxy_pending {}
+                    return $result
+                }
+                default {
+                    error "invalid proxy parser state: $input_state"
+                }
+            }
+
+            set result [my feed $part]
+            if {[dict get $result status] eq "complete"} {
+                dict set result trailing $proxy_pending
+                set proxy_pending {}
+                return $result
+            }
+        }
+
+        if {$result eq {}} {
+            return [my feed_result need_more body]
+        }
+        return $result
+    }
+
     method parse_target {target headers} {
         if {[regexp {^http://(\[[^\]]+\]|[^/:]+)(?::([0-9]+))?(/.*)?$} \
                 $target -> host port path]} {

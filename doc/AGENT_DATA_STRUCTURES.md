@@ -79,7 +79,7 @@ sequence is decoded as UTF-8.
 | `remote_host` | string | Peer address. |
 | `remote_port` | integer | Peer port. |
 
-Before dispatch, `HttpConnectionAgent handle_request` adds:
+Before dispatch, `HttpConnectionAgent dispatch_request_descriptor` adds:
 
 | Field | Value | Description |
 | --- | --- | --- |

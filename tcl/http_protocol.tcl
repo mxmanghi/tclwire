@@ -83,6 +83,19 @@ oo::class create ::tclwire::HttpProtocolSession {
         return
     }
 
+    # Install the parsed request head into the session.
+    #
+    # parse_request_head returns the stable request metadata extracted from the
+    # request line and headers: method, target, path, query, decoded query_dict,
+    # HTTP version, and normalized header dictionary.  feed stores that full
+    # dictionary in request_info, and also caches request_method and
+    # request_headers because the incremental parser needs those values often
+    # while deciding framing and reporting feed_result progress.
+    #
+    # This method is deliberately single-use.  A protocol session accepts one
+    # request at a time; once headers have been parsed, replacing request_info
+    # would make already-derived parser state such as body_framing and
+    # transfer_codings inconsistent with the visible request metadata.
     method install_request_info {info} {
         if {$request_info_status ne "empty"} {
             error "HTTP request information is already initialized"
@@ -200,18 +213,12 @@ oo::class create ::tclwire::HttpProtocolSession {
         return
     }
 
-    method append_body {bytes} {
-        if {$bytes eq {}} { return }
-        set new_size [expr {$body_size + [string length $bytes]}]
-        if {$new_size > $max_body_bytes} {
-            return -code error -errorcode {TCLWIRE HTTP BODY_TOO_LARGE} \
-                "decoded request body exceeds configured limit"
-        }
-        if {$body_sink ne {}} {
-            $body_sink append $bytes
-            set body_size $new_size
-            return
-        }
+    # -- append_raw_body
+    #
+    # Store decoded bytes for a non-multipart body.  Small bodies remain in
+    # body_data; larger bodies spill through body_channel to body_path.
+
+    method append_raw_body {bytes new_size} {
         if {$body_channel eq {} && $new_size > $body_threshold} {
             my spill_body
         }
@@ -222,6 +229,37 @@ oo::class create ::tclwire::HttpProtocolSession {
         }
         set body_size $new_size
         return
+    }
+
+    # -- append_body_sink
+    #
+    # Send decoded bytes to the selected semantic body consumer.  At present
+    # this is the multipart incremental parser created by select_body_sink.
+
+    method append_body_sink {bytes new_size} {
+        $body_sink append $bytes
+        set body_size $new_size
+        return
+    }
+
+    # -- append_body
+    #
+    # Common decoded-body entry point used by fixed-length and chunked paths.
+    # It enforces the aggregate decoded-size limit, then dispatches to either
+    # the semantic body sink or the raw body storage path.
+
+    method append_body {bytes} {
+        if {$bytes eq {}} { return }
+        set new_size [expr {$body_size + [string length $bytes]}]
+        if {$new_size > $max_body_bytes} {
+            return  -code       error \
+                    -errorcode {TCLWIRE HTTP BODY_TOO_LARGE} \
+                    "decoded request body exceeds configured limit"
+        }
+        if {$body_sink ne {}} {
+            return [my append_body_sink $bytes $new_size]
+        }
+        my append_raw_body $bytes $new_size
     }
 
     method select_body_sink {headers} {
@@ -263,8 +301,40 @@ oo::class create ::tclwire::HttpProtocolSession {
         }
     }
 
+    # Finish the request assembled by feed's incremental parser.
+    #
+    # During feed, the header section chooses the processing pieces used for
+    # transfer decoding, specialized body consumption, and body storage:
+    #
+    #   transfer_stream
+    #       A zlib stream used only when Transfer-Encoding says that the
+    #       chunk payload is gzip encoded.  Bytes read from the wire are first
+    #       de-chunked by feed_chunked, then passed through this stream, and
+    #       only the decoded bytes are appended to the request body.
+    #
+    #   body_sink
+    #       A specialized decoded-body consumer.  Today this is the multipart
+    #       incremental parser selected for multipart Content-Type requests.
+    #       When present, append_body sends decoded body bytes to this object
+    #       instead of aggregating the raw decoded body in memory or on disk.
+    #
+    #   body_channel
+    #       The temporary file channel used for non-multipart decoded bodies
+    #       after their size grows beyond body_threshold.  If this is set at
+    #       completion, the final descriptor owns body_path and applications
+    #       read the body from that spooled file.
+    #
+    # This method is the normalization point for all body framing paths
+    # (no body, Content-Length, and chunked).  It drains and validates any
+    # transfer decoder, closes or finishes the active body storage mechanism,
+    # merges the body descriptor with the parsed request metadata, and returns
+    # the feed_result that tells the connection agent the request is complete.
+
     method finish_incremental_request {} {
         if {$transfer_stream ne {}} {
+            # A transfer decoder can still hold output internally after the
+            # last wire byte was fed.  Drain it and require EOF so truncated
+            # gzip transfer coding is rejected before exposing the request.
             if {[catch {
                 my drain_transfer_stream
                 if {![$transfer_stream eof]} { error incomplete }
@@ -279,6 +349,9 @@ oo::class create ::tclwire::HttpProtocolSession {
             }
         }
         if {$body_sink ne {}} {
+            # Multipart bodies are not exposed as one aggregate raw body here.
+            # The sink has already parsed decoded bytes into part descriptors,
+            # possibly with uploaded files spooled individually.
             set parts [$body_sink finish]
             $body_sink destroy
             set body_sink {}
@@ -287,6 +360,9 @@ oo::class create ::tclwire::HttpProtocolSession {
                                              multipart_parts $parts     \
                                              body_size $body_size]
         } elseif {$body_channel ne {}} {
+            # A plain decoded body crossed the in-memory threshold.  Close the
+            # spool channel and transfer file ownership to the final request
+            # descriptor by leaving body_path in that descriptor.
             close $body_channel
             set body_channel {}
             set body_descriptor [dict create body_media raw             \
@@ -296,6 +372,8 @@ oo::class create ::tclwire::HttpProtocolSession {
             # Ownership passes to the completed descriptor.
             set body_path {}
         } else {
+            # Small plain decoded bodies, and requests with no body, complete
+            # directly from the in-memory byte buffer.
             set body_descriptor [dict create body_media raw             \
                                              body_storage in_memory     \
                                              body      $body_data       \
@@ -310,11 +388,36 @@ oo::class create ::tclwire::HttpProtocolSession {
         return [my feed_result complete complete $completed_descriptor]
     }
 
+    # Feed bytes into the chunked-body state machine.
+    #
+    # feed switches input_state to chunk_size after the header block has been
+    # parsed and request_body_framing has classified the request as chunked.
+    # From that point this method owns the RFC chunk framing:
+    #
+    #   chunk_buffer
+    #       Accumulates bytes that have arrived from the connection but have
+    #       not yet been consumed by the chunk parser.  It may contain a
+    #       partial size line, partial chunk payload, the CRLF after a payload,
+    #       trailers, or bytes following any of those boundaries.
+    #
+    #   chunk_remaining
+    #       Number of payload bytes still expected for the current non-zero
+    #       chunk.  Payload bytes are forwarded to append_transfer_data, which
+    #       applies any transfer_stream decoding before append_body sees them.
+    #
+    #   trailers
+    #       Header-like fields after the zero-size chunk.  They are retained in
+    #       the completed descriptor but kept separate from request_headers
+    #       because request routing/framing decisions were already made from
+    #       the original header section.
     method feed_chunked {bytes} {
         append chunk_buffer $bytes
         while 1 {
             switch -exact -- $input_state {
                 chunk_size {
+                    # Read the hexadecimal chunk-size line.  Extensions after
+                    # the size token are ignored, matching the non-incremental
+                    # parser below.
                     set line_end [string first "\r\n" $chunk_buffer]
                     if {$line_end < 0} {
                         return [my feed_result need_more body]
@@ -333,6 +436,9 @@ oo::class create ::tclwire::HttpProtocolSession {
                     }
                 }
                 chunk_data {
+                    # Forward available payload bytes.  Chunk framing itself is
+                    # removed here; gzip transfer decoding, if configured, is
+                    # performed by append_transfer_data.
                     set available [string length $chunk_buffer]
                     if {$available < $chunk_remaining} {
                         my append_transfer_data $chunk_buffer
@@ -348,6 +454,8 @@ oo::class create ::tclwire::HttpProtocolSession {
                     set input_state chunk_data_crlf
                 }
                 chunk_data_crlf {
+                    # Every non-final chunk payload is followed by CRLF before
+                    # the next chunk-size line.
                     if {[string length $chunk_buffer] < 2} {
                         return [my feed_result need_more body]
                     }
@@ -366,7 +474,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                     # they must not affect framing/routing decisions already
                     # made after the header section was parsed.
                     if {[string length $chunk_buffer] >= 2 &&
-                            [string range $chunk_buffer 0 1] eq "\r\n"} {
+                        [string range $chunk_buffer 0 1] eq "\r\n"} {
                         set chunk_buffer [string range $chunk_buffer 2 end]
                         return [my finish_incremental_request]
                     }
@@ -382,11 +490,53 @@ oo::class create ::tclwire::HttpProtocolSession {
         }
     }
 
+    # Incrementally feed request bytes from the connection.
+    #
+    # The method is a small state machine driven by input_state:
+    #
+    #   headers
+    #       Accumulate bytes until CRLFCRLF, parse the request head, and derive
+    #       the body-processing plan.
+    #
+    #   fixed_body
+    #       Consume exactly Content-Length bytes into the decoded body pipeline.
+    #
+    #   chunk_size/chunk_data/chunk_data_crlf/chunk_trailers
+    #       Delegate to feed_chunked, which removes chunk framing and collects
+    #       trailers.
+    #
+    # The main parser descriptors established after headers are:
+    #
+    #   body_framing
+    #       How the wire message body is delimited: none, content-length, or
+    #       chunked.  This controls which input_state receives subsequent
+    #       bytes and when the request is complete.
+    #
+    #   transfer_codings
+    #       Ordered Transfer-Encoding codings from the headers, such as
+    #       {gzip chunked}.  Chunked is framing and is removed by feed_chunked;
+    #       gzip is content transformation and is represented by transfer_stream
+    #       so append_transfer_data can produce decoded body bytes.
+    #
+    #   body_remaining
+    #       For Content-Length requests, the number of wire body bytes still
+    #       required before finish_incremental_request can be called.
+    #
+    #   declared_request_size
+    #       Header size plus Content-Length.  It is reported before completion
+    #       so the connection agent can reject oversized fixed-length requests
+    #       without waiting for the whole body.
+
     method feed {bytes} {
+        # Guard the completed/closed session boundary.
         if {$input_state in {complete aborted}} {
             error "HTTP protocol session is not accepting request data"
         }
+
         if {$input_state eq "headers"} {
+            # Header phase: buffer until the full request head is available.
+            # Any bytes after CRLFCRLF stay in the local bytes variable and are
+            # processed by the selected body phase below in the same call.
             append header_buffer $bytes
             set header_end [string first "\r\n\r\n" $header_buffer]
             if {$header_end < 0} {
@@ -397,14 +547,27 @@ oo::class create ::tclwire::HttpProtocolSession {
             set header_size [expr $header_end + 4]
             set bytes [string range $header_buffer $header_end+4 end]
             set header_buffer {}
+
+            # Request metadata phase: parse and cache the stable request head,
+            # then derive the body parser configuration from its headers.
             my install_request_info [my parse_request_head $head]
             set headers [my request_headers]
             set body_framing [my request_body_framing $headers]
             set transfer_codings [my transfer_codings $headers]
+
+            # Transfer decoding phase: chunked framing is handled by the parser
+            # state machine.  gzip requires a streaming decoder because a
+            # compressed stream can span chunk boundaries.
             if {$transfer_codings eq {gzip chunked}} {
                 set transfer_stream [zlib stream gunzip]
             }
+
+            # Body sink phase: multipart bodies are decomposed while bytes are
+            # arriving; plain bodies use the in-memory/spooled-file path.
             my select_body_sink $headers
+
+            # Framing phase: choose where the next byte belongs, or finish
+            # immediately for requests without a body.
             switch -exact -- $body_framing {
                 none { return [my finish_incremental_request] }
                 content-length {
@@ -415,7 +578,12 @@ oo::class create ::tclwire::HttpProtocolSession {
                 chunked { set input_state chunk_size }
             }
         }
+
         if {$input_state eq "fixed_body"} {
+            # Fixed-length body phase: consume only bytes belonging to this
+            # request body.  The caller is responsible for connection-level
+            # request sequencing; this session returns complete as soon as the
+            # declared body length has been reached.
             set take [expr {min($body_remaining, [string length $bytes])}]
             if {$take > 0} {
                 my append_body [string range $bytes 0 $take-1]
@@ -424,6 +592,8 @@ oo::class create ::tclwire::HttpProtocolSession {
             if {$body_remaining == 0} { return [my finish_incremental_request] }
             return [my feed_result need_more body]
         }
+
+        # Chunked body phase: the finer-grained chunk states are handled there.
         return [my feed_chunked $bytes]
     }
 
@@ -587,40 +757,9 @@ oo::class create ::tclwire::HttpProtocolSession {
                 error "chunk data is not terminated by CRLF"
             }
 
-            append decoded [string range $body $data_start \
-                $data_end-1]
+            append decoded [string range $body $data_start $data_end-1]
             set cursor [expr {$data_end + 2}]
         }
-    }
-
-    method complete_request {request_data} {
-        set header_end [string first "\r\n\r\n" $request_data]
-        if {$header_end < 0} {
-            return {}
-        }
-
-        set headers [my parse_headers $request_data]
-        set framing [my request_body_framing $headers]
-        if {$framing eq "chunked"} {
-            set body_start [expr {$header_end + 4}]
-            set chunk_info [my parse_chunked_body \
-                [string range $request_data $body_start end]]
-            if {![dict get $chunk_info complete]} {
-                return {}
-            }
-            set request_length [expr {$body_start + [dict get $chunk_info consumed_length]}]
-            return [string range $request_data 0 $request_length-1]
-        }
-
-        set content_length 0
-        if {$framing eq "content-length"} {
-            set content_length [dict get $headers content-length]
-        }
-        set request_length [expr {$header_end + 4 + $content_length}]
-        if {[string length $request_data] < $request_length} {
-            return {}
-        }
-        return [string range $request_data 0 $request_length-1]
     }
 
     method parse_request {request} {
