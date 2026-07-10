@@ -1,0 +1,40 @@
+site_name: TclWire Manual
+site_description: Manual and reference documentation for the TclWire application server.
+site_url: https://mxmanghi.github.io/tclwire/
+repo_url: https://github.com/mxmanghi/tclwire
+repo_name: mxmanghi/tclwire
+docs_dir: doc
+
+theme:
+  name: bootstrap
+  favicon: assets/favicon/favicon.ico
+
+extra_css:
+  - stylesheets/tclwire-manual.css
+
+nav:
+  - Home: index.md
+  - Manual:
+      - Overview: manual/index.md
+      - Getting Started: manual/getting-started.md
+      - Configuration: manual/configuration.md
+      - Running TclWire: manual/running.md
+      - Writing Applications: manual/applications.md
+      - Request API: manual/request-api.md
+      - Response API: manual/response-api.md
+      - Console: manual/console.md
+      - Logging: manual/logging.md
+      - FTP and FTPS: manual/ftp.md
+      - Proxy Service: manual/proxy.md
+      - Architecture: manual/architecture.md
+      - Internals: manual/internals.md
+      - Testing and Development: manual/testing.md
+      - Glossary: manual/glossary.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - fenced_code
+  - toc:
+      permalink: true

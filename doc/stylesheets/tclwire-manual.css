@@ -1,0 +1,16 @@
+.home-logo {
+  float: right;
+  width: 180px;
+  max-width: 40%;
+  height: auto;
+  margin: 0 0 1rem 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .home-logo {
+    float: none;
+    display: block;
+    max-width: 220px;
+    margin: 0 0 1rem;
+  }
+}

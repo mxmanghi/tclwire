@@ -3,6 +3,16 @@ An incidentally created Tcl based application server
 
 ## Documentation
 
+The documentation is being organized as a MkDocs site. From the repository
+root, install MkDocs and run:
+
+```sh
+mkdocs serve
+```
+
+The manual skeleton starts at [doc/manual/index.md](doc/manual/index.md).
+Existing topic documents remain available as reference material:
+
 - [Worker Request API](doc/WORKER_REQUEST_API.md): worker-facing HTTP request
   and response API.
 - [Console](doc/CONSOLE.md): Unix-domain inspection and control socket,
