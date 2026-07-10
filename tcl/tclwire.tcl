@@ -846,7 +846,8 @@ namespace eval ::tclwire::runtime {
             dict for {application_id descriptor} [dict get $config applications] {
                 set docroot [dict get $descriptor docroot]
                 if {$docroot ni $prepared_docroots} {
-                    ::tclwire::support prepare_doc_root $docroot
+                    ::tclwire::support prepare_doc_root $docroot \
+                        [::tclwire::support runtime_doc_source]
                     lappend prepared_docroots $docroot
                 }
             }

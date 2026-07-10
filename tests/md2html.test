@@ -20,7 +20,7 @@ test md2html-1.2 {Tcl source links are rewritten to generated source pages} -bod
         tcl/application_dispatcher.tcl.html]
     ::mk2html::rewrite_tcl_links \
         {<a href="../tcl/application_dispatcher.tcl">source</a>} \
-        [file join $project_root doc WORKER_REQUEST_API.md] \
+        [file join $project_root runtime-doc WORKER_REQUEST_API.md] \
         worker_request_api.html \
         $project_root \
         $mapping

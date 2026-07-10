@@ -11,16 +11,17 @@ mkdocs serve
 ```
 
 The manual skeleton starts at [doc/manual/index.md](doc/manual/index.md).
-Existing topic documents remain available as reference material:
+The older topic documents used to seed TclWire's runtime document root are
+kept under `runtime-doc/`:
 
-- [Worker Request API](doc/WORKER_REQUEST_API.md): worker-facing HTTP request
+- [Worker Request API](runtime-doc/WORKER_REQUEST_API.md): worker-facing HTTP request
   and response API.
-- [Console](doc/CONSOLE.md): Unix-domain inspection and control socket,
+- [Console](runtime-doc/CONSOLE.md): Unix-domain inspection and control socket,
   including `PS`, `CONN`, `LOGROTATE`, and `SHUT`.
-- [Inter-Thread Communication](doc/INTER_THREAD_COMMUNICATION.md): current
+- [Inter-Thread Communication](runtime-doc/INTER_THREAD_COMMUNICATION.md): current
   thread roles and message-passing pathways.
-- [Request Body Handling](doc/REQUEST_BODY_HANDLING.md): current request-body
+- [Request Body Handling](runtime-doc/REQUEST_BODY_HANDLING.md): current request-body
   buffering behavior and future body-mode constraints.
-- [Agent Communication Data Structures](doc/AGENT_DATA_STRUCTURES.md):
+- [Agent Communication Data Structures](runtime-doc/AGENT_DATA_STRUCTURES.md):
   dictionaries and event structures exchanged among current agents.
-- [Reimplementation TODO](doc/TODO.md): migration status and remaining gaps.
+- [Reimplementation TODO](runtime-doc/TODO.md): migration status and remaining gaps.

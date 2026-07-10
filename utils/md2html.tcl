@@ -3,7 +3,7 @@
 package require Tcl 8.6
 
 namespace eval ::mk2html {
-    variable default_input doc
+    variable default_input runtime-doc
     variable default_output /tmp/tclwire
 }
 
@@ -583,7 +583,7 @@ proc ::mk2html::copy_logo {repository output_directory} {
         tclwire-logo-nav.png
         tclwire-logo-blue.png
     } {
-        set logo [file join $repository doc $logo_name]
+        set logo [file join $repository runtime-doc $logo_name]
         if {![file isfile $logo]} {
             continue
         }
@@ -596,7 +596,7 @@ proc ::mk2html::copy_logo {repository output_directory} {
 }
 
 proc ::mk2html::copy_favicons {repository output_directory} {
-    set favicon_directory [file join $repository doc favicon]
+    set favicon_directory [file join $repository runtime-doc favicon]
     if {![file isdirectory $favicon_directory]} {
         return
     }
@@ -614,7 +614,7 @@ proc ::mk2html::copy_favicons {repository output_directory} {
 }
 
 proc ::mk2html::copy_stylesheet {repository output_directory} {
-    set stylesheet [file join $repository doc tclwire.css]
+    set stylesheet [file join $repository runtime-doc tclwire.css]
     if {![file isfile $stylesheet]} {
         return
     }

@@ -168,6 +168,34 @@ test http-request-1.4 {multipart requests require a boundary parameter} -body {
     }
 } -result {multipart Content-Type is missing boundary}
 
+test http-request-1.4a {
+    form and upload helpers are empty for non-multipart requests
+} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method POST \
+        target /submit \
+        path /submit \
+        query {} \
+        version 1.1 \
+        headers [dict create] \
+        body_media raw \
+        body_storage in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 3]]
+    try {
+        list \
+            [$request is_multipart] \
+            [$request form_fields] \
+            [$request form_values field] \
+            [$request form_value field default] \
+            [$request uploaded_files] \
+            [$request uploaded_file upload]
+    } finally {
+        $request destroy
+    }
+} -result {0 {} {} default {} {}}
+
 test http-request-1.5 {multipart storage preserves multiple uploaded files} -setup {
     set upload_area [file join [temporaryDirectory] tclwire-uploads-[pid]]
     file delete -force $upload_area

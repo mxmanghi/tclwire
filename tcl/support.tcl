@@ -28,7 +28,12 @@ namespace eval ::tclwire::support {
         return [file normalize [env_or_default TCLWIRE_FTP_ROOT [default_doc_root]]]
     }
 
-    proc prepare_doc_root {doc_root} {
+    proc runtime_doc_source {} {
+        variable project_root
+        return [file join $project_root runtime-doc]
+    }
+
+    proc prepare_doc_root {doc_root {source_root {}}} {
         variable project_root
 
         set doc_root [file normalize $doc_root]
@@ -40,7 +45,11 @@ namespace eval ::tclwire::support {
         }
 
         file mkdir $doc_root
+        if {$source_root eq {}} {
+            set source_root [runtime_doc_source]
+        }
         exec [info nameofexecutable] [file join $project_root utils md2html.tcl] \
+            --input $source_root \
             --output $doc_root
         return $doc_root
     }
@@ -85,7 +94,7 @@ namespace eval ::tclwire::support {
         return
     }
 
-    namespace export project_root env_or_default default_doc_root \
+    namespace export project_root env_or_default default_doc_root runtime_doc_source \
         default_ftp_root prepare_doc_root prepare_ftp_root configure_debug \
         debug_enabled debug
     namespace ensemble create

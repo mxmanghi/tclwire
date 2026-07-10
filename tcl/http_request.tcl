@@ -177,14 +177,21 @@ oo::class create ::tclwire::HttpRequest {
         return $multipart_parts_cache
     }
 
+    method optional_multipart_parts {} {
+        if {![my is_multipart]} {
+            return {}
+        }
+        return [my multipart_parts]
+    }
+
     method form_fields {} {
         return [::tclwire::http::multipart form_fields \
-            [my multipart_parts]]
+            [my optional_multipart_parts]]
     }
 
     method form_values {name} {
         return [::tclwire::http::multipart field_values \
-            [my multipart_parts] $name]
+            [my optional_multipart_parts] $name]
     }
 
     method form_value {name {default_value {}}} {
@@ -197,7 +204,7 @@ oo::class create ::tclwire::HttpRequest {
 
     method uploaded_files {{name {}}} {
         return [::tclwire::http::multipart files \
-            [my multipart_parts] $name]
+            [my optional_multipart_parts] $name]
     }
 
     method uploaded_file {name} {
@@ -241,7 +248,7 @@ oo::class create ::tclwire::HttpRequest {
         return [my optional application_id {}]
     }
 
-    unexport optional required
+    unexport optional optional_multipart_parts required
 }
 
 package provide tclwire::http::request 0.1
