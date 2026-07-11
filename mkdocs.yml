@@ -4,9 +4,10 @@ site_url: https://mxmanghi.github.io/tclwire/
 repo_url: https://github.com/mxmanghi/tclwire
 repo_name: mxmanghi/tclwire
 docs_dir: doc
+use_directory_urls: false
 
 theme:
-  name: bootstrap
+  name: material
   favicon: assets/favicon/favicon.ico
 
 extra_css:
@@ -36,5 +37,12 @@ markdown_extensions:
   - attr_list
   - def_list
   - fenced_code
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
   - toc:
       permalink: true

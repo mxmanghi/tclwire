@@ -2,12 +2,23 @@
 
 ![TclWire logo](assets/tclwire-logo.png){: .home-logo }
 
-TclWire is a Tcl-based application server with HTTP, HTTPS, FTP, FTPS, proxy,
-console, logging, and threaded worker infrastructure.
+TclWire is a Tcl-based application server supporting the HTTP, HTTPS, FTP, FTPS and proxy
+protocols and was somehow incidentally created working at the development of a test
+suite for the Tclcurl extension. The effort of having an application server challenging 
+the Tclcurl client tests was generalized to a largely TclOO based multi-threaded architecture
+featuring virtual hosts, simple yet flexible configuration, logging and control through a
+unix-socket and a console script to send commands to the server.
 
-This documentation is being reorganized into a MkDocs manual. The manual pages
-under [Manual](manual/index.md) are the narrative documentation being drafted
-incrementally.
+Tclwire natively ships HTML documents but implements a worker API for developing
+Tcl based web applications.  
+
+## Tclwire Genesis
+
+The existence of TclWire was made possible by devolving to an AI assistant much of the
+development that concerned the generally awkward and impervious knowledge of protocol
+details, reserving to the developer the task of devising the overall server architecture
+and planning the development in steps that made possible to rewiew the code generated
+for each code installment.
 
 ## Current Entry Points
 
