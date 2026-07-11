@@ -24,6 +24,7 @@ package require tclwire::http::errors 0.1
 package require tclwire::http::range 0.1
 package require tclwire::http::redirect 0.1
 package require tclwire::http::request 0.1
+package require tclwire::logger::client 0.1
 package require fileutil
 
 namespace eval ::tclwire {}
@@ -111,6 +112,14 @@ oo::class create ::tclwire::CApplication {
     }
 
     method local_path {url_path} {
+        set candidate [my url_file_candidate $url_path]
+        if {![file isfile $candidate] || ![file readable $candidate]} {
+            return {}
+        }
+        return $candidate
+    }
+
+    method url_file_candidate {url_path} {
         set path [my decode_path $url_path]
         if {![string match "/*" $path] || [string first "\\" $path] >= 0} {
             return {}
@@ -140,10 +149,29 @@ oo::class create ::tclwire::CApplication {
         if {[file isdirectory $candidate]} {
             set candidate [file join $candidate index.html]
         }
-        if {![file isfile $candidate] || ![file readable $candidate]} {
-            return {}
+        return [file normalize $candidate]
+    }
+
+    method log_file_resolution {request status resolved_path {level debug}} {
+        set context [dict create]
+        if {[$request header host] ne {}} {
+            dict set context host [$request header host]
         }
-        return $candidate
+
+        set fields [list \
+            "method=[::tclwire::logger log_value [$request method]]" \
+            "path=[::tclwire::logger log_value [$request path]]" \
+            "status=$status"]
+        if {$resolved_path ne {}} {
+            lappend fields \
+                "resolved_path=[::tclwire::logger log_value $resolved_path]"
+        }
+
+        catch {
+            ::tclwire::logger log_error static_file \
+                [join $fields " "] $level $context
+        }
+        return
     }
 
     method content_type {path} {
@@ -291,13 +319,19 @@ oo::class create ::tclwire::CApplication {
     method handle_request {request} {
         set path [$request path]
         if {[catch {set local_path [my local_path $path]}]} {
+            my log_file_resolution $request 400 {} error
             my send_error 400 $path
             return
         }
         if {$local_path eq {}} {
+            set resolved_path {}
+            catch {set resolved_path [my url_file_candidate $path]}
+            my log_file_resolution $request 404 $resolved_path error
             my send_error 404 $path
             return
         }
+
+        my log_file_resolution $request 200 $local_path debug
 
         set resource [my file_resource $local_path]
         set method [$request method]
@@ -316,10 +350,11 @@ oo::class create ::tclwire::CApplication {
         return
     }
 
-    unexport decode_path file_resource read_file read_file_range \
-        resource_headers send_error \
+    unexport decode_path file_resource log_file_resolution read_file \
+        read_file_range resource_headers send_error \
         serve_complete_file serve_content_ranges serve_file_metadata \
-        serve_file_ranges serve_single_range serve_unsatisfiable_range
+        serve_file_ranges serve_single_range serve_unsatisfiable_range \
+        url_file_candidate
 }
 
 package provide tclwire::application 0.1

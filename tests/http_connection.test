@@ -1016,6 +1016,57 @@ test http-connection-1.8 {custom document roots preserve UTF-8 content} -body {
     catch {file delete -force $docroot}
 } -result {1 1}
 
+test http-connection-1.8a {debug logging includes resolved static file path} -body {
+    set docroot [file join [temporaryDirectory] tclwire-debug-path-[pid]]
+    file mkdir $docroot
+    set file_path [file normalize [file join $docroot index.html]]
+    ::fileutil::writeFile -encoding utf-8 $file_path ok
+
+    ::tclwire::runtime start [list \
+        --docroot $docroot \
+        --logfile $::tclwire::http_connection_test::logfile \
+        --logerr $::tclwire::http_connection_test::logerr \
+        --log-level debug]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    ::tclwire::runtime stop
+
+    set log [::tclwire::http_connection_test::error_log_contents]
+    list \
+        [string match "HTTP/1.1 200 OK*" $response] \
+        [string match \
+            "*static_file level=debug method=GET path=/ status=200 resolved_path=$file_path*" \
+            $log]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $docroot}
+} -result {1 1}
+
+test http-connection-1.8b {error logging includes resolved missing static file path} -body {
+    set docroot [file join [temporaryDirectory] tclwire-error-path-[pid]]
+    file mkdir $docroot
+    set file_path [file normalize [file join $docroot missing.txt]]
+
+    ::tclwire::runtime start [list \
+        --docroot $docroot \
+        --logfile $::tclwire::http_connection_test::logfile \
+        --logerr $::tclwire::http_connection_test::logerr \
+        --log-level error]
+    set response [::tclwire::http_connection_test::request \
+        "GET /missing.txt HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    ::tclwire::runtime stop
+
+    set log [::tclwire::http_connection_test::error_log_contents]
+    list \
+        [string match "HTTP/1.1 404 Not Found*" $response] \
+        [string match \
+            "*static_file level=error method=GET path=/missing.txt status=404 resolved_path=$file_path*" \
+            $log]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    catch {file delete -force $docroot}
+} -result {1 1}
+
 test http-connection-1.9 {static binary files are preserved byte for byte} -body {
     set docroot [file join [temporaryDirectory] tclwire-docroot-[pid]]
     file mkdir [file join $docroot assets]

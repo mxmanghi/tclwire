@@ -94,6 +94,7 @@ package ifneeded tclwire::application 0.1 [subst {
     package require tclwire::http::range 0.1
     package require tclwire::http::redirect 0.1
     package require tclwire::http::request 0.1
+    package require tclwire::logger::client 0.1
     source [list [file join $dir tcl application.tcl]]
 }]
 
