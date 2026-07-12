@@ -64,7 +64,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     http \
     [list [dict create \
         protocol http port 8990 upload_area [file normalize /tmp] \
-        max_request_bytes 16777216 request_memory_threshold 1048576 \
+        max_request_bytes 16777216 max_header_bytes 65536 \
+        request_memory_threshold 1048576 \
         id http:8990 secure 0]] \
     default \
     0 \
@@ -108,11 +109,13 @@ test runtime-1.2 {legacy service options are normalized without starting service
     0.0.0.0 \
     [list \
         [dict create protocol http port 8080 upload_area [file normalize /tmp] \
-            max_request_bytes 16777216 request_memory_threshold 1048576 \
+            max_request_bytes 16777216 max_header_bytes 65536 \
+            request_memory_threshold 1048576 \
             id http:8080 secure 0] \
         [dict create \
             protocol https port 8443 upload_area [file normalize /tmp] \
-            max_request_bytes 16777216 request_memory_threshold 1048576 \
+            max_request_bytes 16777216 max_header_bytes 65536 \
+            request_memory_threshold 1048576 \
             id https:8443 secure 1 \
             certfile {} keyfile {}]] \
     [file normalize ./www] \
@@ -222,7 +225,8 @@ test runtime-1.5 {runtime starts internal agents and the hardcoded HTTP listener
 } -result [list \
     [list [dict create \
         protocol http port 8990 upload_area [file normalize /tmp] \
-        max_request_bytes 16777216 request_memory_threshold 1048576 \
+        max_request_bytes 16777216 max_header_bytes 65536 \
+        request_memory_threshold 1048576 \
         id http:8990 secure 0]] \
     1 1 1 1 127.0.0.1 8990 1]
 
@@ -473,7 +477,8 @@ port = 8081
     {https ftp} \
     [list \
         [dict create protocol https port 8443 upload_area [file normalize /tmp] \
-            max_request_bytes 16777216 request_memory_threshold 1048576 \
+            max_request_bytes 16777216 max_header_bytes 65536 \
+            request_memory_threshold 1048576 \
             id https:8443 secure 1 \
             certfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.crt]] \
             keyfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.key]]] \
@@ -535,7 +540,8 @@ port = 8180
     {http proxy} \
     [list \
         [dict create protocol http port 8181 upload_area [file normalize /tmp] \
-            max_request_bytes 16777216 request_memory_threshold 1048576 \
+            max_request_bytes 16777216 max_header_bytes 65536 \
+            request_memory_threshold 1048576 \
             id http:8181 secure 0] \
         [dict create protocol proxy port 8180 id proxy:8180 secure 0]]]
 
@@ -663,26 +669,33 @@ test runtime-1.17 {request memory limits are configurable globally and per servi
     set config_file [::tclwire::runtime_test::make_config {
 [tclwire]
 max_request_bytes = 4096
+max_header_bytes = 768
 request_memory_threshold = 1024
 
 [http]
 max_request_bytes = 2048
+max_header_bytes = 384
 request_memory_threshold = 512
 }]
     set from_file [::tclwire::runtime parse_args [list --config $config_file]]
     set from_cli [::tclwire::runtime parse_args [list \
-        --max-request-bytes 8192 --request-memory-threshold 2048]]
+        --max-request-bytes 8192 --max_header_bytes 1536 \
+        --request-memory-threshold 2048]]
     list \
         [dict get $from_file max_request_bytes] \
         [dict get [lindex [dict get $from_file services] 0] max_request_bytes] \
         [dict get $from_cli max_request_bytes] \
         [dict get [lindex [dict get $from_cli services] 0] max_request_bytes] \
+        [dict get $from_file max_header_bytes] \
+        [dict get [lindex [dict get $from_file services] 0] max_header_bytes] \
+        [dict get $from_cli max_header_bytes] \
+        [dict get [lindex [dict get $from_cli services] 0] max_header_bytes] \
         [dict get $from_file request_memory_threshold] \
         [dict get [lindex [dict get $from_file services] 0] request_memory_threshold] \
         [dict get $from_cli request_memory_threshold]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
-} -result {4096 2048 8192 8192 1024 512 2048}
+} -result {4096 2048 8192 8192 768 384 1536 1536 1024 512 2048}
 
 test runtime-1.18 {multipart request dumps are explicitly configurable} -body {
     set config_file [::tclwire::runtime_test::make_config {

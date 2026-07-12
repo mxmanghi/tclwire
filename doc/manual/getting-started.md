@@ -28,6 +28,8 @@ Options:
       Store HTTP multipart file parts in this directory.
   --max-request-bytes <count>
       Maximum buffered HTTP request size. Default: 16777216
+  --max-header-bytes <count>
+      Maximum buffered HTTP request header size. Default: 65536
   --request-memory-threshold <count>
       Spool larger HTTP request bodies to disk. Default: 1048576
   --dump-multipart-requests

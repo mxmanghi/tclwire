@@ -46,6 +46,10 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
 : Maximum buffered HTTP or HTTPS request size in bytes. Defaults to
   `16777216` and must be at least `1`.
 
+`--max-header-bytes <count>` / `--max_header_bytes <count>` / `tclwire.max_header_bytes`
+: Maximum buffered HTTP or HTTPS request header size in bytes. Defaults to
+  `65536` and must be at least `1`.
+
 `--request-memory-threshold <count>` / `tclwire.request_memory_threshold`
 : Number of request-body bytes kept in memory before the HTTP protocol session
   spools the body to `upload_area`. Defaults to `1048576`. A value of `0`
@@ -160,6 +164,10 @@ Service-specific TOML options live under protocol tables: `[http]`,
 `max_request_bytes`
 : HTTP or HTTPS service-specific maximum request size. Overrides
   `tclwire.max_request_bytes`.
+
+`max_header_bytes`
+: HTTP or HTTPS service-specific maximum request header size. Overrides
+  `tclwire.max_header_bytes`.
 
 `request_memory_threshold`
 : HTTP or HTTPS service-specific in-memory request-body threshold. Overrides

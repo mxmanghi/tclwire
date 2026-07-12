@@ -319,24 +319,28 @@ Global options:
 
 - `--upload-area <path>`
 - `--max-request-bytes <count>`
+- `--max-header-bytes <count>`
 - `--request-memory-threshold <count>`
 
 TOML equivalents:
 
 - `tclwire.upload_area`
 - `tclwire.max_request_bytes`
+- `tclwire.max_header_bytes`
 - `tclwire.request_memory_threshold`
 
 HTTP and HTTPS service tables may override:
 
 - `upload_area`
 - `max_request_bytes`
+- `max_header_bytes`
 - `request_memory_threshold`
 
 Defaults:
 
 - `upload_area`: `/tmp`
 - `max_request_bytes`: `16777216`
+- `max_header_bytes`: `65536`
 - `request_memory_threshold`: `1048576`
 
 ## Current Limitations

@@ -75,6 +75,10 @@ Configure the request limit globally with `--max-request-bytes <count>` or
 `tclwire.max_request_bytes` in TOML. An HTTP or HTTPS service can override it
 with `max_request_bytes` in its protocol table.
 
+Configure the request header limit globally with `--max-header-bytes <count>`
+or `tclwire.max_header_bytes` in TOML. An HTTP or HTTPS service can override
+it with `max_header_bytes` in its protocol table.
+
 Configure the in-memory threshold with `--request-memory-threshold <count>` or
 `tclwire.request_memory_threshold`. HTTP and HTTPS protocol tables can override
 it with `request_memory_threshold`. The default is 1 MiB. A value of zero
