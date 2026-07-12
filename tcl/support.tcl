@@ -33,6 +33,41 @@ namespace eval ::tclwire::support {
         return [file join $project_root runtime-doc]
     }
 
+    proc manual_site_source {} {
+        variable project_root
+        return [file join $project_root site]
+    }
+
+    proc copy_tree_contents {source target} {
+        file mkdir $target
+        set entries [glob -nocomplain -tails -directory $source * .*]
+        foreach entry $entries {
+            if {$entry in {. ..}} {
+                continue
+            }
+            file copy -force [file join $source $entry] [file join $target $entry]
+        }
+    }
+
+    proc directory_empty {directory} {
+        foreach entry [glob -nocomplain -tails -directory $directory * .*] {
+            if {$entry ni {. ..}} {
+                return 0
+            }
+        }
+        return 1
+    }
+
+    proc seed_manual_site {doc_root} {
+        set source [manual_site_source]
+        if {![file isdirectory $source]} {
+            return 0
+        }
+
+        copy_tree_contents $source [file join $doc_root manual]
+        return 1
+    }
+
     proc prepare_doc_root {doc_root {source_root {}}} {
         variable project_root
 
@@ -40,17 +75,20 @@ namespace eval ::tclwire::support {
         if {[file exists $doc_root] && ![file isdirectory $doc_root]} {
             error "document root exists but is not a directory: $doc_root"
         }
-        if {[file exists $doc_root]} {
+        if {[file exists $doc_root] && ![directory_empty $doc_root]} {
             return $doc_root
         }
 
-        file mkdir $doc_root
+        if {![file exists $doc_root]} {
+            file mkdir $doc_root
+        }
         if {$source_root eq {}} {
             set source_root [runtime_doc_source]
         }
         exec [info nameofexecutable] [file join $project_root utils md2html.tcl] \
             --input $source_root \
             --output $doc_root
+        seed_manual_site $doc_root
         return $doc_root
     }
 
@@ -95,6 +133,7 @@ namespace eval ::tclwire::support {
     }
 
     namespace export project_root env_or_default default_doc_root runtime_doc_source \
+        manual_site_source copy_tree_contents directory_empty seed_manual_site \
         default_ftp_root prepare_doc_root prepare_ftp_root configure_debug \
         debug_enabled debug
     namespace ensemble create

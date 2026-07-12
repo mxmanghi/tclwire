@@ -257,7 +257,45 @@ test runtime-1.5b {existing document root is not seeded or overwritten} -body {
     catch {file delete -force $docroot}
 } -result {custom 0}
 
-test runtime-1.5c {connection queue limits configure reactor and pool policy} -body {
+test runtime-1.5c {existing empty document root is seeded} -body {
+    set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    catch {file delete -force $docroot}
+    file mkdir $docroot
+    ::tclwire::support prepare_doc_root $docroot
+    set index [::fileutil::cat -encoding utf-8 [file join $docroot index.html]]
+    list \
+        [string match {*TclWire Documentation*} $index] \
+        [file isfile [file join $docroot worker_request_api.html]]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    catch {file delete -force $docroot}
+} -result {1 1}
+
+test runtime-1.5d {repository site content is copied below manual directory} -body {
+    set original_project_root $::tclwire::support::project_root
+    set project_root [file join [temporaryDirectory] tclwire-runtime-site-[pid]]
+    set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    file mkdir [file join $project_root site assets]
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $project_root site index.html] manual-home
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $project_root site assets site.css] manual-css
+
+    set ::tclwire::support::project_root $project_root
+    list \
+        [::tclwire::support seed_manual_site $docroot] \
+        [::fileutil::cat -encoding utf-8 \
+            [file join $docroot manual index.html]] \
+        [::fileutil::cat -encoding utf-8 \
+            [file join $docroot manual assets site.css]]
+} -cleanup {
+    set ::tclwire::support::project_root $original_project_root
+    ::tclwire::runtime_test::cleanup
+    catch {file delete -force $project_root}
+    catch {file delete -force $docroot}
+} -result {1 manual-home manual-css}
+
+test runtime-1.5e {connection queue limits configure reactor and pool policy} -body {
     ::tclwire::runtime start [list \
         --conn-max-wait 250 \
         --conn-max-workers 3 \

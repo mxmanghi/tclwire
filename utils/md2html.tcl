@@ -403,7 +403,13 @@ proc ::mk2html::render_document_body {
         $tcl_source_mapping]
 }
 
-proc ::mk2html::navigation {documents current_output {tcl_sources {}}} {
+proc ::mk2html::manual_site_available {repository} {
+    return [file isdirectory [file join $repository site]]
+}
+
+proc ::mk2html::navigation {
+    documents current_output {tcl_sources {}} {manual_available 0}
+} {
     set navigation {    <nav aria-label="Documentation">
       <a class="site-logo" href="@INDEX_URL@" aria-label="TclWire Documentation">
         <img src="@LOGO_URL@" alt="" width="220" height="132">
@@ -429,6 +435,14 @@ proc ::mk2html::navigation {documents current_output {tcl_sources {}}} {
         append navigation "        <li$class>\n"
         append navigation "          <a href=\"$tcl_index_url\">Tcl Sources</a>\n"
         append navigation {          <span>Highlighted source listings.</span>
+        </li>
+}
+    }
+    if {$manual_available} {
+        set manual_url [relative_url $current_output manual/index.html]
+        append navigation "        <li>\n"
+        append navigation "          <a href=\"$manual_url\">Manual</a>\n"
+        append navigation {          <span>Complete user manual.</span>
         </li>
 }
     }
@@ -510,7 +524,7 @@ proc ::mk2html::tcl_source_body {document} {
 }
 
 proc ::mk2html::write_tcl_source_pages {
-    output_directory documents tcl_sources
+    output_directory documents tcl_sources {manual_available 0}
 } {
     if {![llength $tcl_sources]} {
         return
@@ -519,7 +533,7 @@ proc ::mk2html::write_tcl_source_pages {
     write_page $output_directory tcl/index.html [page_template \
         "Tcl Source Files" \
         [tcl_source_index_body $tcl_sources tcl/index.html] \
-        [navigation $documents tcl/index.html $tcl_sources] \
+        [navigation $documents tcl/index.html $tcl_sources $manual_available] \
         tcl/index.html]
 
     foreach document $tcl_sources {
@@ -527,7 +541,7 @@ proc ::mk2html::write_tcl_source_pages {
         write_page $output_directory $output_name [page_template \
             [dict get $document title] \
             [tcl_source_body $document] \
-            [navigation $documents $output_name $tcl_sources] \
+            [navigation $documents $output_name $tcl_sources $manual_available] \
             $output_name]
     }
 }
@@ -690,13 +704,14 @@ proc ::mk2html::build_directory {source_directory output_directory repository} {
     set source_mapping [source_output_map $documents]
     set tcl_sources [collect_tcl_sources $repository]
     set tcl_source_mapping [tcl_source_output_map $tcl_sources]
+    set manual_available [manual_site_available $repository]
     file mkdir $output_directory
     copy_assets $repository $output_directory
 
     write_page $output_directory index.html [page_template \
         "TclWire Documentation" \
         [index_body $documents] \
-        [navigation $documents index.html $tcl_sources] \
+        [navigation $documents index.html $tcl_sources $manual_available] \
         index.html]
 
     foreach document $documents {
@@ -706,11 +721,13 @@ proc ::mk2html::build_directory {source_directory output_directory repository} {
             $source_mapping $repository $tcl_source_mapping]
         write_page $output_directory $output_name \
             [page_template $title $body \
-                [navigation $documents $output_name $tcl_sources] \
+                [navigation $documents $output_name $tcl_sources \
+                    $manual_available] \
                 $output_name]
     }
 
-    write_tcl_source_pages $output_directory $documents $tcl_sources
+    write_tcl_source_pages $output_directory $documents $tcl_sources \
+        $manual_available
 }
 
 proc ::mk2html::build_file {source output_directory repository} {
@@ -725,6 +742,7 @@ proc ::mk2html::build_file {source output_directory repository} {
     set source_mapping [source_output_map $documents]
     set tcl_sources [collect_tcl_sources $repository]
     set tcl_source_mapping [tcl_source_output_map $tcl_sources]
+    set manual_available [manual_site_available $repository]
     set body [render_document_body $document $output_name \
         $source_mapping $repository $tcl_source_mapping]
 
@@ -733,9 +751,10 @@ proc ::mk2html::build_file {source output_directory repository} {
     write_page $output_directory $output_name [page_template \
         [dict get $document title] \
         $body \
-        [navigation $documents $output_name $tcl_sources] \
+        [navigation $documents $output_name $tcl_sources $manual_available] \
         $output_name]
-    write_tcl_source_pages $output_directory $documents $tcl_sources
+    write_tcl_source_pages $output_directory $documents $tcl_sources \
+        $manual_available
 }
 
 proc ::mk2html::run {arguments} {

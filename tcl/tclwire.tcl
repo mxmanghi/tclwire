@@ -28,36 +28,31 @@ namespace eval ::tclwire::runtime {
     variable console_reactor {}
     variable application_dispatcher {}
     variable protocol_descriptors [dict create \
-        http [dict create \
-            default_port 8990 \
-            secure 0 \
-            agent_class ::tclwire::HttpConnectionAgent \
-            agent_package tclwire::http::connection_agent \
-            setup_proc ::tclwire::runtime::http_service_agent_args] \
-        https [dict create \
-            default_port 9443 \
-            secure 1 \
-            agent_class ::tclwire::HttpConnectionAgent \
-            agent_package tclwire::http::connection_agent \
-            setup_proc ::tclwire::runtime::http_service_agent_args] \
-        ftp [dict create \
-            default_port 8991 \
-            secure 0 \
-            agent_class ::tclwire::FtpConnectionAgent \
-            agent_package tclwire::ftp::connection_agent \
-            setup_proc ::tclwire::runtime::ftp_service_agent_args] \
-        ftps [dict create \
-            default_port 990 \
-            secure 1 \
-            agent_class ::tclwire::FtpConnectionAgent \
-            agent_package tclwire::ftp::connection_agent \
-            setup_proc ::tclwire::runtime::ftp_service_agent_args] \
-        proxy [dict create \
-            default_port 8992 \
-            secure 0 \
-            agent_class ::tclwire::ProxyConnectionAgent \
-            agent_package tclwire::proxy::connection_agent \
-            setup_proc ::tclwire::runtime::proxy_service_agent_args]]
+        http [dict create   default_port 8990 \
+                            secure 0 \
+                            agent_class ::tclwire::HttpConnectionAgent \
+                            agent_package tclwire::http::connection_agent \
+                            setup_proc ::tclwire::runtime::http_service_agent_args] \
+        https [dict create  default_port 9443 \
+                            secure 1 \
+                            agent_class ::tclwire::HttpConnectionAgent \
+                            agent_package tclwire::http::connection_agent \
+                            setup_proc ::tclwire::runtime::http_service_agent_args] \
+        ftp [dict create    default_port 8991 \
+                            secure 0 \
+                            agent_class ::tclwire::FtpConnectionAgent \
+                            agent_package tclwire::ftp::connection_agent \
+                            setup_proc ::tclwire::runtime::ftp_service_agent_args] \
+        ftps [dict create   default_port 990 \
+                            secure 1 \
+                            agent_class ::tclwire::FtpConnectionAgent \
+                            agent_package tclwire::ftp::connection_agent \
+                            setup_proc ::tclwire::runtime::ftp_service_agent_args] \
+        proxy [dict create  default_port 8992 \
+                            secure 0 \
+                            agent_class ::tclwire::ProxyConnectionAgent \
+                            agent_package tclwire::proxy::connection_agent \
+                            setup_proc ::tclwire::runtime::proxy_service_agent_args]]
 
     proc implemented_protocols {} {
         variable protocol_descriptors
