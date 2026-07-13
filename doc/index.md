@@ -15,12 +15,12 @@ Tcl based web applications.
 ## Rationale
 
 In recent years the need of having complex and feature reach application servers has partially
-waned when it comes distribution of documentation or the deployment of HTTP based applications
-for web services for data distribution. Furthermore in many cases such services live within
-virtualization systems or containers running from within corporate networks that expose
+waned when it comes to the distribution of documentation or the deployment of HTTP based applications
+for web services. Furthermore in many cases such services live within
+virtualization systems or containers running within corporate networks that expose
 selected ports mapping specific internal services. In these cases much of the network security
-or encrypted protocols certificate exchange and validation is the gateway and proxy services
-task, thus effectively relieving the endpoint services from the complexity of replicating
+or encrypted protocols certificate exchange and validation is a task devolved to the gateway and
+proxy services, thus effectively relieving the endpoint services from the complexity of replicating
 their management.
 
 ## Advocacy

@@ -3,17 +3,10 @@
 # Minimal HTTP protocol session used by the connection-agent prototype.
 
 package require TclOO
+package require tclwire::constants 0.1
 package require tclwire::http::query 0.1
 package require tclwire::http::message 0.1
 package require tclwire::http::multipart 0.1
-
-namespace eval ::tclwire {
-    if {[llength [info commands const]]} {
-        const empty_bytearray [binary format a* {}]
-    } else {
-        variable empty_bytearray [binary format a* {}]
-    }
-}
 
 oo::class create ::tclwire::HttpProtocolSession {
     variable input_state header_buffer request_info request_info_status

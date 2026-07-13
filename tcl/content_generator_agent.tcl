@@ -106,7 +106,7 @@ namespace eval ::tclwire::cga {
         variable initialization_options
 
         if {!$initialized && $initialization_error eq {} &&
-                $pending_pool_key ne {}} {
+             $pending_pool_key ne {}} {
             initialize_pending
         }
         if {$initialized && $configuration ne {}} {

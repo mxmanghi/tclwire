@@ -1,6 +1,9 @@
 package ifneeded tclwire::shared_state 0.1 \
     [list source [file join $dir tcl shared_state.tcl]]
 
+package ifneeded tclwire::constants 0.1 \
+    [list source [file join $dir tcl constants.tcl]]
+
 package ifneeded tclwire::accounting 1.2 \
     [subst {
         package require tclwire::shared_state 0.1
@@ -15,6 +18,7 @@ package ifneeded tomlfile 0.1 \
     [list source [file join $dir tcl toml.tcl]]
 
 package ifneeded tclwire::http::protocol 0.1 [subst {
+    package require tclwire::constants 0.1
     package require tclwire::http::query 0.1
     source [list [file join $dir tcl http_protocol.tcl]]
 }]
@@ -30,8 +34,10 @@ package ifneeded tclwire::proxy::protocol 0.1 [subst {
 package ifneeded tclwire::http::errors 0.1 \
     [list source [file join $dir tcl http_error_messages.tcl]]
 
-package ifneeded tclwire::application::io 0.1 \
-    [list source [file join $dir tcl application_io.tcl]]
+package ifneeded tclwire::application::io 0.1 [subst {
+    package require tclwire::constants 0.1
+    source [list [file join $dir tcl application_io.tcl]]
+}]
 
 package ifneeded tclwire::http::application::io 0.1 [subst {
     package require tclwire::application::io 0.1

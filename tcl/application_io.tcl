@@ -3,6 +3,7 @@
 # Transaction-scoped output bridge used by Content Generator Agents.
 
 package require Thread
+package require tclwire::constants 0.1
 
 namespace eval ::tclwire {}
 
@@ -33,7 +34,7 @@ namespace eval ::tclwire::io {
         set connection_agent_id $agent_id
         set transaction_id $tx_id
         set output_sequence 0
-        set output_buffer [binary format a* {}]
+        set output_buffer $::tclwire::empty_bytearray
         set output_body_mode {}
         set response_state open
         set active 1
@@ -56,7 +57,7 @@ namespace eval ::tclwire::io {
         set connection_agent_id {}
         set transaction_id {}
         set output_sequence 0
-        set output_buffer [binary format a* {}]
+        set output_buffer $::tclwire::empty_bytearray
         set output_body_mode {}
         return
     }
@@ -68,12 +69,11 @@ namespace eval ::tclwire::io {
         variable connection_agent_id
         variable transaction_id
 
-        return [dict create \
-            active $active \
-            response_state $response_state \
-            connection_thread_id $connection_thread_id \
-            connection_agent_id $connection_agent_id \
-            transaction_id $transaction_id]
+        return [dict create active              $active \
+                            response_state      $response_state \
+                            connection_thread_id $connection_thread_id \
+                            connection_agent_id $connection_agent_id \
+                            transaction_id      $transaction_id]
     }
 
     proc send_event {type {data {}} {flags {}}} {
@@ -168,7 +168,7 @@ namespace eval ::tclwire::io {
         if {![accepting_output]} {
             return
         }
-        set output_buffer [binary format a* {}]
+        set output_buffer $::tclwire::empty_bytearray
         set output_body_mode {}
         return
     }
@@ -181,13 +181,13 @@ namespace eval ::tclwire::io {
             return
         }
         if {![accepting_output]} {
-            set output_buffer [binary format a* {}]
+            set output_buffer $::tclwire::empty_bytearray
             set output_body_mode {}
             return
         }
         send_event output $output_buffer \
             [dict create body_mode $output_body_mode]
-        set output_buffer [binary format a* {}]
+        set output_buffer $::tclwire::empty_bytearray
         set output_body_mode {}
         return
     }
