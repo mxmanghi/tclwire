@@ -16,7 +16,7 @@ application server can be run and configured from the command line using these o
 | --ftpport <port>    | Port for the ftp service. Default: 8991 |
 | --ftpsport <port>   | Port for the ftps service. Default: 990 |
 | --proxyport <port>  | Port for the proxy service. Default: 8992 |
-| --service <protocol:port> | Add a service. TLS overrides may follow as ';certfile=<path>;keyfile=<path>;upload_area=<path>' |
+| --service <protocol:port> | Add a service. TLS overrides may follow as <br/>';certfile=<path>;keyfile=<path>;upload\_area=<path>' |
 | --docroot <path>    | --upload-area <path> Store HTTP multipart file parts in this directory |
 | --max-request-bytes <count> | Maximum buffered HTTP request size. Default: 16777216 |
 | --max-header-bytes <count> | Maximum buffered HTTP request header size. Default: 65536 |
