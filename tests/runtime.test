@@ -66,7 +66,7 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         protocol http port 8990 upload_area [file normalize /tmp] \
         max_request_bytes 16777216 max_header_bytes 65536 \
         request_memory_threshold 1048576 \
-        id http:8990 secure 0]] \
+        id http:8990 secure 0 description "HTTP application service"]] \
     default \
     0 \
     utf-8 \
@@ -111,12 +111,12 @@ test runtime-1.2 {legacy service options are normalized without starting service
         [dict create protocol http port 8080 upload_area [file normalize /tmp] \
             max_request_bytes 16777216 max_header_bytes 65536 \
             request_memory_threshold 1048576 \
-            id http:8080 secure 0] \
+            id http:8080 secure 0 description "HTTP application service"] \
         [dict create \
             protocol https port 8443 upload_area [file normalize /tmp] \
             max_request_bytes 16777216 max_header_bytes 65536 \
             request_memory_threshold 1048576 \
-            id https:8443 secure 1 \
+            id https:8443 secure 1 description "HTTPS application service" \
             certfile {} keyfile {}]] \
     [file normalize ./www] \
     [file normalize ./www] \
@@ -136,7 +136,12 @@ test runtime-1.2a {protocol descriptors share connection-agent classes by family
         [dict get [::tclwire::runtime::protocol_descriptor ftps] agent_class] \
         [dict get [::tclwire::runtime::protocol_descriptor proxy] agent_class] \
         [dict get [::tclwire::runtime::protocol_descriptor https] secure] \
-        [dict get [::tclwire::runtime::protocol_descriptor ftps] secure]
+        [dict get [::tclwire::runtime::protocol_descriptor ftps] secure] \
+        [dict get [::tclwire::runtime::protocol_descriptor http] description] \
+        [dict get [::tclwire::runtime::protocol_descriptor https] description] \
+        [dict get [::tclwire::runtime::protocol_descriptor ftp] description] \
+        [dict get [::tclwire::runtime::protocol_descriptor ftps] description] \
+        [dict get [::tclwire::runtime::protocol_descriptor proxy] description]
 } -result [list \
     ::tclwire::HttpConnectionAgent \
     ::tclwire::HttpConnectionAgent \
@@ -144,7 +149,12 @@ test runtime-1.2a {protocol descriptors share connection-agent classes by family
     ::tclwire::FtpConnectionAgent \
     ::tclwire::ProxyConnectionAgent \
     1 \
-    1]
+    1 \
+    "HTTP application service" \
+    "HTTPS application service" \
+    "FTP file transfer service" \
+    "FTPS file transfer service" \
+    "HTTP proxy service"]
 
 test runtime-1.2b {connection queue limits are parsed from CLI aliases} -body {
     set config [::tclwire::runtime parse_args [list \
@@ -227,7 +237,7 @@ test runtime-1.5 {runtime starts internal agents and the hardcoded HTTP listener
         protocol http port 8990 upload_area [file normalize /tmp] \
         max_request_bytes 16777216 max_header_bytes 65536 \
         request_memory_threshold 1048576 \
-        id http:8990 secure 0]] \
+        id http:8990 secure 0 description "HTTP application service"]] \
     1 1 1 1 127.0.0.1 8990 1]
 
 test runtime-1.5a {missing document root is seeded from generated documentation} -body {
@@ -257,11 +267,26 @@ test runtime-1.5b {existing document root is not seeded or overwritten} -body {
     catch {file delete -force $docroot}
 } -result {custom 0}
 
-test runtime-1.5c {existing empty document root is seeded} -body {
+test runtime-1.5c {existing empty document root prevents automatic seeding} -body {
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
     catch {file delete -force $docroot}
     file mkdir $docroot
     ::tclwire::support prepare_doc_root $docroot
+    list \
+        [file isdirectory $docroot] \
+        [file exists [file join $docroot index.html]] \
+        [file isfile [file join $docroot worker_request_api.html]]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    catch {file delete -force $docroot}
+} -result {1 0 0}
+
+test runtime-1.5d {forced document root seeding writes existing directory} -body {
+    set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    catch {file delete -force $docroot}
+    file mkdir $docroot
+    ::tclwire::support prepare_doc_root $docroot \
+        [::tclwire::support runtime_doc_source] 1
     set index [::fileutil::cat -encoding utf-8 [file join $docroot index.html]]
     list \
         [string match {*TclWire Documentation*} $index] \
@@ -271,7 +296,12 @@ test runtime-1.5c {existing empty document root is seeded} -body {
     catch {file delete -force $docroot}
 } -result {1 1}
 
-test runtime-1.5d {repository site content is copied below manual directory} -body {
+test runtime-1.5e {force docroot seeding is a global CLI option} -body {
+    set config [::tclwire::runtime parse_args [list --force-docroot-seeding]]
+    dict get $config force_docroot_seeding
+} -result 1
+
+test runtime-1.5f {repository site content is copied below manual directory} -body {
     set original_project_root $::tclwire::support::project_root
     set project_root [file join [temporaryDirectory] tclwire-runtime-site-[pid]]
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
@@ -295,7 +325,7 @@ test runtime-1.5d {repository site content is copied below manual directory} -bo
     catch {file delete -force $docroot}
 } -result {1 manual-home manual-css}
 
-test runtime-1.5e {connection queue limits configure reactor and pool policy} -body {
+test runtime-1.5g {connection queue limits configure reactor and pool policy} -body {
     ::tclwire::runtime start [list \
         --conn-max-wait 250 \
         --conn-max-workers 3 \
@@ -517,10 +547,11 @@ port = 8081
         [dict create protocol https port 8443 upload_area [file normalize /tmp] \
             max_request_bytes 16777216 max_header_bytes 65536 \
             request_memory_threshold 1048576 \
-            id https:8443 secure 1 \
+            id https:8443 secure 1 description "HTTPS application service" \
             certfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.crt]] \
             keyfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] tls default.key]]] \
-        [dict create protocol ftp port 2121 id ftp:2121 secure 0]] \
+        [dict create protocol ftp port 2121 id ftp:2121 secure 0 \
+            description "FTP file transfer service"]] \
     site.example.test \
     [dict create \
         docroot [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
@@ -580,8 +611,9 @@ port = 8180
         [dict create protocol http port 8181 upload_area [file normalize /tmp] \
             max_request_bytes 16777216 max_header_bytes 65536 \
             request_memory_threshold 1048576 \
-            id http:8181 secure 0] \
-        [dict create protocol proxy port 8180 id proxy:8180 secure 0]]]
+            id http:8181 secure 0 description "HTTP application service"] \
+        [dict create protocol proxy port 8180 id proxy:8180 secure 0 \
+            description "HTTP proxy service"]]]
 
 test runtime-1.13a {log levels can be configured globally by service and by host} -body {
     set config_file [::tclwire::runtime_test::make_config {

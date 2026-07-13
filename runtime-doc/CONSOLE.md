@@ -24,6 +24,13 @@ Returns thread accounting data from the shared accounting store.
 
 Arguments: none.
 
+### `SERVICES`
+
+Returns the configured running services with their service id, protocol, port,
+and service description.
+
+Arguments: none.
+
 ### `CONN`
 
 Returns active connection accounting data from the shared connection store.

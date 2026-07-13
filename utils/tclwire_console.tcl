@@ -21,6 +21,7 @@ namespace eval ::tclwire::console_client {
     variable readline_eof 0
     variable commands {
         PS        {List thread accounting and status.}
+        SERVICES  {List running services with ports and descriptions.}
         CONN      {List connections; optionally filter by -port or -remote.}
         CWORK     {List connection worker workloads.}
         CONF      {Show the effective runtime configuration.}

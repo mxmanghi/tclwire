@@ -68,14 +68,14 @@ namespace eval ::tclwire::support {
         return 1
     }
 
-    proc prepare_doc_root {doc_root {source_root {}}} {
+    proc prepare_doc_root {doc_root {source_root {}} {force 0}} {
         variable project_root
 
         set doc_root [file normalize $doc_root]
         if {[file exists $doc_root] && ![file isdirectory $doc_root]} {
             error "document root exists but is not a directory: $doc_root"
         }
-        if {[file exists $doc_root] && ![directory_empty $doc_root]} {
+        if {[file exists $doc_root] && !$force} {
             return $doc_root
         }
 

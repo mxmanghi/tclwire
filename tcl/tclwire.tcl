@@ -29,26 +29,31 @@ namespace eval ::tclwire::runtime {
     variable application_dispatcher {}
     variable protocol_descriptors [dict create \
         http [dict create   default_port 8990 \
+                            description "HTTP application service" \
                             secure 0 \
                             agent_class ::tclwire::HttpConnectionAgent \
                             agent_package tclwire::http::connection_agent \
                             setup_proc ::tclwire::runtime::http_service_agent_args] \
         https [dict create  default_port 9443 \
+                            description "HTTPS application service" \
                             secure 1 \
                             agent_class ::tclwire::HttpConnectionAgent \
                             agent_package tclwire::http::connection_agent \
                             setup_proc ::tclwire::runtime::http_service_agent_args] \
         ftp [dict create    default_port 8991 \
+                            description "FTP file transfer service" \
                             secure 0 \
                             agent_class ::tclwire::FtpConnectionAgent \
                             agent_package tclwire::ftp::connection_agent \
                             setup_proc ::tclwire::runtime::ftp_service_agent_args] \
         ftps [dict create   default_port 990 \
+                            description "FTPS file transfer service" \
                             secure 1 \
                             agent_class ::tclwire::FtpConnectionAgent \
                             agent_package tclwire::ftp::connection_agent \
                             setup_proc ::tclwire::runtime::ftp_service_agent_args] \
         proxy [dict create  default_port 8992 \
+                            description "HTTP proxy service" \
                             secure 0 \
                             agent_class ::tclwire::ProxyConnectionAgent \
                             agent_package tclwire::proxy::connection_agent \
@@ -103,6 +108,8 @@ namespace eval ::tclwire::runtime {
         puts $channel "      Add a service. TLS overrides may follow as"
         puts $channel "      ';certfile=<path>;keyfile=<path>;upload_area=<path>'."
         puts $channel "  --docroot <path>"
+        puts $channel "  --force-docroot-seeding"
+        puts $channel "      Seed docroot even when the directory already exists. Default: off"
         puts $channel "  --upload-area <path>"
         puts $channel "      Store HTTP multipart file parts in this directory."
         puts $channel "  --max-request-bytes <count>"
@@ -189,9 +196,13 @@ namespace eval ::tclwire::runtime {
 
     proc normalize_service {service default_certfile default_keyfile} {
         set protocol [dict get $service protocol]
+        set descriptor [protocol_descriptor $protocol]
         set port [dict get $service port]
         dict set service id "$protocol:$port"
-        dict set service secure [secure_protocol $protocol]
+        dict set service secure [dict get $descriptor secure]
+        if {![dict exists $service description]} {
+            dict set service description [dict get $descriptor description]
+        }
         if {[dict get $service secure]} {
             if {![dict exists $service certfile]} {
                 dict set service certfile $default_certfile
@@ -257,46 +268,46 @@ namespace eval ::tclwire::runtime {
     }
 
     proc default_config {} {
-        set host 127.0.0.1
-        set quiet 0
-        set debug 0
-        set debug_connection 0
-        set help 0
-        set docroot [::tclwire::support default_doc_root]
-        set upload_area [file normalize /tmp]
-        set max_request_bytes 16777216
-        set max_header_bytes 65536
+        set host                127.0.0.1
+        set quiet               0
+        set debug               0
+        set debug_connection    0
+        set help                0
+        set force_docroot_seeding 0
+        set docroot             [::tclwire::support default_doc_root]
+        set upload_area         [file normalize /tmp]
+        set max_request_bytes   16777216
+        set max_header_bytes    65536
         set request_memory_threshold 1048576
-        set ftproot [::tclwire::support default_ftp_root]
-        set certfile {}
-        set keyfile {}
-        set logfile [file normalize /tmp/tclwire.log]
-        set logerr [file normalize /tmp/tclwire-err.log]
-        set log_level info
-        set conn_max_wait 1000
-        set conn_max_workers 100
+        set ftproot             [::tclwire::support default_ftp_root]
+        set certfile            {}
+        set keyfile             {}
+        set logfile             [file normalize /tmp/tclwire.log]
+        set logerr              [file normalize /tmp/tclwire-err.log]
+        set log_level           info
+        set conn_max_wait       1000
+        set conn_max_workers    100
         set conn_max_per_thread 5
-        set unix_socket [file normalize /tmp/tclwire.sock]
-        set ftp_user_check 1
+        set unix_socket         [file normalize /tmp/tclwire.sock]
+        set ftp_user_check      1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
-        set startservers [default_protocols]
-        set services [list [dict create \
-            protocol http \
-            port [protocol_default_port http]]]
-        set custom_services 0
-        set ports [protocol_defaults]
+        set startservers        [default_protocols]
+        set services            [list [dict create  protocol http \
+                                                    port [protocol_default_port http]]]
+        set custom_services     0
+        set ports               [protocol_defaults]
         set default_application default
-        set default_encoding utf-8
-        set applications [dict create \
-            default [dict create class      ::tclwire::CApplication \
-                                 package    tclwire::application    \
-                                 hosts      {localhost 127.0.0.1}   \
-                                 docroot    $docroot                \
-                                 encoding   $default_encoding       \
-                                 pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
+        set default_encoding    utf-8
+        set applications        [dict create default [dict create   class      ::tclwire::CApplication \
+                                                                    package    tclwire::application    \
+                                                                    hosts      {localhost 127.0.0.1}   \
+                                                                    docroot    $docroot                \
+                                                                    encoding   $default_encoding       \
+                                                                    pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
 
         return [dict create help         $help \
                             config_file  . \
+                            force_docroot_seeding $force_docroot_seeding \
                             host         $host \
                             quiet        $quiet \
                             debug        $debug \
@@ -637,6 +648,9 @@ namespace eval ::tclwire::runtime {
                         dict set config ftproot $docroot
                     }
                 }
+                --force-docroot-seeding {
+                    dict set config force_docroot_seeding 1
+                }
                 --upload-area {
                     set value [require_value $argv [incr i] $option]
                     dict set config upload_area \
@@ -862,7 +876,8 @@ namespace eval ::tclwire::runtime {
                 set docroot [dict get $descriptor docroot]
                 if {$docroot ni $prepared_docroots} {
                     ::tclwire::support prepare_doc_root $docroot \
-                        [::tclwire::support runtime_doc_source]
+                        [::tclwire::support runtime_doc_source] \
+                        [dict get $config force_docroot_seeding]
                     lappend prepared_docroots $docroot
                 }
             }

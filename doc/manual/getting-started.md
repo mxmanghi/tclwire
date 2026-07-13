@@ -1,55 +1,30 @@
 # Getting Started
 
-Starting an instance of Tclwire is very simple. You can have a list of the command line options
-supported by the server entry point in the customary way for CLI Unix scripts and programs. Tclwire has
-a configuration file written in TOML format but for many simple cases or for testing purposes the
-application server can be run and configured from the command line using these options
-
-| Option | Description |
-|-----------|------------------------------------------------------|
-| --help              | Show this help message |
-| --config <path>     | Default: . (no configuration file) |
-| --host <address>    | Bind address prepared for future services. Default: 127.0.0.1 |
-| --startservers <list> | Comma-separated list of protocols (http,https,ftp,ftps,proxy) to start, or 'all' |
-| --httpport <port>   | Port for the http service. Default: 8990 |
-| --httpsport <port>  | Port for the https service. Default: 9443 |
-| --ftpport <port>    | Port for the ftp service. Default: 8991 |
-| --ftpsport <port>   | Port for the ftps service. Default: 990 |
-| --proxyport <port>  | Port for the proxy service. Default: 8992 |
-| --service <protocol:port> | Add a service. TLS overrides may follow as <br/>';certfile=<path>;keyfile=<path>;upload\_area=<path>' |
-| --docroot <path>    | --upload-area <path> Store HTTP multipart file parts in this directory |
-| --max-request-bytes <count> | Maximum buffered HTTP request size. Default: 16777216 |
-| --max-header-bytes <count> | Maximum buffered HTTP request header size. Default: 65536 |
-| --request-memory-threshold <count> | Spool larger HTTP request bodies to disk. Default: 1048576 |
-| --dump-multipart-requests | Dump complete multipart HTTP requests to stderr. Default: off |
-| --ftproot <path>  | Default root of the ftp service |
-| --certfile <path> | Path to the default TLS certificate for the https or ftps services |
-| --keyfile <path>  | Path to the default TLS private key for the https or ftps services |
-| --noftp-user-check | Don't check ftp users |
-| --logfile <path> | Access log. Default: /tmp/tclwire.log |
-| --logerr <path>  | Error log. Default: /tmp/tclwire-err.log |
-| --log-level <level> | Global logging threshold. Default: info |
-| --conn-max-wait <ms> | Maximum accepted-socket wait for a connection worker. Default: 1000 |
-| --conn-max-workers <count> | Maximum connection-agent workers per service. Default: 100 |
-| --conn-max-per-thread <count> | Maximum connections per connection-agent worker. Default: 5 |
-| --unix-socket <path> | Console socket. Default: /tmp/tclwire.sock |
-| --quiet | |
-| --debug | |
-
-Example (assuming your `tclwire.tcl` file is within the shell path):
+After a fresh download of Tclwire starting an instance of Tclwire is very simple. 
+(assuming your running `tclwire.tcl` from within the source root):
 ``` sh
-tclwire.tcl --docroot /tmp/tclwire --ftproot /tmp/tclwire --startservers http,ftp
+tcl/tclwire.tcl
 ```
 
-Since `/tmp/tclwire` is likely not existing Tclwire will create it and seed it with
-some technical documents and the manual. You may check the server by visiting `http://localhost:8990/` 
-with you browser.
+The default document root (`docroot`) is /tmp/tclwire and since it's likely
+not existing Tclwire will create it and seed it with some technical documents and
+this manual, just to give it a purpose and have in it something for you to see.
+Had the directory been existing (even though an empty one) it would be considered
+your deliberate act to have it preserved and nothing is copied into it (you can force
+the documentation to be copied with the CLI option `--force-docroot-seeding`).
+You may check the just created docroot content by visiting the URL `http://localhost:8990/`
 
-We told Tclwire to start also the ftp server and have its root directory in the http document
-root directory. 
+Tclwire supports out of the box also 2 more services: FTB and PROXY. You can fire
+the ftp service with the command
+```sh
+tcl/tclwire.tcl --startservers http,ftp
+```
+
+Unless you use the `--ftproot` Tclwire assumes the ftp root to be the docroot. The
+content can be checked with any ftp client (the default ftp port is 8991)
 
 ``` sh
-> ftp -P 8991 localhost
+% ftp -P 8991 localhost
 Connected to localhost.
 220 TclWire FTP server ready
 Name (localhost:xxxxx): 
@@ -88,8 +63,48 @@ drwxr-xr-x 1 owner group        0 Jul 12 12:11 tcl
 -rw-r--r-- 1 owner group    42681 Jul 12 12:11 worker_request_api.html
 -rw-r--r-- 1 owner group    17773 Jul 12 12:11 workload_balancer.html
 ```
+
+You can have a list of the command line options supported by the server entry
+point in the customary way for CLI Unix scripts and programs. Tclwire has a
+configuration file written in TOML format but for many simple cases or for
+testing purposes the application server can be run and configured from the
+command line using these options
+
+| Option | Description |
+|-----------|------------------------------------------------------|
+| --help              | Show this help message |
+| --config <path>     | Default: . (no configuration file) |
+| --host <address>    | Bind address prepared for future services. Default: 127.0.0.1 |
+| --startservers <list> | Comma-separated list of protocols (http,https,ftp,ftps,proxy) to start, or 'all' |
+| --httpport <port>   | Port for the http service. Default: 8990 |
+| --httpsport <port>  | Port for the https service. Default: 9443 |
+| --ftpport <port>    | Port for the ftp service. Default: 8991 |
+| --ftpsport <port>   | Port for the ftps service. Default: 990 |
+| --proxyport <port>  | Port for the proxy service. Default: 8992 |
+| --service <protocol:port> | Add a service. TLS overrides may follow as <br/>`;certfile=<path>;keyfile=<path>;upload\_area=<path>` |
+| --docroot <path>    | Default docroot for HTTP and FTP services |
+| --force-docroot-seeding | Force the Tclwire documents to be copied into a docroot even when it's not emtpy |
+| --upload-area <path> | Store HTTP multipart file parts in this directory |
+| --max-request-bytes <count> | Maximum buffered HTTP request size. Default: 16777216 |
+| --max-header-bytes <count> | Maximum buffered HTTP request header size. Default: 65536 |
+| --request-memory-threshold <count> | Spool larger HTTP request bodies to disk. Default: 1048576 |
+| --dump-multipart-requests | Dump complete multipart HTTP requests to stderr. Default: off |
+| --ftproot <path>  | Default root of the ftp service |
+| --certfile <path> | Path to the default TLS certificate for the https or ftps services |
+| --keyfile <path>  | Path to the default TLS private key for the https or ftps services |
+| --noftp-user-check | Don't check ftp users |
+| --logfile <path> | Access log. Default: /tmp/tclwire.log |
+| --logerr <path>  | Error log. Default: /tmp/tclwire-err.log |
+| --log-level <level> | Global logging threshold. Default: info |
+| --conn-max-wait <ms> | Maximum accepted-socket wait for a connection worker. Default: 1000 |
+| --conn-max-workers <count> | Maximum connection-agent workers per service. Default: 100 |
+| --conn-max-per-thread <count> | Maximum connections per connection-agent worker. Default: 5 |
+| --unix-socket <path> | Console socket. Default: /tmp/tclwire.sock |
+| --quiet | |
+| --debug | |
+
 In the current implementation the ftp service doesn't enforce a user check, so it's best
-for internal usage to private networks only.
+for usage to private networks only.
 
 ## Scope
 

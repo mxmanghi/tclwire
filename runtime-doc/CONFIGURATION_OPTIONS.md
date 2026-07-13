@@ -36,6 +36,11 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
   default document root. If `ftproot` is not set separately, changing
   `docroot` also changes the FTP root.
 
+`--force-docroot-seeding`
+: Seeds the generated documentation into `docroot` even when the directory
+  already exists. By default, an existing `docroot`, including an empty one, is
+  treated as user-managed and is not seeded. This option is command-line only.
+
 `--upload-area <path>` / `tclwire.upload_area`
 : Default storage directory for HTTP and HTTPS multipart file parts and
   spooled request bodies. Defaults to `/tmp`. An empty value disables file

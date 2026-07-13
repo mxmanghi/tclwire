@@ -24,6 +24,9 @@ namespace eval ::tclwire::console {
         worker_id connection_state family active_connections
         cumulative_connections combined_workload connection_keys
     }
+    variable service_columns {
+        service_id protocol port description
+    }
     variable conf_columns {
         scope name value
     }
@@ -331,6 +334,33 @@ namespace eval ::tclwire::console {
         return $rows
     }
 
+    proc service_rows {} {
+        variable active_config
+        variable service_columns
+        set rows {}
+        if {$active_config eq {} || ![dict exists $active_config services]} {
+            return $rows
+        }
+        foreach service [dict get $active_config services] {
+            if {[dict exists $service id]} {
+                set service_id [dict get $service id]
+            } else {
+                set service_id "[dict get $service protocol]:[dict get $service port]"
+            }
+            set row [dict create \
+                service_id $service_id \
+                protocol [dict get $service protocol] \
+                port [dict get $service port]]
+            if {[dict exists $service description]} {
+                dict set row description [dict get $service description]
+            } else {
+                dict set row description {}
+            }
+            lappend rows [row_from_dict $service_columns $row]
+        }
+        return $rows
+    }
+
     proc dispatch {line} {
         variable ps_columns
         variable connection_columns
@@ -366,6 +396,14 @@ namespace eval ::tclwire::console {
                 return [table_message $command $connection_worker_columns \
                     [connection_worker_rows]]
             }
+            SERVICES {
+                variable service_columns
+                if {[llength $args] != 0} {
+                    return [error_message $command bad_arguments \
+                        "SERVICES accepts no arguments"]
+                }
+                return [table_message $command $service_columns [service_rows]]
+            }
             CONF {
                 variable conf_columns
                 if {[llength $args] != 0} {
@@ -400,7 +438,7 @@ namespace eval ::tclwire::console {
     }
 
     namespace export configure dispatch error_message ok_message table_message \
-        ps_rows connection_rows connection_worker_rows conf_rows
+        ps_rows connection_rows connection_worker_rows service_rows conf_rows
     namespace ensemble create
 }
 

@@ -5,6 +5,7 @@ repo_url: https://github.com/mxmanghi/tclwire
 repo_name: mxmanghi/tclwire
 docs_dir: doc
 use_directory_urls: false
+plugins: []
 
 theme:
   name: material
