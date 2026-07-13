@@ -118,8 +118,7 @@ for usage to private networks only.
 ## Draft Notes
 
 The initial draft should verify the exact command line against the current
-entry point in `tcl/tclwire.tcl` and the sample configuration in
-`tclwire.toml.example`.
+entry point in `tcl/tclwire.tcl` and the sample configuration in `tclwire.toml.example`.
 
 ## Source Material
 

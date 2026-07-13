@@ -57,8 +57,8 @@ oo::class create ::tclwire::CApplication {
                 dict set complete_descriptor $property $value
             }
         }
-        set configuration_object [::tclwire::ApplicationConfiguration new \
-            $application_id $complete_descriptor]
+        set configuration_object \
+            [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
         set document_root [file normalize [dict get $application_descriptor docroot]]
         set content_encoding [dict get $application_descriptor encoding]
     }
