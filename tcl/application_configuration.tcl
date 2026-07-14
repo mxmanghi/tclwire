@@ -18,6 +18,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
             package {} \
             file {} \
             libdir {} \
+            configure {} \
             log_level {} \
             reload_on_request 0 \
             retain_uploaded_files 0 \
@@ -47,6 +48,14 @@ oo::class create ::tclwire::ApplicationConfiguration {
                 [dict get $values pool_policy]]
         }]} {
             error "application '$id' pool_policy must be a dictionary"
+        }
+        if {[catch {dict size [dict get $values configure]}]} {
+            error "application '$id' configure must be a dictionary"
+        }
+        dict for {class_name class_options} [dict get $values configure] {
+            if {[catch {dict size $class_options}]} {
+                error "application '$id' configure.$class_name must be a dictionary"
+            }
         }
         foreach property {minimum_workers maximum_workers} {
             set count [dict get $pool_policy $property]
@@ -88,6 +97,21 @@ oo::class create ::tclwire::ApplicationConfiguration {
 
     method snapshot {} {
         return $values
+    }
+
+    method configure {{class_name {}}} {
+        set configuration [dict get $values configure]
+        if {$class_name eq {}} {
+            return $configuration
+        }
+        if {![dict exists $configuration $class_name]} {
+            return {}
+        }
+        return [dict get $configuration $class_name]
+    }
+
+    method class_configuration {class_name} {
+        return [my configure $class_name]
     }
 
     method serialize {} {

@@ -267,6 +267,25 @@ namespace eval ::tclwire::runtime {
         return [file normalize [file join $config_dir $value]]
     }
 
+    proc merge_nested_dict_field {base override field} {
+        if {![dict exists $base $field] || ![dict exists $override $field]} {
+            return $override
+        }
+
+        set merged [dict get $base $field]
+        dict for {key values} [dict get $override $field] {
+            if {[dict exists $merged $key] &&
+                    ![catch {dict size [dict get $merged $key]}] &&
+                    ![catch {dict size $values}]} {
+                dict set merged $key [dict merge [dict get $merged $key] $values]
+            } else {
+                dict set merged $key $values
+            }
+        }
+        dict set override $field $merged
+        return $override
+    }
+
     proc default_config {} {
         set host                127.0.0.1
         set quiet               0
@@ -527,6 +546,9 @@ namespace eval ::tclwire::runtime {
                 set application [dict filter $descriptor key \
                     class package hosts encoding log_level reload_on_request \
                     retain_uploaded_files]
+                if {[dict exists $descriptor configure]} {
+                    dict set application configure [dict get $descriptor configure]
+                }
                 if {[dict exists $application log_level]} {
                     dict set application log_level \
                         [normalize_log_level "$protocol.$application_id.log_level" \
@@ -587,6 +609,8 @@ namespace eval ::tclwire::runtime {
                             [dict get $inherited pool_policy] \
                             [dict get $descriptor pool_policy]]
                     }
+                    set descriptor [merge_nested_dict_field \
+                        $inherited $descriptor configure]
                     set descriptor [dict merge $inherited $descriptor]
                 }
                 dict set merged_applications $application_id $descriptor
@@ -794,6 +818,8 @@ namespace eval ::tclwire::runtime {
                         [dict get $inherited pool_policy] \
                         [dict get $descriptor pool_policy]]
                 }
+                set descriptor [merge_nested_dict_field \
+                    $inherited $descriptor configure]
                 set descriptor [dict merge $inherited $descriptor]
                 if {$application_hosts ne {}} {
                     dict set descriptor hosts $application_hosts

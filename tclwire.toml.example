@@ -81,7 +81,6 @@ file = "tcl/application.tcl"
 # libdir, and the TclWire installation directory at the front of auto_path, in
 # that order.
 package = "tclwire::application"
-
 docroot = "/tmp/tclwire"
 encoding = "utf-8"
 minimum_workers = 0
@@ -100,6 +99,18 @@ maximum_workers = 20
 #
 # class, file/package, encoding, libdir, and worker limits are inherited from
 # [http.default]. Any of them may still be overridden in the host table.
+#
+# Class-specific settings live under configure tables keyed by TclOO class
+# name.  Constructors decide how those values map to object state.
+#
+# [http.hello]
+# hosts = "hello.example.test"
+# class = "::tclwire::Hello"
+# file = "examples/hello.tcl"
+# docroot = "/tmp/tclwire"
+#
+# [http.hello.configure."::tclwire::Hello"]
+# message = "Hello from a configured virtual host"
 
 [https]
 enabled = false

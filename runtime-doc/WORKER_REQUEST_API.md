@@ -80,10 +80,28 @@ belongs to one application pool, so runtime reconfiguration must replace pools
 and retire their worker threads rather than changing a worker's application
 configuration request by request.
 
-`CApplication configuration_object` exposes the worker-local object. The
-existing `configuration` method continues to return a dictionary for
-compatibility with application constructors and code written against earlier
-versions.
+`CApplication configuration_object` exposes the worker-local object.
+
+Application descriptors may include a `configure` dictionary keyed by TclOO
+class name. This is class-owned instance configuration, not automatic variable
+injection. Each class decides how to map its block to object state:
+
+```toml
+[http.hello]
+hosts = "hello.example.test"
+class = "::tclwire::Hello"
+file = "examples/hello.tcl"
+
+[http.hello.configure."::tclwire::Hello"]
+message = "Hello from a configured virtual host"
+```
+
+The corresponding application code can read its block through the immutable
+configuration object:
+
+```tcl
+set options [[my configuration_object] class_configuration ::tclwire::Hello]
+```
 
 The application package or file is loaded when each worker interpreter is
 initialized. For each request, the CGA invokes:

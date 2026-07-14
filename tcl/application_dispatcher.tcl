@@ -48,6 +48,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
                         [dict get $descriptor pool_policy]]
 
                 }
+                set descriptor [my merge_nested_dict_field \
+                    $default_descriptor $descriptor configure]
                 set descriptor [dict merge $default_descriptor $descriptor]
                 if {!$had_hosts} {
                     dict set descriptor hosts [list $application_id]
@@ -91,6 +93,32 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 $application_id $configuration
             dict set applications $application_id [$configuration snapshot]
         }
+    }
+
+    # Merge descriptor fields whose value is itself a dictionary of named
+    # dictionaries.  `configure` uses this shape: its outer keys are TclOO
+    # class names and each value is that class's option dictionary.  A plain
+    # `dict merge` would replace the complete inherited configure block for a
+    # class whenever a virtual host overrides one option.  This keeps the
+    # inherited class block and overlays only the options named by the
+    # virtual-host descriptor.
+    method merge_nested_dict_field {base override field} {
+        if {![dict exists $base $field] || ![dict exists $override $field]} {
+            return $override
+        }
+
+        set merged [dict get $base $field]
+        dict for {key values} [dict get $override $field] {
+            if {[dict exists $merged $key] &&
+                    ![catch {dict size [dict get $merged $key]}] &&
+                    ![catch {dict size $values}]} {
+                dict set merged $key [dict merge [dict get $merged $key] $values]
+            } else {
+                dict set merged $key $values
+            }
+        }
+        dict set override $field $merged
+        return $override
     }
 
     destructor {
@@ -333,6 +361,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
                             worker_id       $worker_id \
                             encoding        [dict get $descriptor encoding]]
     }
+
+    unexport merge_nested_dict_field
 }
 
 package provide tclwire::application_dispatcher 0.1

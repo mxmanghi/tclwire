@@ -494,6 +494,9 @@ encoding = "utf-8"
 minimum_workers = 2
 maximum_workers = 7
 
+[https."site.example.test".configure."::example::Application"]
+message = "configured virtual host"
+
 [ftp]
 enabled = true
 port = 2121
@@ -557,6 +560,8 @@ port = 8081
         docroot [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
         encoding utf-8 \
         class ::example::Application \
+        configure [dict create \
+            ::example::Application [dict create message {configured virtual host}]] \
         hosts site.example.test \
         libdir [file normalize [file join [temporaryDirectory] tclwire-config-[pid] site-lib]] \
         file [file join apps example.tcl] \

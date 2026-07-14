@@ -30,7 +30,7 @@ package require fileutil
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::CApplication {
-    variable configuration configuration_object document_root content_encoding
+    variable configuration_object document_root content_encoding
 
     constructor {application_descriptor} {
         if {[catch {dict size $application_descriptor}]} {
@@ -42,29 +42,23 @@ oo::class create ::tclwire::CApplication {
         if {![dict exists $application_descriptor encoding]} {
             error "application descriptor is missing encoding"
         }
-        set configuration $application_descriptor
         set application_id application
         if {[dict exists $application_descriptor application_id]} {
             set application_id [dict get $application_descriptor application_id]
         }
         set complete_descriptor $application_descriptor
-        foreach {property value} [list \
-            class [info object class [self]] \
-            hosts {} \
-            application_paths [list [dict get $application_descriptor docroot]] \
-            package tclwire::application] {
+        foreach {property value} [list  class       [info object class [self]] \
+                                        hosts       {} \
+                                        application_paths [list [dict get $application_descriptor docroot]] \
+                                        package     tclwire::application] {
             if {![dict exists $complete_descriptor $property]} {
                 dict set complete_descriptor $property $value
             }
         }
         set configuration_object \
             [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
-        set document_root [file normalize [dict get $application_descriptor docroot]]
+        set document_root    [file normalize [dict get $application_descriptor docroot]]
         set content_encoding [dict get $application_descriptor encoding]
-    }
-
-    method configuration {} {
-        return $configuration
     }
 
     method configuration_object {} {
@@ -72,8 +66,7 @@ oo::class create ::tclwire::CApplication {
     }
 
     destructor {
-        if {[info exists configuration_object] &&
-                $configuration_object ne {}} {
+        if {[info exists configuration_object] && $configuration_object ne {}} {
             $configuration_object destroy
         }
     }
@@ -139,11 +132,10 @@ oo::class create ::tclwire::CApplication {
             set segments [list index.html]
         }
 
-        set candidate [file normalize \
-            [file join [my document_root] {*}$segments]]
+        set candidate [file normalize [file join [my document_root] {*}$segments]]
         set root [my document_root]
-        if {$candidate ne $root &&
-                ![string match "${root}[file separator]*" $candidate]} {
+        if {($candidate ne $root) && \
+            ![string match "${root}[file separator]*" $candidate]} {
             return {}
         }
         if {[file isdirectory $candidate]} {
@@ -199,28 +191,24 @@ oo::class create ::tclwire::CApplication {
     }
 
     method send_error {status path} {
-        set response [::tclwire::http::errors response \
-            $status [dict create path $path]]
+        set response [::tclwire::http::errors response $status [dict create path $path]]
 
         dict with response {
-            ::tclwire::io response \
-                $status $reason $headers $body_mode $encoding
+            ::tclwire::io response $status $reason $headers $body_mode $encoding
             ::tclwire::io out $body $body_mode
         }
         return
     }
 
     method file_resource {local_path} {
-        return [dict create \
-            path $local_path \
-            length [file size $local_path] \
-            content_type [my content_type $local_path]]
+        return [dict create path         $local_path \
+                            length       [file size $local_path] \
+                            content_type [my content_type $local_path]]
     }
 
     method resource_headers {resource} {
-        return [list \
-            "Accept-Ranges: bytes" \
-            "Content-Type: [dict get $resource content_type]"]
+        return [list "Accept-Ranges: bytes" \
+                     "Content-Type: [dict get $resource content_type]"]
     }
 
     method read_file {path} {
@@ -253,9 +241,7 @@ oo::class create ::tclwire::CApplication {
     method serve_unsatisfiable_range {resource} {
         set length [dict get $resource length]
         ::tclwire::io response 416 "Range Not Satisfiable" \
-            [list \
-                "Accept-Ranges: bytes" \
-                "Content-Range: bytes */$length"] binary
+                  [list "Accept-Ranges: bytes" "Content-Range: bytes */$length"] binary
         return
     }
 
@@ -263,12 +249,10 @@ oo::class create ::tclwire::CApplication {
         lassign $range start end
         set length [dict get $resource length]
         ::tclwire::io response 206 "Partial Content" \
-            [list \
-                "Accept-Ranges: bytes" \
-                "Content-Type: [dict get $resource content_type]" \
-                "Content-Range: bytes $start-$end/$length"] binary
-        ::tclwire::io out [my read_file_range \
-            [dict get $resource path] $start $end] binary
+                        [list "Accept-Ranges: bytes" \
+                              "Content-Type: [dict get $resource content_type]" \
+                              "Content-Range: bytes $start-$end/$length"] binary
+        ::tclwire::io out [my read_file_range [dict get $resource path] $start $end] binary
         return
     }
 
