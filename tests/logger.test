@@ -193,6 +193,28 @@ test logger-1.7 {the logger thread loads only agent runtime commands} -body {
     ::tclwire::logger_test::cleanup
 } -result {agent_initialize agent_rotate agent_shutdown agent_write agent_write_error close_log_channels open_log_channels timestamp}
 
+test logger-1.7a {admitted log levels match Apache HTTP Server LogLevel names} -body {
+    set apache_levels {
+        trace8 trace7 trace6 trace5 trace4 trace3 trace2 trace1
+        debug info notice warn error crit alert emerg
+    }
+    set rejected [list]
+    foreach level {fatal warning verbose trace trace0 trace9} {
+        if {![catch {::tclwire::logger normalize_level $level}]} {
+            lappend rejected $level
+        }
+    }
+    list \
+        [::tclwire::logger valid_levels] \
+        [lmap level $apache_levels {
+            ::tclwire::logger normalize_level [string toupper $level]
+        }] \
+        $rejected
+} -result [list \
+    {trace8 trace7 trace6 trace5 trace4 trace3 trace2 trace1 debug info notice warn error crit alert emerg} \
+    {trace8 trace7 trace6 trace5 trace4 trace3 trace2 trace1 debug info notice warn error crit alert emerg} \
+    {}]
+
 test logger-1.8 {configured log levels filter by severity and context} -body {
     set config [dict create \
         logfile $::tclwire::logger_test::logfile \
