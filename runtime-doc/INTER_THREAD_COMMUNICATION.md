@@ -319,7 +319,7 @@ CGA does not invoke it directly; it sends it back to the owning thread as data.
 ```text
 CGA / application code
     |
-    | ::tclwire::io response/header/out/flush/complete/fail
+    | ::tclwire::io response/header/out/flush/complete/close_connection/fail
     v
 ::tclwire::io send_event
     |
@@ -339,7 +339,7 @@ Application output events are ordered dictionaries:
 
 | Field | Meaning |
 | --- | --- |
-| `type` | Event kind: `response`, `http_header`, `output`, `flush`, `no_body`, `complete`, or `error`. |
+| `type` | Event kind: `response`, `http_header`, `output`, `flush`, `no_body`, `complete`, `close_connection`, or `error`. |
 | `transaction_id` | HTTP transaction handled by the connection agent. |
 | `output_sequence` | Monotonic sequence number starting at 1. |
 | `stream` | Currently `stdout`. |
@@ -353,6 +353,8 @@ response ordering even though delivery is asynchronous.
 For non-chunked responses, the connection agent accumulates output until
 `complete`, then serializes and closes the connection. For chunked responses,
 it commits headers and writes chunks as output events arrive.
+The `close_connection` event skips response serialization and closes the
+client channel.
 
 ### Application Worker Release
 

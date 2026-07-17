@@ -1278,6 +1278,58 @@ encoding = "utf-8"
     removeFile $streaming_status
 } -result {1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a running}
 
+test http-connection-1.12a {applications can close a connection without response} -setup {
+    set close_application [makeFile {
+    package require tclwire::application 0.1
+
+    oo::class create ::tclwire::http_connection_test::CloseApplication {
+        superclass ::tclwire::CApplication
+
+        method handle_request {request} {
+            ::tclwire::io out "not sent"
+            ::tclwire::io close_connection
+            ::tclwire::io response 200 OK \
+                [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+            ::tclwire::io out ignored
+        }
+    }
+} close-application.tcl]
+    set close_config [makeFile [format {
+
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+logerr = "%s"
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::CloseApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $::tclwire::http_connection_test::logerr \
+   $close_application \
+   $project_root] close-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $close_config]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    ::tclwire::runtime stop
+    set log [::tclwire::http_connection_test::log_contents]
+    list $response [string match {*status=0*bytes=0*} $log]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $close_config
+    removeFile $close_application
+} -result {{} 1}
+
 test http-connection-1.13 {connection workers resolve installation-relative application files} -setup {
     set docroot [file join [temporaryDirectory] tclwire-relative-file-[pid]]
     file mkdir $docroot

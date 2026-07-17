@@ -282,6 +282,19 @@ Marks successful application completion. Both `data` and `flags` are empty.
 The Connection Agent serializes an accumulated response or terminates a
 chunked response, records the result, and closes the connection.
 
+### `close_connection`
+
+Requests that the Connection Agent close the client connection without
+serializing the accumulated response. Both `data` and `flags` are empty. It is
+emitted by `::tclwire::io close_connection`, which first discards output still
+buffered in the Content Generator Agent.
+
+This is intended for test-server behavior and protocol-edge cases. If no
+response bytes have been sent, the client observes an empty response. If a
+chunked response or other committed output has already written bytes, the
+client observes an abrupt transport close and any partial response remains
+partial.
+
 ### `error`
 
 Reports application failure. `data` contains the error message and `flags` is
@@ -296,8 +309,10 @@ The Connection Agent enforces these rules:
 2. `output_sequence` values must be contiguous and start at 1.
 3. Response metadata and headers cannot change after commitment.
 4. All output in one response must use the declared body mode.
-5. Invalid event types or invalid state transitions abort the response.
-6. A failure before commitment produces an HTTP `500`; a failure after
+5. A `close_connection` event deliberately terminates the connection and
+   discards any unsent accumulated response.
+6. Invalid event types or invalid state transitions abort the response.
+7. A failure before commitment produces an HTTP `500`; a failure after
    commitment closes the connection because a replacement response can no
    longer be sent.
 

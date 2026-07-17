@@ -604,6 +604,17 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 my log_request $descriptor $status $body_bytes
                 my write_and_close $response
             }
+            close_connection {
+                set descriptor [my finish_transaction $transaction_id]
+                catch {
+                    ::tclwire::accounting update_connection $connection_key \
+                        [dict create current_transaction_id {} \
+                                     current_command {}]
+                }
+                my log_request $descriptor 0 0
+                my close
+                return
+            }
             error {
                 my abort_application_response $transaction_id $transaction
             }

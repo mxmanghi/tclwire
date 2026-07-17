@@ -1405,6 +1405,32 @@ test application-io-1.8 {HTTP no_body discards pending application output} -body
     }
 } -result [list {} {no_body complete}]
 
+test application-io-1.9 {application output can request connection close} -body {
+    set ::tclwire::application_test::events {}
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 20
+        ::tclwire::io out "discarded body"
+        ::tclwire::io close_connection
+        set state [dict get [::tclwire::io context] response_state]
+        set buffered [::tclwire::io buffer]
+        ::tclwire::io out "ignored"
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        list \
+            $state \
+            $buffered \
+            [lmap item $::tclwire::application_test::events {
+                dict get [lindex $item 1] type
+            }]
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result [list completed {} close_connection]
+
 test application-1.4 {HEAD obtains file metadata without reading the file} -setup {
     oo::class create ::tclwire::application_test::MetadataApplication {
         superclass ::tclwire::CApplication

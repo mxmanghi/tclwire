@@ -241,6 +241,25 @@ namespace eval ::tclwire::io {
         return
     }
 
+    proc close_connection {} {
+        variable active
+        variable response_state
+        variable output_buffer
+        variable output_body_mode
+
+        if {!$active} {
+            error "no application output transaction is active"
+        }
+        if {$response_state ne "open"} {
+            return
+        }
+        set output_buffer $::tclwire::empty_bytearray
+        set output_body_mode {}
+        send_event close_connection
+        set response_state completed
+        return
+    }
+
     proc fail {message} {
         variable active
         if {!$active} {
@@ -260,7 +279,8 @@ namespace eval ::tclwire::io {
     }
 
     namespace export \
-        begin end context response out buffer discard_buffer puts flush complete fail
+        begin end context response out buffer discard_buffer puts flush complete \
+        close_connection fail
     namespace ensemble create
 }
 

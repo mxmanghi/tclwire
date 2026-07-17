@@ -683,6 +683,20 @@ If the application returns while the response is still open, the CGA completes
 it automatically. If it was completed explicitly, the CGA does not send a
 second event.
 
+For test-server behavior and protocol-edge cases, an application can ask the
+connection thread to close the client connection without serializing a
+response:
+
+```tcl
+::tclwire::io close_connection
+```
+
+This discards worker-local buffered output, sends a `close_connection` event,
+and marks the CGA output context completed. Used before any response bytes are
+written, the client receives an empty response. Used after committed chunked
+output or other bytes have reached the socket, it deliberately creates an
+abrupt partial response.
+
 ## HTTP Header and Cookie Controls
 
 HTTP response headers may be changed before commitment:
@@ -800,6 +814,7 @@ The implemented event types are:
 | `flush` | Request output progress. |
 | `no_body` | Discard response representation data. |
 | `complete` | Finish and send the response. |
+| `close_connection` | Close the connection without sending an accumulated response. |
 | `error` | Report application failure. |
 
 Events are sent asynchronously to the connection thread. Sequence numbers must
