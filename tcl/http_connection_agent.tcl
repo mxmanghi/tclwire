@@ -22,6 +22,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     variable request_memory_threshold request_bytes
     variable request_head
     variable request_prefix
+    variable continue_response_sent
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -83,6 +84,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set request_bytes 0
         set request_head 0
         set request_prefix {}
+        set continue_response_sent 0
         my start
     }
 
@@ -144,6 +146,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
             }
             if {[dict get $result phase] eq "headers" && ($request_bytes > $max_header_bytes)} {
                 my send_error 431 {} $request_head
+            }
+            if {[dict get $result phase] eq "body"} {
+                my send_continue_response_if_needed
             }
             return
         }
@@ -422,6 +427,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     method abort_application_response {transaction_id transaction} {
+        set transaction [my transaction_for $transaction_id]
+        if {$transaction eq {}} {
+            return
+        }
         set response_state [$transaction get response_state]
         set head_only [my head_only $transaction]
         my finish_transaction $transaction_id
@@ -638,6 +647,15 @@ oo::class create ::tclwire::HttpConnectionAgent {
         my write_and_close_gracefully $response
     }
 
+    method send_continue_response_if_needed {} {
+        if {$continue_response_sent || ![$protocol_session expects_continue]} {
+            return
+        }
+        set continue_response_sent 1
+        my write_output [encoding convertto ascii "HTTP/1.1 100 Continue\r\n\r\n"] 1
+        return
+    }
+
     method log_request {descriptor status bytes} {
         set method ?
         set path ?
@@ -668,7 +686,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         chunked_response cleanup_request_body commit_chunked_response \
         dispatch_request_descriptor dump_multipart_descriptor \
         handle_request_descriptor head_only header_name header_value \
-        log_request request_host response_header_values
+        log_request request_host response_header_values \
+        send_continue_response_if_needed
 }
 
 package provide tclwire::http::connection_agent 0.1

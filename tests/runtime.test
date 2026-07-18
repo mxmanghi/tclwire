@@ -192,6 +192,19 @@ test runtime-1.2d {an empty upload area explicitly selects in-memory uploads} -b
          [dict get [lindex [dict get $config services] 1] upload_area]
 } -result {{} {} {}}
 
+test runtime-1.2e {an empty HTTP upload area in the config file disables multipart decomposition} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[http]
+enabled = true
+port = 8990
+upload_area = ""
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    dict get [lindex [dict get $config services] 0] upload_area
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {}
+
 test runtime-1.3 {invalid arguments fail before internal agents start} -body {
     set status [catch {
         ::tclwire::runtime start {--httpport invalid}

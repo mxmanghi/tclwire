@@ -367,6 +367,22 @@ test http-protocol-1.3g {
     }
 } -result {multipart decomposed 1 value hello.txt spooled_file {hello file} 0}
 
+test http-protocol-1.3h {
+    100-continue expectations are detected after headers are parsed
+} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set result [$protocol feed \
+            "POST /upload HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 7\r\n\r\n"]
+        list \
+            [dict get $result status] \
+            [dict get $result phase] \
+            [$protocol expects_continue]
+    } finally {
+        $protocol destroy
+    }
+} -result {need_more body 1}
+
 test http-protocol-1.4 {UTF-8 response lengths count encoded bytes} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {

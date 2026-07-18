@@ -45,6 +45,40 @@ test transaction-descriptor-1.1 {
 } -result [list \
     1 {transaction field is immutable: method} GET 201 alphabeta]
 
+test connection-agent-1.1 {finished transactions are ignored by id} -body {
+    oo::class create ::tclwire::application_test::ConnectionAgentProbe {
+        superclass ::tclwire::ConnectionAgent
+
+        method begin {transaction_id descriptor} {
+            my begin_transaction $transaction_id $descriptor
+        }
+
+        method transaction {transaction_id} {
+            my transaction_for $transaction_id
+        }
+
+        method finish {transaction_id} {
+            my finish_transaction $transaction_id
+        }
+    }
+
+    lassign [chan pipe] read_channel write_channel
+    set agent [::tclwire::application_test::ConnectionAgentProbe new \
+        $read_channel 1 127.0.0.1 9000 application-test-connection]
+    try {
+        $agent begin 1 [dict create method GET path /]
+        set before [expr {[$agent transaction 1] ne {}}]
+        set descriptor [$agent finish 1]
+        list $before \
+             [dict get $descriptor transaction_id] \
+             [$agent transaction 1]
+    } finally {
+        catch {$agent destroy}
+        catch {close $write_channel}
+        catch {::tclwire::application_test::ConnectionAgentProbe destroy}
+    }
+} -result {1 1 {}}
+
 test http-request-1.1 {HTTP request exposes a read-only semantic interface} -body {
     set request [::tclwire::HttpRequest new [dict create    method GET \
                                                             target /search?q=Tcl \

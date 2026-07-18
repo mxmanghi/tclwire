@@ -121,6 +121,21 @@ oo::class create ::tclwire::HttpProtocolSession {
         return $request_method
     }
 
+    method expects_continue {} {
+        if {$request_info_status ne "complete"} {
+            return 0
+        }
+        if {![dict exists $request_headers expect]} {
+            return 0
+        }
+        foreach expectation [split [dict get $request_headers expect] ","] {
+            if {[string equal -nocase [string trim $expectation] "100-continue"]} {
+                return 1
+            }
+        }
+        return 0
+    }
+
     method feed_result {status phase {descriptor {}}} {
         # Contract for HttpProtocolSession::feed callers:
         #

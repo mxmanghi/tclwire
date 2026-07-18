@@ -122,6 +122,9 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method transaction_for {transaction_id} {
+        if {$transaction_state eq {}} {
+            return {}
+        }
         if {[$transaction_state id] != $transaction_id} {
             return {}
         }

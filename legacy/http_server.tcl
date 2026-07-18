@@ -22,7 +22,9 @@ if {[info commands ::tclwire::CApplication] eq {}} {
 }
 if {[info commands ::tclwire::CTestApplication] eq {}} {
     source [file join [file dirname [file normalize [info script]]] http_test_support.tcl]
-    source [file join [file dirname [file normalize [info script]]] http_test_application.tcl]
+    source [file join \
+        [file dirname [file dirname [file normalize [info script]]]] \
+        examples tclcurl_test_server.tcl]
 }
 
 # HTTP origin service used by the tests. The shared base handles connection

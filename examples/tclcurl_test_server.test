@@ -1,0 +1,258 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+package require tclwire::http::request 0.1
+
+source [file join $project_root examples tclcurl_test_server.tcl]
+
+set tclcurl_test_docroot [file join /tmp tclcurl-test-docroot-[pid]]
+file delete -force $tclcurl_test_docroot
+
+proc tclcurl_test_application {} {
+    global tclcurl_test_docroot
+    return [::tclwire::CTestApplication new [dict create \
+        docroot $tclcurl_test_docroot \
+        encoding utf-8]]
+}
+
+test tclcurl_test_server-1.1 {
+    request inspection accepts decomposed multipart request bodies
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method POST \
+        target /request-inspect \
+        path /request-inspect \
+        version 1.1 \
+        headers [dict create content-type multipart/form-data] \
+        body_media multipart \
+        body_storage decomposed \
+        multipart_parts {} \
+        body_size 0]]
+    try {
+        set response [$application route_request $request]
+        list [dict get $response status] \
+             [string match "*body-length=0*" [dict get $response body]]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result {200 1}
+
+test tclcurl_test_server-1.2 {
+    tclcurl HTTP root advertises a plain text response body
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /tclcurl-http-root \
+        path /tclcurl-http-root \
+        version 1.1 \
+        headers {} \
+        body_storage none]]
+    try {
+        set response [$application route_request $request]
+        list [dict get $response status] \
+             [regexp -nocase {^Content-Type: text/plain} \
+                 [join [dict get $response headers] "\n"]] \
+             [dict get $response body]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result [list 200 1 "tclcurl test server\n"]
+
+test tclcurl_test_server-1.3 {
+    successful Basic authentication advertises a plain text response body
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /auth-basic \
+        path /auth-basic \
+        version 1.1 \
+        headers [dict create authorization "Basic dGVzdHVzZXI6dGVzdHBhc3M="] \
+        body_storage none]]
+    try {
+        set response [$application route_request $request]
+        list [dict get $response status] \
+             [regexp -nocase {^Content-Type: text/plain} \
+                 [join [dict get $response headers] "\n"]] \
+             [dict get $response body]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result [list 200 1 "auth=ok\nuser=testuser\n"]
+
+test tclcurl_test_server-1.4 {
+    tclcurl manual route serves a pseudo HTML manual page
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /tclcurl-man \
+        path /tclcurl-man \
+        version 1.1 \
+        headers {} \
+        body_storage none]]
+    try {
+        set response [$application route_request $request]
+        list [dict get $response status] \
+             [expr {[string first "<title>TclCurl</title>" \
+                 [dict get $response body]] >= 0}] \
+             [expr {[dict get $response headers] eq \
+                 [list "Content-Type: text/html; charset=utf-8"]}]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result {200 1 1}
+
+test tclcurl_test_server-1.5 {
+    tclcurl docroot index serves the expected tiny web server page
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target / \
+        path / \
+        version 1.1 \
+        headers {} \
+        body_storage none]]
+    try {
+        set response [$application route_request $request]
+        list [dict get $response status] \
+             [expr {[string first "<title>Tclcurl tiny web server</title>" \
+                 [dict get $response body]] >= 0}] \
+             [expr {[dict get $response headers] eq \
+                 [list "Content-Type: text/html; charset=utf-8"]}]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result {200 1 1}
+
+test tclcurl_test_server-1.6 {
+    slow low-speed fixture streams an initial chunk before pausing
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /slow-body-1 \
+        path /slow-body-1 \
+        version 1.1 \
+        headers {} \
+        body_storage none]]
+    try {
+        set response [$application route_request $request]
+        set chunks [dict get $response stream_chunks]
+        list [dict get $response status] \
+             [dict get $response transfer_encoding] \
+             [lindex [lindex $chunks 0] 0] \
+             [expr {[string length [lindex [lindex $chunks 0] 1]] > 0}] \
+             [expr {[lindex [lindex $chunks 1] 0] > 5000}]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result {200 chunked 0 1 1}
+
+test tclcurl_test_server-1.7 {
+    slow allowed-speed fixture streams regular chunks
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /slow-body-2 \
+        path /slow-body-2 \
+        version 1.1 \
+        headers {} \
+        body_storage none]]
+    try {
+        set response [$application route_request $request]
+        set chunks [dict get $response stream_chunks]
+        list [dict get $response status] \
+             [dict get $response transfer_encoding] \
+             [llength $chunks] \
+             [lmap chunk $chunks {lindex $chunk 0}] \
+             [lmap chunk $chunks {string length [lindex $chunk 1]}]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result {200 chunked 6 {1000 1000 1000 1000 1000 1000} {32 32 32 32 32 32}}
+
+test tclcurl_test_server-1.8 {
+    request inspection reports semantic multipart text fields
+} -body {
+    set boundary TclCurlBoundary
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method POST \
+        target /request-inspect \
+        path /request-inspect \
+        version 1.1 \
+        headers [dict create \
+            content-type "multipart/form-data; boundary=$boundary"] \
+        body_media multipart \
+        body_storage decomposed \
+        multipart_parts [list \
+            [dict create \
+                headers [dict create \
+                    content-disposition {form-data; name="text_entry"} \
+                    content-type text/plain] \
+                disposition form-data \
+                name text_entry \
+                content_type text/plain \
+                body TCLCURL] \
+            [dict create \
+                headers [dict create \
+                    content-disposition {form-data; name="option_selected"}] \
+                disposition form-data \
+                name option_selected \
+                body opt1] \
+            [dict create \
+                headers [dict create \
+                    content-disposition {form-data; name="result_limit"}] \
+                disposition form-data \
+                name result_limit \
+                body 25] \
+            [dict create \
+                headers [dict create \
+                    content-disposition {form-data; name="submit"}] \
+                disposition form-data \
+                name submit \
+                body Search]] \
+        body_size 0]]
+    try {
+        set response [$application route_request $request]
+        set parsed [dict create]
+        foreach line [split [string trim [dict get $response body]] "\n"] {
+            set separator [string first = $line]
+            if {$separator >= 0} {
+                dict set parsed \
+                    [string range $line 0 $separator-1] \
+                    [string range $line $separator+1 end]
+            }
+        }
+        list [dict get $response status] \
+             [dict get $parsed method] \
+             [dict get $parsed multipart] \
+             [dict get $parsed form.text_entry] \
+             [dict get $parsed form.option_selected] \
+             [dict get $parsed form.result_limit] \
+             [dict get $parsed form.submit] \
+             [dict get $parsed part.1.content-type] \
+             [dict get $parsed part.1.body-hex]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result {200 POST 1 TCLCURL opt1 25 Search text/plain 54434c4355524c}
+
+cleanupTests
+file delete -force $tclcurl_test_docroot
