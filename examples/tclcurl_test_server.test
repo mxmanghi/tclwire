@@ -254,5 +254,66 @@ test tclcurl_test_server-1.8 {
     }
 } -result {200 POST 1 TCLCURL opt1 25 Search text/plain 54434c4355524c}
 
+test tclcurl_test_server-1.9 {
+    docroot fixtures replace existing stale files
+} -body {
+    file mkdir $tclcurl_test_docroot
+    foreach {name content} {
+        index.html stale-index
+        tclcurl-man.html stale-manual
+    } {
+        set channel [open [file join $tclcurl_test_docroot $name] wb]
+        try {
+            puts -nonewline $channel $content
+        } finally {
+            close $channel
+        }
+    }
+
+    set application [tclcurl_test_application]
+    try {
+        set index [::fileutil::cat -encoding utf-8 \
+            [file join $tclcurl_test_docroot index.html]]
+        set manual [::fileutil::cat -encoding utf-8 \
+            [file join $tclcurl_test_docroot tclcurl-man.html]]
+        list \
+            [expr {[string first {Tclcurl tiny web server} $index] >= 0}] \
+            [expr {[string first {stale-index} $index] < 0}] \
+            [expr {[string first {<title>TclCurl</title>} $manual] >= 0}] \
+            [expr {[string first {stale-manual} $manual] < 0}]
+    } finally {
+        $application destroy
+    }
+} -result {1 1 1 1}
+
+test tclcurl_test_server-1.10 {
+    chunked-data route streams 16-byte chunks
+} -body {
+    set application [tclcurl_test_application]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /chunked-data \
+        path /chunked-data \
+        version 1.1 \
+        headers {} \
+        body_storage none]]
+    try {
+        set response [$application route_request $request]
+        set chunks [dict get $response stream_chunks]
+        list \
+            [dict get $response status] \
+            [dict get $response transfer_encoding] \
+            [dict get $response body] \
+            [llength $chunks] \
+            [lsort -unique [lmap chunk $chunks {
+                string length [lindex $chunk 1]
+            }]] \
+            [join [lmap chunk $chunks {lindex $chunk 1}] {}]
+    } finally {
+        $request destroy
+        $application destroy
+    }
+} -result [list 200 chunked {} 16 16 [::tclwire::negotiation_payload]]
+
 cleanupTests
 file delete -force $tclcurl_test_docroot

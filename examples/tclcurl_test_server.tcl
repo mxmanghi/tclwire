@@ -19,8 +19,20 @@ if {$::tclwire::test_application_root ni $::auto_path} {
 }
 
 package require sha256
-package require zlib
 package require base64
+
+if {[info commands ::tclwire::require_zlib] eq {}} {
+    proc ::tclwire::require_zlib {} {
+        if {![catch {package require zlib} version options]} {
+            return $version
+        }
+        if {[info commands ::zlib] ne {}} {
+            return
+        }
+        return -options $options $version
+    }
+}
+::tclwire::require_zlib
 
 if {[catch {package require tclwire::application 0.1}]} {
     source [file join $::tclwire::test_application_root tcl application.tcl]
@@ -228,9 +240,16 @@ if {[info commands ::tclwire::CTestApplication] eq {}} {
                         body_mode binary]
                 }
                 /chunked-data {
+                    set body [::tclwire::negotiation_payload]
+                    set stream_chunks {}
+                    for {set offset 0} {$offset < [string length $body]} {incr offset 16} {
+                        lappend stream_chunks \
+                            [list 0 [string range $body $offset [expr {$offset + 15}]]]
+                    }
                     return [dict create \
-                        status 200 reason OK body [::tclwire::negotiation_payload] \
-                        headers {} transfer_encoding chunked]
+                        status 200 reason OK body {} headers {} \
+                        transfer_encoding chunked \
+                        stream_chunks $stream_chunks]
                 }
                 /slow-chunked-data {
                     set body [::tclwire::negotiation_payload]
@@ -370,9 +389,6 @@ if {[info commands ::tclwire::CTestApplication] eq {}} {
 
         method write_docroot_fixture {name content} {
             set path [file join [my document_root] $name]
-            if {[file exists $path]} {
-                return $path
-            }
             set channel [open $path wb]
             try {
                 puts -nonewline $channel $content
