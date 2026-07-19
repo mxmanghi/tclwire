@@ -20,13 +20,14 @@ Tcl based web applications.
 ## Rationale
 
 In recent years the need of having feature reach application servers
-has partially because static content distribution or custom applications
+has partially waned because static content distribution or custom applications
 providing web services run from within virtualization systems running in
-private networks. The burden of connection filtering,
+private networks. On one hand the burden of connection filtering,
 certificate handling or other network oriented tasks are often
 left to proxy servers, effectively relieving the application end-point
-of much of the responsabilities bound to the connection control or system
-resource safety
+of much of the responsabilities. On the other hand having application be
+running within virtualization systems often shift to these systems the
+complexity tied to resource control and safety.
 
 Tclwire is another tool for the Tcl programmer with a focus on web application
 development and inherent multithreading. 
