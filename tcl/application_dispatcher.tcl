@@ -12,7 +12,7 @@ namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ApplicationDispatcher {
     variable applications application_configurations
-    variable default_application project_root owned_pools
+    variable default_application project_root run_directory owned_pools
 
     constructor {application_config} {
         if {[catch {dict size $application_config}]} {
@@ -22,6 +22,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
         set application_configurations [dict create]
         set default_application [dict get $application_config default_application]
         set project_root        [::tclwire::support project_root]
+        set run_directory       [file normalize [pwd]]
         set owned_pools         {}
         set default_docroot {}
         if {[dict exists $application_config docroot]} {
@@ -151,7 +152,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
     }
 
     method application_paths {descriptor} {
-        set paths [list [dict get $descriptor docroot]]
+        set paths [list $run_directory [dict get $descriptor docroot]]
         if {[dict exists $descriptor libdir]} {
             lappend paths [dict get $descriptor libdir]
         }

@@ -869,19 +869,68 @@ test application-dispatcher-1.9c {
     dict set config applications default libdir $libdir
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
-        dict get [$dispatcher application default] application_paths
+        set expected {}
+        foreach directory [list \
+                [file normalize [pwd]] \
+                $docroot \
+                $libdir \
+                $project_root] {
+            if {$directory ni $expected} {
+                lappend expected $directory
+            }
+        }
+        expr {[dict get [$dispatcher application default] application_paths] eq $expected}
     } finally {
         $dispatcher destroy
     }
-} -result [list \
-    [file normalize /tmp/tclwire-package-docroot] \
-    [file normalize /tmp/tclwire-package-libdir] \
-    $project_root]
+} -result 1
 
-test application-dispatcher-1.10 {relative application files prefer docroot} -setup {
+test application-dispatcher-1.10 {relative application files prefer run directory} -setup {
     set root [file join [temporaryDirectory] tclwire-app-files-[pid]]
+    set run_directory [file join $root run]
     set docroot [file join $root docroot]
     set libdir [file join $root lib]
+    file mkdir $run_directory
+    file mkdir $docroot
+    file mkdir $libdir
+    set run_file [file join $run_directory application.tcl]
+    set docroot_file [file join $docroot application.tcl]
+    set libdir_file [file join $libdir application.tcl]
+    ::fileutil::writeFile $run_file {# run directory application}
+    ::fileutil::writeFile $docroot_file {# docroot application}
+    ::fileutil::writeFile $libdir_file {# libdir application}
+} -body {
+    set config $application_config
+    dict set config libdir $libdir
+    dict set config applications default [dict create \
+        class ::example::Application \
+        file application.tcl \
+        hosts example.test \
+        docroot $docroot \
+        encoding utf-8]
+    set previous_directory [pwd]
+    cd $run_directory
+    try {
+        set dispatcher [::tclwire::ApplicationDispatcher new $config]
+        try {
+            dict get [$dispatcher application default] file
+        } finally {
+            $dispatcher destroy
+        }
+    } finally {
+        cd $previous_directory
+    }
+} -cleanup {
+    file delete -force $root
+} -result [file normalize [file join \
+    [temporaryDirectory] tclwire-app-files-[pid] run application.tcl]]
+
+test application-dispatcher-1.10a {relative application files prefer docroot after run directory} -setup {
+    set root [file join [temporaryDirectory] tclwire-docroot-app-files-[pid]]
+    set run_directory [file join $root run]
+    set docroot [file join $root docroot]
+    set libdir [file join $root lib]
+    file mkdir $run_directory
     file mkdir $docroot
     file mkdir $libdir
     set docroot_file [file join $docroot application.tcl]
@@ -897,16 +946,22 @@ test application-dispatcher-1.10 {relative application files prefer docroot} -se
         hosts example.test \
         docroot $docroot \
         encoding utf-8]
-    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set previous_directory [pwd]
+    cd $run_directory
     try {
-        dict get [$dispatcher application default] file
+        set dispatcher [::tclwire::ApplicationDispatcher new $config]
+        try {
+            dict get [$dispatcher application default] file
+        } finally {
+            $dispatcher destroy
+        }
     } finally {
-        $dispatcher destroy
+        cd $previous_directory
     }
 } -cleanup {
     file delete -force $root
 } -result [file normalize [file join \
-    [temporaryDirectory] tclwire-app-files-[pid] docroot application.tcl]]
+    [temporaryDirectory] tclwire-docroot-app-files-[pid] docroot application.tcl]]
 
 test application-dispatcher-1.11 {application libdir overrides global libdir} -setup {
     set root [file join [temporaryDirectory] tclwire-app-libdir-[pid]]
