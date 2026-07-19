@@ -21,35 +21,49 @@ Tcl based web applications.
 
 In recent years the need of having feature reach application servers
 has partially because static content distribution or custom applications
-providing web services run from within virtualization systems or containers in
-private networks. The burden of connection filtering, certificate handling is often
+providing web services run from within virtualization systems running in
+private networks. The burden of connection filtering,
+certificate handling or other network oriented tasks are often
 left to proxy servers, effectively relieving the application end-point
-of much of the tasks bound to the connection control and network infrastructure 
+of much of the responsabilities bound to the connection control or system
+resource safety
 
-Tclwire is just another tool for the Tcl programmer with a focus on web application
+Tclwire is another tool for the Tcl programmer with a focus on web application
 development and inherent multithreading. 
 
 ## Advocacy
 
 Tclwire is a application entirely written in Tcl, a pathologically simple yet
 robust scripting language, which implements a `apartment thread` model where
-each thread runs its own interpreter and communicates by sending messages in the
-form of script fragments or using the multhreading typical construct such as
-mutexes condition variables and protected shared areas.
+each thread runs its own Tcl interpreter and communicate by sending messages in the
+form of script fragments or using the multhreading typical constructs such as
+mutexes, condition variables and protected shared areas.
 The costs of message based communication are at least partially offset by the
 robustness of the approach, since scripts live within an interpreter and the basic
 tenet of Tcl's threading approach is that no intepreter can be shared across
-threads, even though a Tcl thread can run multiple interpreters.
+threads, even though a Tcl thread can run multiple interpreters and therefore
+this threading model easily avoid the classical pitfalls tied to threads
+synchronization and resource sharing which classically ail the multithreaded
+programming.
 
 ## Tclwire Genesis
 
-The existence of TclWire was made possible by devolving to an AI assistant much
-of the development that concerned the generally awkward and impervious knowledge
-of protocol details. But the thread functional organization, their roles, features
-and structure is mostly the product of the author direct intervention on the assistant
-work. The code is as much as possible organized in TclOO classes and their development
-followed a step-by-step progression in order to enable the author to conduct a
+The initial buildup of TclWire was made possible by devolving to an AI
+assistant much of the development that concerned the generally awkward
+and impervious protocol details. But the thread functional organization,
+their roles, features and structure is mostly the product of the author
+direct intervention on the assistant work. The code is as much as
+possible organized in TclOO classes and their development followed a
+step-by-step progression in order to enable the author to conduct a
 thorough review of every code installment.
+
+## Disclaimer
+
+This project is the first from-ground-up project developed by the author
+with an AI assistant. Tclwire was therefore also the testbed where
+AI driven development was experienced, tested and new concepts were
+challenged for the purpose of making up a base of direct knowledge
+and experience in modern era programming
 
 ## Current Entry Points
 
