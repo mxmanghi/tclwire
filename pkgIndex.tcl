@@ -39,6 +39,11 @@ package ifneeded tclwire::application::io 0.1 [subst {
     source [list [file join $dir tcl application_io.tcl]]
 }]
 
+package ifneeded tclwire::stdchans 0.1 [subst {
+    package require tclwire::application::io 0.1
+    source [list [file join $dir environments stdchans.tcl]]
+}]
+
 package ifneeded tclwire::http::application::io 0.1 [subst {
     package require tclwire::application::io 0.1
     source [list [file join $dir tcl http_application_io.tcl]]
