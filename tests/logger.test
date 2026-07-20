@@ -279,5 +279,32 @@ test logger-1.9 {debug connection close logs only at debug threshold} -body {
     ::tclwire::logger_test::cleanup
 } -result {1 1 1}
 
+test logger-1.10 {connection close logs include transport errors} -body {
+    set record [::tclwire::accounting new_connection_record \
+        connection_key https:9443#10 \
+        protocol https \
+        service_id https:9443 \
+        peer_host 127.0.0.1 \
+        status failed \
+        close_reason startup_failed \
+        transport_error {wrong version number} \
+        bytes_in 0 \
+        bytes_out 0]
+    ::tclwire::logger start \
+        [dict create \
+            logfile $::tclwire::logger_test::logfile \
+            logerr $::tclwire::logger_test::logerr \
+            log_level debug]
+    ::tclwire::logger log_connection_closed $record
+    ::tclwire::logger stop
+    set content [::tclwire::logger_test::error_contents]
+    list \
+        [string match {*connection=https:9443#10*} $content] \
+        [string match {*reason=startup_failed*} $content] \
+        [string match {*transport_error=wrong version number*} $content]
+} -cleanup {
+    ::tclwire::logger_test::cleanup
+} -result {1 1 1}
+
 ::tclwire::logger_test::cleanup
 cleanupTests

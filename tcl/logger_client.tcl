@@ -159,7 +159,7 @@ namespace eval ::tclwire::logger {
                 dict set context host [dict get $account http_host]
             }
         }
-        set message [join [list \
+        set fields [list \
             "connection=[log_value [dict get $record connection_key]]" \
             "protocol=[log_value [dict get $record protocol]]" \
             "service=[log_value [dict get $record service_id]]" \
@@ -167,7 +167,13 @@ namespace eval ::tclwire::logger {
             "status=[log_value [dict get $record status]]" \
             "reason=[log_value [dict get $record close_reason]]" \
             "bytes_in=[dict get $record bytes_in]" \
-            "bytes_out=[dict get $record bytes_out]"] " "]
+            "bytes_out=[dict get $record bytes_out]"]
+        if {[dict exists $record transport_error] &&
+                [dict get $record transport_error] ne {}} {
+            lappend fields \
+                "transport_error=[log_value [dict get $record transport_error]]"
+        }
+        set message [join $fields " "]
         log_error connection $message debug $context
     }
 
