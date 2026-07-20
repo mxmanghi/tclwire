@@ -5,8 +5,9 @@
 package require tclwire::application::io 0.1
 
 namespace eval ::tclwire {}
+namespace eval ::tclwire::envs {}
 
-namespace eval ::tclwire::stdchans {
+namespace eval ::tclwire::envs::stdchans {
     variable installed 0
     variable native_puts {}
     variable native_flush {}
@@ -32,8 +33,8 @@ namespace eval ::tclwire::stdchans {
         if {$installed} {
             return
         }
-        set native_puts ::tclwire::stdchans::native_puts
-        set native_flush ::tclwire::stdchans::native_flush
+        set native_puts ::tclwire::envs::stdchans::native_puts
+        set native_flush ::tclwire::envs::stdchans::native_flush
         if {[info commands $native_puts] ne {} ||
                 [info commands $native_flush] ne {}} {
             error "stdchans native command aliases already exist"
@@ -42,10 +43,10 @@ namespace eval ::tclwire::stdchans {
         rename ::puts $native_puts
         rename ::flush $native_flush
         proc ::puts args {
-            ::tclwire::stdchans::puts {*}$args
+            ::tclwire::envs::stdchans::puts {*}$args
         }
         proc ::flush args {
-            ::tclwire::stdchans::flush {*}$args
+            ::tclwire::envs::stdchans::flush {*}$args
         }
         set installed 1
         return

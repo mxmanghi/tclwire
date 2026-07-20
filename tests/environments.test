@@ -27,16 +27,16 @@ proc ::tclwire::route_application_output {agent transaction_id event} {
 
 test stdchans-1.1 {stdchans environment exposes lifecycle metadata} -body {
     list \
-        [::tclwire::stdchans name] \
-        [::tclwire::stdchans requires] \
-        [::tclwire::stdchans enabled]
+        [::tclwire::envs::stdchans name] \
+        [::tclwire::envs::stdchans requires] \
+        [::tclwire::envs::stdchans enabled]
 } -result {stdchans {} 0}
 
 test stdchans-1.2 {stdchans captures stdout puts during active output transaction} -body {
     set ::tclwire::environment_test::events {}
     set receiver [::tclwire::environment_test::OutputReceiver new]
     try {
-        ::tclwire::stdchans install
+        ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 21
         puts stdout alpha
         puts -nonewline stdout beta
@@ -58,7 +58,7 @@ test stdchans-1.2 {stdchans captures stdout puts during active output transactio
             }]
     } finally {
         catch {::tclwire::io end}
-        catch {::tclwire::stdchans uninstall}
+        catch {::tclwire::envs::stdchans uninstall}
         $receiver destroy
     }
 } -result [list "alpha\nbetagamma\n" output "alpha\nbetagamma\n" {output flush complete}]
@@ -67,7 +67,7 @@ test stdchans-1.3 {stdchans delegates non-stdout puts to native channels} -body 
     set path [file join [temporaryDirectory] tclwire-stdchans-[pid].txt]
     set channel [open $path w]
     try {
-        ::tclwire::stdchans install
+        ::tclwire::envs::stdchans install
         puts $channel alpha
         puts -nonewline $channel beta
         flush $channel
@@ -78,7 +78,7 @@ test stdchans-1.3 {stdchans delegates non-stdout puts to native channels} -body 
         if {$channel ne {}} {
             catch {close $channel}
         }
-        catch {::tclwire::stdchans uninstall}
+        catch {::tclwire::envs::stdchans uninstall}
         file delete -force $path
     }
 } -result "alpha\nbeta"
@@ -87,17 +87,17 @@ test stdchans-1.4 {stdchans install is idempotent and uninstall restores command
     set original_puts [info command ::puts]
     set original_flush [info command ::flush]
     try {
-        ::tclwire::stdchans install
-        ::tclwire::stdchans install
-        set installed [::tclwire::stdchans enabled]
-        ::tclwire::stdchans uninstall
+        ::tclwire::envs::stdchans install
+        ::tclwire::envs::stdchans install
+        set installed [::tclwire::envs::stdchans enabled]
+        ::tclwire::envs::stdchans uninstall
         list \
             $installed \
-            [::tclwire::stdchans enabled] \
+            [::tclwire::envs::stdchans enabled] \
             [expr {[info command ::puts] eq $original_puts}] \
             [expr {[info command ::flush] eq $original_flush}]
     } finally {
-        catch {::tclwire::stdchans uninstall}
+        catch {::tclwire::envs::stdchans uninstall}
     }
 } -result {1 0 1 1}
 
@@ -105,7 +105,7 @@ test stdchans-1.5 {stdchans keeps stdout virtualized after response completion} 
     set ::tclwire::environment_test::events {}
     set receiver [::tclwire::environment_test::OutputReceiver new]
     try {
-        ::tclwire::stdchans install
+        ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 22
         puts stdout alpha
         ::tclwire::io complete
@@ -124,7 +124,7 @@ test stdchans-1.5 {stdchans keeps stdout virtualized after response completion} 
                 $::tclwire::environment_test::events 0] 1] data]
     } finally {
         catch {::tclwire::io end}
-        catch {::tclwire::stdchans uninstall}
+        catch {::tclwire::envs::stdchans uninstall}
         $receiver destroy
     }
 } -result [list {} {output complete} "alpha\n"]
