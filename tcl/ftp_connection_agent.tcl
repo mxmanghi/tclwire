@@ -54,8 +54,10 @@ oo::class create ::tclwire::FtpConnectionAgent {
         }]
         set tls_certfile {}
         set tls_keyfile {}
-        if {$secure_transport} {
+        if {[dict exists $config certfile]} {
             set tls_certfile [dict get $config certfile]
+        }
+        if {[dict exists $config keyfile]} {
             set tls_keyfile [dict get $config keyfile]
         }
         set session [dict create \
@@ -63,6 +65,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
             type A \
             passive_listener {} \
             data_channel {} \
+            data_channel_secure 0 \
             pending_action {} \
             upload_file_channel {} \
             upload_action {} \
@@ -148,8 +151,19 @@ oo::class create ::tclwire::FtpConnectionAgent {
     }
 
     method send_feature_reply {} {
-        my send_control \
-            "211-Features\r\n EPSV\r\n PASV\r\n SIZE\r\n MDTM\r\n REST STREAM\r\n211 End\r\n"
+        set features {EPSV PASV SIZE MDTM {REST STREAM}}
+        if {[my explicit_tls_available]} {
+            set features [linsert $features 0 {AUTH TLS}]
+        }
+        if {$secure_transport} {
+            lappend features PBSZ {PROT C} {PROT P}
+        }
+        set reply "211-Features\r\n"
+        foreach feature $features {
+            append reply " $feature\r\n"
+        }
+        append reply "211 End\r\n"
+        my send_control $reply
         my log_command 211
     }
 
@@ -170,7 +184,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
     }
 
     method command_requires_login {command} {
-        return [expr {$command ni {USER PASS QUIT SYST FEAT NOOP PBSZ PROT}}]
+        return [expr {$command ni {USER PASS QUIT SYST FEAT NOOP AUTH PBSZ PROT}}]
     }
 
     method execute_command {command argument} {
@@ -206,6 +220,9 @@ oo::class create ::tclwire::FtpConnectionAgent {
             }
             FEAT {
                 my send_feature_reply
+            }
+            AUTH {
+                my upgrade_control_channel $argument
             }
             PWD -
             XPWD {
@@ -383,6 +400,49 @@ oo::class create ::tclwire::FtpConnectionAgent {
         return 0
     }
 
+    method explicit_tls_available {} {
+        if {$secure_transport} {
+            return 0
+        }
+        return [expr {$tls_certfile ne {} && $tls_keyfile ne {}}]
+    }
+
+    method upgrade_control_channel {mechanism} {
+        set mechanism [string toupper [string trim $mechanism]]
+        if {$mechanism ni {TLS SSL}} {
+            my send_reply 504 "Unsupported AUTH mechanism"
+            return
+        }
+        if {$secure_transport} {
+            my send_reply 503 "Control channel is already secure"
+            return
+        }
+        if {![my explicit_tls_available]} {
+            my send_reply 534 "TLS is not available"
+            return
+        }
+
+        my send_reply 234 "Proceed with negotiation"
+        chan event $channel readable {}
+        if {[catch {
+            set channel [::tclwire::prepare_connection_channel \
+                $channel [dict create \
+                    secure 1 \
+                    certfile $tls_certfile \
+                    keyfile $tls_keyfile]]
+        } error]} {
+            my close
+            return
+        }
+        set secure_transport 1
+        dict set session data_protection C
+        chan configure $channel \
+            -blocking 0 -buffering none -translation binary
+        chan event $channel readable [list [self] readable]
+        my refresh_timeout
+        return
+    }
+
     method normalize_virtual_path {cwd path} {
         if {$path eq {}} {
             return $cwd
@@ -449,33 +509,95 @@ oo::class create ::tclwire::FtpConnectionAgent {
     }
 
     method accept_data {data_channel host port} {
-        if {$secure_transport &&
-                [dict get $session data_protection] eq "P"} {
+        chan configure $data_channel \
+            -blocking 0 -buffering none -translation binary
+        set protected [expr {
+            $secure_transport && [dict get $session data_protection] eq "P"
+        }]
+        if {$protected} {
             if {[catch {
-                set data_channel [::tclwire::prepare_connection_channel \
-                    $data_channel [dict create \
-                        secure 1 \
-                        certfile $tls_certfile \
-                        keyfile $tls_keyfile]]
+                set data_channel [::tls::import $data_channel -server 1 \
+                    -request 0 \
+                    -require 0 \
+                    -certfile $tls_certfile \
+                    -keyfile $tls_keyfile \
+                    -ssl2 0 \
+                    -ssl3 0]
             }]} {
                 catch {close $data_channel}
                 my reset_passive_state
                 my send_reply 425 "Cannot secure data connection"
                 return
             }
+            chan configure $data_channel \
+                -blocking 0 -buffering none -translation binary
+            chan event $data_channel readable [list [self] data_tls_readable]
         }
-        chan configure $data_channel \
-            -blocking 1 -buffering none -translation binary
         set listener [dict get $session passive_listener]
         if {$listener ne {}} {
             catch {close $listener}
         }
         dict set session passive_listener {}
         dict set session data_channel $data_channel
+        dict set session data_channel_secure [expr {!$protected}]
         if {[dict get $session pending_action] ne {}} {
             my perform_pending_action
         }
         return
+    }
+
+    method data_tls_readable {} {
+        set data_channel [dict get $session data_channel]
+        if {$data_channel eq {}} {
+            return
+        }
+        if {[catch {set complete [::tls::handshake $data_channel]}]} {
+            my reset_passive_state
+            my send_reply 425 "Cannot secure data connection"
+            return
+        }
+        if {$complete} {
+            chan event $data_channel readable {}
+            chan configure $data_channel \
+                -blocking 1 -buffering none -translation binary
+            dict set session data_channel_secure 1
+            if {[dict get $session pending_action] ne {}} {
+                my perform_pending_action
+            }
+        }
+        return
+    }
+
+    method prepare_data_channel_for_transfer {} {
+        set data_channel [dict get $session data_channel]
+        if {$data_channel eq {}} {
+            return {}
+        }
+        if {!$secure_transport ||
+                [dict get $session data_protection] ne "P"} {
+            chan configure $data_channel \
+                -blocking 1 -buffering none -translation binary
+            return $data_channel
+        }
+        if {![dict get $session data_channel_secure]} {
+            chan event $data_channel readable {}
+            set deadline [expr {[clock milliseconds] + 30000}]
+            while {![dict get $session data_channel_secure]} {
+                if {[::tls::handshake $data_channel]} {
+                    dict set session data_channel_secure 1
+                    break
+                }
+                if {[clock milliseconds] >= $deadline} {
+                    error "TLS data handshake timed out"
+                }
+                update
+                after 10
+            }
+        }
+        chan configure $data_channel \
+            -blocking 1 -buffering none -translation binary
+        dict set session data_channel $data_channel
+        return $data_channel
     }
 
     method begin_transfer {action argument} {
@@ -493,8 +615,12 @@ oo::class create ::tclwire::FtpConnectionAgent {
 
     method perform_pending_action {} {
         set pending [dict get $session pending_action]
-        set data_channel [dict get $session data_channel]
-        if {$pending eq {} || $data_channel eq {}} {
+        if {$pending eq {} || [dict get $session data_channel] eq {}} {
+            return
+        }
+        if {[catch {set data_channel [my prepare_data_channel_for_transfer]}]} {
+            my reset_passive_state
+            my send_reply 550 "Transfer failed"
             return
         }
 
@@ -760,6 +886,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
             }
             dict set session $field {}
         }
+        dict set session data_channel_secure 0
         dict set session pending_action {}
         return
     }
@@ -771,7 +898,8 @@ oo::class create ::tclwire::FtpConnectionAgent {
 
     unexport authenticate_user begin_transfer command_requires_login \
         execute_site_command finish_upload open_passive_listener \
-        perform_pending_action reset_passive_state resolve_path send_control \
+        perform_pending_action prepare_data_channel_for_transfer \
+        reset_passive_state resolve_path send_control \
         start_upload transfer_path virtual_to_fs log_command \
         log_transfer
 }
