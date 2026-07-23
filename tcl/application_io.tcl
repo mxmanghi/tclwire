@@ -34,7 +34,7 @@ namespace eval ::tclwire::io {
         set connection_agent_id $agent_id
         set transaction_id $tx_id
         set output_sequence 0
-        set output_buffer $::tclwire::empty_bytearray
+        set output_buffer $::tclwire::constants::empty_bytearray
         set output_body_mode {}
         set response_state open
         set active 1
@@ -57,7 +57,7 @@ namespace eval ::tclwire::io {
         set connection_agent_id {}
         set transaction_id {}
         set output_sequence 0
-        set output_buffer $::tclwire::empty_bytearray
+        set output_buffer $::tclwire::constants::empty_bytearray
         set output_body_mode {}
         return
     }
@@ -168,7 +168,7 @@ namespace eval ::tclwire::io {
         if {![accepting_output]} {
             return
         }
-        set output_buffer $::tclwire::empty_bytearray
+        set output_buffer $::tclwire::constants::empty_bytearray
         set output_body_mode {}
         return
     }
@@ -181,13 +181,13 @@ namespace eval ::tclwire::io {
             return
         }
         if {![accepting_output]} {
-            set output_buffer $::tclwire::empty_bytearray
+            set output_buffer $::tclwire::constants::empty_bytearray
             set output_body_mode {}
             return
         }
         send_event output $output_buffer \
             [dict create body_mode $output_body_mode]
-        set output_buffer $::tclwire::empty_bytearray
+        set output_buffer $::tclwire::constants::empty_bytearray
         set output_body_mode {}
         return
     }
@@ -253,7 +253,7 @@ namespace eval ::tclwire::io {
         if {$response_state ne "open"} {
             return
         }
-        set output_buffer $::tclwire::empty_bytearray
+        set output_buffer $::tclwire::constants::empty_bytearray
         set output_body_mode {}
         send_event close_connection
         set response_state completed

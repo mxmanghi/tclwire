@@ -13,8 +13,10 @@ namespace eval ::tclwire {
             uplevel 1 [list variable $name $value]
         }
     }
+}
 
-    define_constant empty_bytearray [binary format a* {}]
+namespace eval ::tclwire::constants {
+    ::tclwire::define_constant empty_bytearray [binary format a* {}]
 }
 
 package provide tclwire::constants 0.1
