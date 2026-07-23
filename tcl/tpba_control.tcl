@@ -3,14 +3,16 @@
 # Thread-Pool Broker Agent lifecycle API for the runtime supervisor.
 
 package require Thread
+package require tclwire::constants 0.1
 package require tclwire::accounting 1.2
 
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::tpba {
-    variable agent_script_path [file normalize \
-        [file join [file dirname [info script]] tpba_agent.tcl]]
-    variable project_root [file dirname [file dirname [file normalize [info script]]]]
+    ::tclwire::define_constant agent_script_path \
+        [file normalize [file join [file dirname [info script]] tpba_agent.tcl]]
+    ::tclwire::define_constant project_root \
+        [file dirname [file dirname [file normalize [info script]]]]
 
     proc thread_id {} {
         return [::tsv::get tclwire tpba_thread_id]

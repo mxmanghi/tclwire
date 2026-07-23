@@ -42,11 +42,16 @@
 #
 
 package require Thread
+package require tclwire::constants 0.1
 package require tclwire::shared_state 0.1
 
 namespace eval ::tclwire::accounting {
-    variable valid_thread_statuses {created allocated idle running terminating}
-    variable valid_connection_statuses {opening open closing closed failed}
+    ::tclwire::define_constant valid_thread_statuses {
+        created allocated idle running terminating
+    }
+    ::tclwire::define_constant valid_connection_statuses {
+        opening open closing closed failed
+    }
 
     proc initialize {} {
         return [::tclwire::shared_state initialize]
