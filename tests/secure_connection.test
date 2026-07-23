@@ -53,6 +53,35 @@ namespace eval ::tclwire::secure_connection_test {
         error "timed out establishing TLS connection"
     }
 
+    proc ftp_connect {port} {
+        set channel [socket 127.0.0.1 $port]
+        chan configure $channel \
+            -blocking 0 -buffering none -translation binary
+        return $channel
+    }
+
+    proc tls_upgrade {channel} {
+        set channel [::tls::import $channel \
+            -request 0 \
+            -require 0]
+        chan configure $channel \
+            -blocking 0 -buffering none -translation binary
+        set deadline [expr {[clock milliseconds] + 5000}]
+        while {[clock milliseconds] < $deadline} {
+            update
+            if {[catch {::tls::handshake $channel} result]} {
+                catch {close $channel}
+                error $result
+            }
+            if {$result} {
+                return $channel
+            }
+            after 5
+        }
+        catch {close $channel}
+        error "timed out upgrading TLS connection"
+    }
+
     proc read_until_eof {channel {timeout_ms 5000}} {
         set data {}
         set deadline [expr {[clock milliseconds] + $timeout_ms}]
@@ -89,6 +118,22 @@ namespace eval ::tclwire::secure_connection_test {
         puts -nonewline $channel [encoding convertto utf-8 "$command\r\n"]
         flush $channel
         return [read_line $channel]
+    }
+
+    proc ftp_multiline_command {channel command {terminator {211 End}}} {
+        puts -nonewline $channel [encoding convertto utf-8 "$command\r\n"]
+        flush $channel
+        set data {}
+        set deadline [expr {[clock milliseconds] + 5000}]
+        while {[clock milliseconds] < $deadline} {
+            update
+            append data [read $channel]
+            if {[string first "$terminator\r\n" $data] >= 0} {
+                return [encoding convertfrom utf-8 $data]
+            }
+            after 5
+        }
+        error "timed out waiting for FTP multi-line reply"
     }
 }
 
@@ -180,6 +225,69 @@ test secure-connection-1.2 {
 } -result {1 1 1 1 1 1 1 1 1 connection:ftps:9990}
 
 test secure-connection-1.3 {
+    explicit FTP AUTH TLS upgrades the control channel
+} -body {
+    set directory [file normalize \
+        [file join [temporaryDirectory] tclwire-auth-tls-[pid]]]
+    set ftp_root [file join $directory root]
+    set credentials \
+        [::tclwire::secure_connection_test::create_credentials $directory]
+    ::tclwire::runtime start [list \
+        --startservers ftp \
+        --ftpport 9991 \
+        --ftproot $ftp_root \
+        --noftp-user-check \
+        --certfile [dict get $credentials certfile] \
+        --keyfile [dict get $credentials keyfile] \
+        --logfile $::tclwire::secure_connection_test::logfile]
+
+    set control [::tclwire::secure_connection_test::ftp_connect 9991]
+    set greeting [::tclwire::secure_connection_test::read_line $control]
+    set feat_reply [::tclwire::secure_connection_test::ftp_multiline_command \
+        $control FEAT]
+    set auth_reply [::tclwire::secure_connection_test::ftp_command \
+        $control "AUTH TLS"]
+    set control [::tclwire::secure_connection_test::tls_upgrade $control]
+    set user_reply [::tclwire::secure_connection_test::ftp_command \
+        $control "USER anonymous"]
+    set pass_reply [::tclwire::secure_connection_test::ftp_command \
+        $control "PASS secure"]
+    set pbsz_reply [::tclwire::secure_connection_test::ftp_command \
+        $control "PBSZ 0"]
+    set prot_reply [::tclwire::secure_connection_test::ftp_command \
+        $control "PROT P"]
+    set epsv_reply [::tclwire::secure_connection_test::ftp_command \
+        $control EPSV]
+    regexp {\(\|\|\|([0-9]+)\|\)$} $epsv_reply -> data_port
+    set data_channel \
+        [::tclwire::secure_connection_test::tls_connect $data_port]
+    set start_reply [::tclwire::secure_connection_test::ftp_command \
+        $control "RETR tcl9.png"]
+    set transferred \
+        [::tclwire::secure_connection_test::read_until_eof $data_channel]
+    set end_reply [::tclwire::secure_connection_test::read_line $control]
+    set expected [::fileutil::cat -translation binary \
+        [file join $project_root tests tcl9.png]]
+    catch {close $control}
+
+    list \
+        [string match "220 *" $greeting] \
+        [string match {*AUTH TLS*} $feat_reply] \
+        [string match "234 *" $auth_reply] \
+        [string match "331 *" $user_reply] \
+        [string match "230 *" $pass_reply] \
+        [string match "200 *" $pbsz_reply] \
+        [string match "200 *" $prot_reply] \
+        [string match "229 *" $epsv_reply] \
+        [string match "150 *" $start_reply] \
+        [expr {$transferred eq $expected}] \
+        [string match "226 *" $end_reply]
+} -cleanup {
+    ::tclwire::secure_connection_test::cleanup
+    catch {file delete -force $directory}
+} -result {1 1 1 1 1 1 1 1 1 1 1}
+
+test secure-connection-1.4 {
     two HTTPS ports use independent service credentials and pools
 } -body {
     set directory [file normalize \

@@ -10,6 +10,7 @@ if {$::tclwire_runtime_root ni $::auto_path} {
 }
 
 package require tclwire::support 0.1
+package require tclwire::constants 0.1
 package require tclwire::accounting 1.2
 package require tclwire::tpba::control 0.1
 package require tclwire::logger::control 0.1
@@ -27,7 +28,7 @@ namespace eval ::tclwire::runtime {
     variable transport_reactors [dict create]
     variable console_reactor {}
     variable application_dispatcher {}
-    variable protocol_descriptors [dict create \
+    ::tclwire::define_constant protocol_descriptors [dict create \
         http [dict create   default_port 8990 \
                             description "HTTP application service" \
                             secure 0 \

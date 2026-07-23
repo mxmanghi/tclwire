@@ -3,12 +3,15 @@
 # Minimal Logging Agent client API for producer threads.
 
 package require Thread
+package require tclwire::constants 0.1
 package require tclwire::shared_state 0.1
 
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::logger {
-    variable levels {trace8 trace7 trace6 trace5 trace4 trace3 trace2 trace1 debug info notice warn error crit alert emerg}
+    ::tclwire::define_constant levels [list \
+        trace8 trace7 trace6 trace5 trace4 trace3 trace2 trace1 \
+        debug info notice warn error crit alert emerg]
 
     proc valid_levels {} {
         variable levels

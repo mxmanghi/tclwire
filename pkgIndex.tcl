@@ -1,18 +1,23 @@
-package ifneeded tclwire::shared_state 0.1 \
-    [list source [file join $dir tcl shared_state.tcl]]
+package ifneeded tclwire::shared_state 0.1 [subst {
+    package require tclwire::constants 0.1
+    source [list [file join $dir tcl shared_state.tcl]]
+}]
 
 package ifneeded tclwire::constants 0.1 \
     [list source [file join $dir tcl constants.tcl]]
 
 package ifneeded tclwire::accounting 1.2 \
     [subst {
+        package require tclwire::constants 0.1
         package require tclwire::shared_state 0.1
         source [list [file join $dir tcl threads_shared_db.tcl]]
     }]
 
 
-package ifneeded tclwire::support 0.1 \
-    [list source [file join $dir tcl support.tcl]]
+package ifneeded tclwire::support 0.1 [subst {
+    package require tclwire::constants 0.1
+    source [list [file join $dir tcl support.tcl]]
+}]
 
 package ifneeded tomlfile 0.1 \
     [list source [file join $dir tcl toml.tcl]]
@@ -53,6 +58,7 @@ package ifneeded tclwire::http::range 0.1 \
     [list source [file join $dir tcl http_range.tcl]]
 
 package ifneeded tclwire::http::redirect 0.1 [subst {
+    package require tclwire::constants 0.1
     package require tclwire::application::io 0.1
     source [list [file join $dir tcl http_redirect.tcl]]
 }]
@@ -84,6 +90,7 @@ package ifneeded tclwire::transaction_descriptor 0.1 \
     [list source [file join $dir tcl transaction_descriptor.tcl]]
 
 package ifneeded tclwire::console::protocol 0.1 [subst {
+    package require tclwire::constants 0.1
     package require tclwire::accounting 1.2
     source [list [file join $dir tcl console_protocol.tcl]]
 }]
@@ -155,10 +162,13 @@ package ifneeded tclwire::proxy::connection_agent 0.1 [subst {
 package ifneeded tclwire::transport_reactor 0.1 \
     [list source [file join $dir tcl transport_reactor.tcl]]
 
-package ifneeded tclwire::logger::client 0.1 \
-    [list source [file join $dir tcl logger_client.tcl]]
+package ifneeded tclwire::logger::client 0.1 [subst {
+    package require tclwire::constants 0.1
+    source [list [file join $dir tcl logger_client.tcl]]
+}]
 
 package ifneeded tclwire::logger::control 0.1 [subst {
+    package require tclwire::constants 0.1
     package require tclwire::accounting 1.2
     package require tclwire::logger::client 0.1
     source [list [file join $dir tcl logger_control.tcl]]
@@ -180,12 +190,14 @@ package ifneeded tclwire::tpba 0.1 [subst {
 }]
 
 package ifneeded tclwire::tpba::control 0.1 [subst {
+    package require tclwire::constants 0.1
     package require tclwire::accounting 1.2
     source [list [file join $dir tcl tpba_control.tcl]]
 }]
 
 package ifneeded tclwire::runtime 0.1 [subst {
     package require tclwire::support 0.1
+    package require tclwire::constants 0.1
     package require tclwire::accounting 1.2
     package require tclwire::tpba::control 0.1
     package require tclwire::logger::control 0.1

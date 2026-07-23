@@ -2,13 +2,14 @@
 #
 # Reusable HTTP redirect-response construction.
 
+package require tclwire::constants 0.1
 package require tclwire::application::io 0.1
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::http {}
 
 namespace eval ::tclwire::http::redirect {
-    variable reasons [dict create \
+    ::tclwire::define_constant reasons [dict create \
         301 "Moved Permanently" \
         302 "Found" \
         303 "See Other" \
@@ -20,7 +21,7 @@ namespace eval ::tclwire::http::redirect {
             error "HTTP redirect location must not be empty"
         }
         if {[string first "\r" $location] >= 0 ||
-                [string first "\n" $location] >= 0} {
+            [string first "\n" $location] >= 0} {
             error "invalid HTTP redirect location"
         }
         return $location
