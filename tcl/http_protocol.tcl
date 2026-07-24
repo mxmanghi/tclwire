@@ -60,13 +60,13 @@ oo::class create ::tclwire::HttpProtocolSession {
         set request_headers {}
         set body_framing none
         set transfer_codings {}
-        set body_data $::tclwire::empty_bytearray
+        set body_data $::tclwire::constants::empty_bytearray
         set body_channel {}
         set body_path {}
         set body_size 0
         set body_sink {}
         set body_remaining 0
-        set chunk_buffer $::tclwire::empty_bytearray
+        set chunk_buffer $::tclwire::constants::empty_bytearray
         set chunk_remaining 0
         set trailers [dict create]
         set completed_descriptor {}
@@ -216,7 +216,7 @@ oo::class create ::tclwire::HttpProtocolSession {
         chan configure $body_channel -translation binary -encoding binary
         if {$body_data ne {}} {
             puts -nonewline $body_channel $body_data
-            set body_data $::tclwire::empty_bytearray
+            set body_data $::tclwire::constants::empty_bytearray
         }
         return
     }
@@ -451,7 +451,7 @@ oo::class create ::tclwire::HttpProtocolSession {
                     if {$available < $chunk_remaining} {
                         my append_transfer_data $chunk_buffer
                         incr chunk_remaining -$available
-                        set chunk_buffer $::tclwire::empty_bytearray
+                        set chunk_buffer $::tclwire::constants::empty_bytearray
                         return [my feed_result need_more body]
                     }
                     if {$chunk_remaining > 0} {
@@ -718,7 +718,7 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     method parse_chunked_body {body} {
-        set decoded $::tclwire::empty_bytearray
+        set decoded $::tclwire::constants::empty_bytearray
         set cursor 0
 
         while 1 {

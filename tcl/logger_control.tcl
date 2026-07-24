@@ -3,14 +3,15 @@
 # Logging Agent lifecycle API for the runtime supervisor.
 
 package require Thread
+package require tclwire::constants 0.1
 package require tclwire::logger::client 0.1
 
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::logger {
     variable current_config {}
-    variable agent_script_path [file normalize \
-        [file join [file dirname [info script]] logger_agent.tcl]]
+    ::tclwire::define_constant agent_script_path \
+        [file normalize [file join [file dirname [info script]] logger_agent.tcl]]
 
     proc normalize_config {config} {
         if {[catch {dict size $config}]} {

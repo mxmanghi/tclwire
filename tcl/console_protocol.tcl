@@ -4,30 +4,31 @@
 
 package require json
 package require json::write
+package require tclwire::constants 0.1
 package require tclwire::accounting 1.2
 package require tclwire::logger::control 0.1
 
 namespace eval ::tclwire::console {
-    variable ps_columns {
+    ::tclwire::define_constant ps_columns {
         thread_id status family running_workload cumulative_workload
         combined_workload last_run_start last_run_end created_on command http_host
     }
-    variable connection_columns {
+    ::tclwire::define_constant connection_columns {
         connection_key status protocol service_id listener_port peer_host peer_port
         worker_thread_id current_transaction_id current_command request_count
         bytes_in bytes_out opened_at
     }
-    variable connection_debug_columns {
+    ::tclwire::define_constant connection_debug_columns {
         closed_at close_reason transport_error
     }
-    variable connection_worker_columns {
+    ::tclwire::define_constant connection_worker_columns {
         worker_id connection_state family active_connections
         cumulative_connections combined_workload connection_keys
     }
-    variable service_columns {
+    ::tclwire::define_constant service_columns {
         service_id protocol port description
     }
-    variable conf_columns {
+    ::tclwire::define_constant conf_columns {
         scope name value
     }
     variable active_config {}

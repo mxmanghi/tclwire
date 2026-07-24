@@ -2,10 +2,13 @@
 #
 # Minimal support helpers for the repackaged TclWire runtime.
 
+package require tclwire::constants 0.1
+
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::support {
-    variable project_root [file dirname [file dirname [file normalize [info script]]]]
+    ::tclwire::define_constant project_root \
+        [file dirname [file dirname [file normalize [info script]]]]
     variable debug 0
 
     proc project_root {} {

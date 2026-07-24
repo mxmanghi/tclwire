@@ -3,9 +3,10 @@
 # Idempotent initializer for TclWire shared thread state.
 
 package require Thread
+package require tclwire::constants 0.1
 
 namespace eval ::tclwire::shared_state {
-    variable catalog_keys {
+    ::tclwire::define_constant catalog_keys {
         timestamp
         accounting
         connections
