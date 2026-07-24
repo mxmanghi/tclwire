@@ -15,7 +15,12 @@
 # application's docroot, its effective libdir, and the TclWire installation.
 
 [tclwire]
-host = "127.0.0.1"
+# Local address used by service listeners. Legacy "host" is still accepted.
+bind_address = "127.0.0.1"
+
+# Host header aliases served by the default application unless overridden by
+# [http.default].hosts or [https.default].hosts.
+default_hosts = "localhost 127.0.0.1"
 quiet = false
 debug = false
 debug_connection = false
@@ -65,7 +70,8 @@ log_level = "info"
 [http.default]
 # The bundled parser currently mishandles TOML arrays.  Until it is repaired,
 # encode host aliases as a Tcl list in one string.
-hosts = "localhost 127.0.0.1"
+# Omit this to use [tclwire].default_hosts.
+# hosts = "localhost 127.0.0.1"
 class = "::tclwire::CApplication"
 
 # "file" is the application entry point. Loading it should define the TclOO

@@ -95,8 +95,12 @@ namespace eval ::tclwire::runtime {
         puts $channel "  --help"
         puts $channel "      Show this help message."
         puts $channel "  --config <path>     Default: . (no configuration file)"
+        puts $channel "  --bind-address <address>"
+        puts $channel "      Local address used by service listeners. Default: 127.0.0.1"
+        puts $channel "  --listen-address <address>"
+        puts $channel "      Alias for --bind-address."
         puts $channel "  --host <address>"
-        puts $channel "      Bind address prepared for future services. Default: 127.0.0.1"
+        puts $channel "      Legacy alias for --bind-address."
         puts $channel "  --startservers <list>"
         puts $channel "      Comma-separated protocols to prepare, or 'all'."
         puts $channel "  --httpport <port>   Default: 8990"
@@ -317,6 +321,7 @@ namespace eval ::tclwire::runtime {
         set ports               [protocol_defaults]
         set default_application default
         set default_encoding    utf-8
+        set default_hosts       {}
         set applications        [dict create default [dict create   class      ::tclwire::CApplication \
                                                                     package    tclwire::application    \
                                                                     hosts      {localhost 127.0.0.1}   \
@@ -352,6 +357,7 @@ namespace eval ::tclwire::runtime {
                             services     $services \
                             custom_services $custom_services \
                             ports        $ports \
+                            default_hosts $default_hosts \
                             ftproot_follows_docroot $ftproot_follows_docroot \
                             default_application $default_application \
                             applications $applications]
@@ -395,6 +401,19 @@ namespace eval ::tclwire::runtime {
             # built-in defaults in one dictionary operation.
             set config [dict merge $config \
                 [dict filter $global key host encoding default_application]]
+            foreach alias {listen_address bind_address} {
+                if {[dict exists $global $alias]} {
+                    dict set config host [dict get $global $alias]
+                }
+            }
+            if {[dict exists $global default_hosts]} {
+                dict set config default_hosts [dict get $global default_hosts]
+                set default_application [dict get $config default_application]
+                if {[dict exists $config applications $default_application]} {
+                    dict set config applications $default_application hosts \
+                        [dict get $config default_hosts]
+                }
+            }
             if {[dict exists $global log_level]} {
                 dict set config log_level \
                     [normalize_log_level tclwire.log_level \
@@ -561,6 +580,11 @@ namespace eval ::tclwire::runtime {
                             [dict get $application $option]]
                     }
                 }
+                if {![dict exists $application hosts] &&
+                        $application_id eq [dict get $config default_application] &&
+                        [dict get $config default_hosts] ne {}} {
+                    dict set application hosts [dict get $config default_hosts]
+                }
                 if {![dict exists $application hosts]} {
                     dict set application hosts [list $application_id]
                 }
@@ -636,6 +660,8 @@ namespace eval ::tclwire::runtime {
                 --config {
                     incr i
                 }
+                --bind-address -
+                --listen-address -
                 --host {
                     dict set config host [require_value $argv [incr i] $option]
                 }
@@ -860,8 +886,10 @@ namespace eval ::tclwire::runtime {
         dict set config startservers [lmap service $normalized_services {
             dict get $service protocol
         }]
-        foreach internal {custom_services ports ftproot_follows_docroot} {
-            dict unset config $internal
+        foreach internal {custom_services ports default_hosts ftproot_follows_docroot} {
+            if {[dict exists $config $internal]} {
+                dict unset config $internal
+            }
         }
         return $config
     }

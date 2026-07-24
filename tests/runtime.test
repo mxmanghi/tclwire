@@ -633,7 +633,70 @@ port = 8180
         [dict create protocol proxy port 8180 id proxy:8180 secure 0 \
             description "HTTP proxy service"]]]
 
-test runtime-1.13a {log levels can be configured globally by service and by host} -body {
+test runtime-1.13a {bind address and default hosts are configured globally} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+bind_address = "192.0.2.10"
+default_hosts = "example.test 192.0.2.10"
+
+[http]
+enabled = true
+port = 8990
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set selected [$dispatcher select_application \
+            [dict create headers [dict create host 192.0.2.10:8990]]]
+    } finally {
+        $dispatcher destroy
+    }
+    list \
+        [dict get $config host] \
+        [dict get $config applications default hosts] \
+        $selected
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {192.0.2.10 {example.test 192.0.2.10} default}
+
+test runtime-1.13b {application hosts override global default hosts} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_hosts = "global.example"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+hosts = "local.example"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    dict get $config applications default hosts
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result local.example
+
+test runtime-1.13c {listen address is a bind address alias} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+listen_address = "192.0.2.20"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    dict get $config host
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result 192.0.2.20
+
+test runtime-1.13d {CLI bind address aliases configure listener address} -body {
+    set bind [::tclwire::runtime parse_args \
+        [list --bind-address 192.0.2.30]]
+    set listen [::tclwire::runtime parse_args \
+        [list --listen-address 192.0.2.31]]
+    list [dict get $bind host] [dict get $listen host]
+} -result {192.0.2.30 192.0.2.31}
+
+test runtime-1.13e {log levels can be configured globally by service and by host} -body {
     set config_file [::tclwire::runtime_test::make_config {
 [tclwire]
 log_level = "error"

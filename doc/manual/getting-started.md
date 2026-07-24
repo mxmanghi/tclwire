@@ -74,7 +74,9 @@ command line using these options
 |-----------|------------------------------------------------------|
 | --help              | Show this help message |
 | --config <path>     | Default: . (no configuration file) |
-| --host <address>    | Bind address prepared for future services. Default: 127.0.0.1 |
+| --bind-address <address> | Local address used by service listeners. Default: 127.0.0.1 |
+| --listen-address <address> | Alias for --bind-address |
+| --host <address>    | Legacy alias for --bind-address |
 | --startservers <list> | Comma-separated list of protocols (http,https,ftp,ftps,proxy) to start, or 'all' |
 | --httpport <port>   | Port for the http service. Default: 8990 |
 | --httpsport <port>  | Port for the https service. Default: 9443 |

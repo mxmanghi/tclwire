@@ -15,9 +15,10 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
 : Loads a TOML configuration file before command-line overrides are applied.
   The default `.` means no configuration file.
 
-`--host <address>` / `tclwire.host`
+`--bind-address <address>` / `--listen-address <address>` / `--host <address>` / `tclwire.bind_address`
 : Local address used by every configured service listener. Defaults to
-  `127.0.0.1`.
+  `127.0.0.1`. `--host`, `tclwire.host`, and `tclwire.listen_address` are
+  aliases.
 
 `--startservers <list>`
 : Selects the protocols to start from the configured service set. The value is
@@ -130,6 +131,12 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
 : Application ID selected when an HTTP request has no `Host` header. Defaults
   to `default`.
 
+`tclwire.default_hosts`
+: Host header aliases served by the default application when its application
+  table omits `hosts`. If omitted, the built-in default application serves
+  `localhost 127.0.0.1`, while a renamed default application without explicit
+  hosts uses its application ID.
+
 `--help`
 : Prints runtime usage and returns a prepared configuration without starting
   the server.
@@ -222,9 +229,11 @@ configured default application, then from global runtime defaults.
 : TclOO application class name. Required after inheritance.
 
 `hosts`
-: Host names served by the application. If omitted in a host table, the
-  application ID is used as the host name. The current TOML parser expects this
-  as a Tcl list encoded in one string.
+: Host names served by the application. If omitted by the default application
+  and `tclwire.default_hosts` is configured, the default application uses
+  those aliases. Otherwise, an omitted host table uses the application ID as
+  the host name. The current TOML parser expects this as a Tcl list encoded in
+  one string.
 
 `docroot`
 : Application document root. Inherits from the global `docroot` unless
