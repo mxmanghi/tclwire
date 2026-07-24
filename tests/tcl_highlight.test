@@ -33,4 +33,12 @@ test tcl-highlight-1.7 {html-sensitive characters are escaped} -body {
     ::tcl_highlight::highlight {puts "<tag>$value</tag>"}
 } -result {<span class="tcl-command">puts</span> <span class="tcl-string">&quot;</span><span class="tcl-string">&lt;tag&gt;</span><span class="tcl-variable">$value</span><span class="tcl-string">&lt;/tag&gt;</span><span class="tcl-string">&quot;</span>}
 
+test tcl-highlight-1.8 {Tcl 8.6 commands are highlighted} -body {
+    ::tcl_highlight::highlight {lmap value $values {expr {$value * 2}}}
+} -result {<span class="tcl-command">lmap</span> value <span class="tcl-variable">$values</span> <span class="tcl-punctuation">{</span>expr <span class="tcl-punctuation">{</span><span class="tcl-variable">$value</span> * 2<span class="tcl-punctuation">}</span><span class="tcl-punctuation">}</span>}
+
+test tcl-highlight-1.9 {Tcl 9 commands are highlighted} -body {
+    ::tcl_highlight::highlight {lseq 1 3}
+} -result {<span class="tcl-command">lseq</span> 1 3}
+
 cleanupTests

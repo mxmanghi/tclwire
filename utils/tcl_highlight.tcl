@@ -1,4 +1,6 @@
-package require Tcl 8.6
+if {![package vsatisfies [package provide Tcl] 8.6-]} {
+    error "Tcl 8.6 or later is required"
+}
 
 namespace eval ::tcl_highlight {
     variable commands
@@ -9,11 +11,14 @@ namespace eval ::tcl_highlight {
         concat continue coroutine dict encoding eof error eval exec exit expr
         fblocked fconfigure fcopy file fileevent flush for foreach format gets
         glob global history if incr info interp join lappend lassign lindex
-        linsert list llength load lrange lrepeat lreplace lreverse lsearch
+        linsert list llength lmap load lrange lrepeat lreplace lreverse lsearch
         lset lsort namespace open package pid proc puts pwd read regexp regsub
         rename return scan seek set socket source split string subst switch
         tailcall tell throw time trace try unload unset update uplevel upvar
         variable vwait while yield yieldto zlib
+
+        const coroinject coroprobe fpclassify ledit lpop lremove lseq timerate
+        zipfs
 
         oo::class oo::copy oo::define oo::objdefine oo::object
         constructor destructor export filter forward method mixin my next

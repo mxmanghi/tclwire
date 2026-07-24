@@ -1,7 +1,5 @@
 #!/usr/bin/env tclsh
 
-package require Tcl 8.6
-
 namespace eval ::mk2html {
     variable default_input runtime-doc
     variable default_output /tmp/tclwire
