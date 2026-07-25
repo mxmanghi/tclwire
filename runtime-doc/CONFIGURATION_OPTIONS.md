@@ -222,8 +222,10 @@ semicolon-separated fields, for example:
 
 HTTP and HTTPS application options live under application tables such as
 `[http.default]`, `[http."example.test"]`, or `[https.admin]`. The final table
-component is the application ID. Host-specific applications inherit from the
-configured default application, then from global runtime defaults.
+component is the application ID. Quote application IDs containing dots so TOML
+treats the DNS name as one key, for example `[http."hello.example.test"]`.
+Host-specific applications inherit from the configured default application,
+then from global runtime defaults.
 
 `class`
 : TclOO application class name. Required after inheritance.

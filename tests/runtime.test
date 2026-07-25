@@ -677,6 +677,112 @@ hosts = "local.example"
     ::tclwire::runtime_test::cleanup
 } -result local.example
 
+test runtime-1.13ba {quoted dotted application tables are host application ids} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+default_application = "default"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost 127.0.0.1"
+
+[http."hello.rivetweb.org"]
+class = "::tclwire::Hello"
+file = "examples/hello.tcl"
+
+[http."hello.rivetweb.org".configure."::tclwire::Hello"]
+message = "Hello from RivetWeb"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set selected [$dispatcher select_application \
+            [dict create headers [dict create host hello.rivetweb.org]]]
+        set descriptor [$dispatcher application $selected]
+        list \
+            $selected \
+            [dict get $descriptor class] \
+            [dict get $descriptor hosts] \
+            [dict get $descriptor file] \
+            [dict get $descriptor configure]
+    } finally {
+        $dispatcher destroy
+    }
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    hello.rivetweb.org \
+    ::tclwire::Hello \
+    hello.rivetweb.org \
+    [file normalize [file join [pwd] examples hello.tcl]] \
+    [dict create ::tclwire::Hello [dict create message {Hello from RivetWeb}]]]
+
+test runtime-1.13baa {unquoted dotted application tables are rejected} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+default_application = "default"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost 127.0.0.1"
+
+[http.hello.rivetweb.org]
+class = "::tclwire::Hello"
+file = "examples/hello.tcl"
+}]
+    catch {
+        ::tclwire::runtime parse_args [list --config $config_file]
+    } message
+    set message
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {application 'http.hello' contains nested table 'rivetweb'; quote dotted application ids, for example [http."hello.rivetweb.org"]}
+
+test runtime-1.13bb {host applications override duplicate default host aliases} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+default_hosts = "localhost hello.rivetweb.org"
+default_application = "default"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost hello.rivetweb.org"
+
+[http."hello.rivetweb.org"]
+class = "::tclwire::Hello"
+file = "examples/hello.tcl"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set selected [$dispatcher select_application \
+            [dict create headers [dict create host hello.rivetweb.org]]]
+        list $selected [dict get [$dispatcher application $selected] class]
+    } finally {
+        $dispatcher destroy
+    }
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {hello.rivetweb.org ::tclwire::Hello}
+
 test runtime-1.13c {listen address is a bind address alias} -body {
     set config_file [::tclwire::runtime_test::make_config {
 [tclwire]

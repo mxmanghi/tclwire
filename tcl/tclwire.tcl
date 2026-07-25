@@ -291,6 +291,89 @@ namespace eval ::tclwire::runtime {
         return $override
     }
 
+    # Protocol tables contain both service-level options and application
+    # subtables.  These keys are consumed while building the listener service
+    # and must not be interpreted as application ids.
+    proc protocol_application_option {field} {
+        return [expr {$field in {
+            enabled port certfile keyfile libdir log_level upload_area
+            max_request_bytes max_header_bytes request_memory_threshold
+        }}]
+    }
+
+    # Application subtables are identified by descriptor fields.  The loader
+    # uses this to reject ambiguous TOML nesting before a malformed table can
+    # enter the normal inheritance and dispatch setup path.
+    proc application_descriptor_key {field} {
+        return [expr {$field in {
+            class package hosts encoding log_level reload_on_request
+            retain_uploaded_files configure docroot libdir file
+            minimum_workers maximum_workers
+        }}]
+    }
+
+    # Reconstruct the dotted application id implied by nested TOML tables so
+    # the configuration error can point to the quoted table name that should be
+    # used for host-based application resolution.
+    proc ambiguous_application_id {application_id field value} {
+        set parts [list $application_id $field]
+        set table $value
+        while {![catch {dict size $table}]} {
+            set next_field {}
+            dict for {candidate nested_value} $table {
+                if {[application_descriptor_key $candidate]} {
+                    return [join $parts .]
+                }
+                if {$next_field eq {} && ![catch {dict size $nested_value}]} {
+                    set next_field $candidate
+                    set table $nested_value
+                }
+            }
+            if {$next_field eq {}} {
+                return [join $parts .]
+            }
+            lappend parts $next_field
+        }
+        return [join $parts .]
+    }
+
+    # Reject nested tables below an application id unless they are known
+    # descriptor fields such as configure.  A table like
+    # [http.hello.rivetweb.org] means nested TOML tables, not one host-named
+    # application; use [http."hello.rivetweb.org"] for that.
+    proc reject_nested_application_tables {protocol application_id descriptor} {
+        if {[catch {dict size $descriptor}]} {
+            return
+        }
+        dict for {field value} $descriptor {
+            if {[application_descriptor_key $field]} {
+                continue
+            }
+            if {![catch {dict size $value}]} {
+                set quoted_id [ambiguous_application_id \
+                    $application_id $field $value]
+                error "application '$protocol.$application_id' contains nested table '$field'; quote dotted application ids, for example \[$protocol.\"$quoted_id\"\]"
+            }
+        }
+        return
+    }
+
+    # Extract only the HTTP/HTTPS application tables from a protocol
+    # configuration.  The result is the application-id -> descriptor dictionary
+    # consumed by the normal inheritance, validation, and dispatch setup path.
+    proc protocol_application_tables {protocol protocol_config} {
+        set applications [dict create]
+        dict for {application_id descriptor} $protocol_config {
+            if {[protocol_application_option $application_id]} {
+                continue
+            }
+            reject_nested_application_tables \
+                $protocol $application_id $descriptor
+            dict set applications $application_id $descriptor
+        }
+        return $applications
+    }
+
     proc default_config {} {
         set host                127.0.0.1
         set quiet               0
@@ -552,10 +635,8 @@ namespace eval ::tclwire::runtime {
                 set protocol_libdir [resolve_config_path \
                     $config_dir [dict get $protocol_config libdir]]
             }
-            dict for {application_id descriptor} $protocol_config {
-                if {$application_id in {enabled port certfile keyfile libdir log_level upload_area max_request_bytes max_header_bytes request_memory_threshold}} {
-                    continue
-                }
+            dict for {application_id descriptor} \
+                    [protocol_application_tables $protocol $protocol_config] {
                 if {[catch {dict size $descriptor}]} {
                     error "application '$protocol.$application_id' must be a table"
                 }

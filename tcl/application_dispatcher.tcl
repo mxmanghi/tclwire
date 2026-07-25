@@ -187,10 +187,19 @@ oo::class create ::tclwire::ApplicationDispatcher {
         }
 
         dict for {application_id descriptor} $applications {
+            if {$application_id eq $default_application} {
+                continue
+            }
             foreach configured_host [dict get $descriptor hosts] {
                 if {$host eq [my normalize_host $configured_host]} {
                     return $application_id
                 }
+            }
+        }
+        set default_descriptor [dict get $applications $default_application]
+        foreach configured_host [dict get $default_descriptor hosts] {
+            if {$host eq [my normalize_host $configured_host]} {
+                return $default_application
             }
         }
         error "no application is configured for Host '$host'"

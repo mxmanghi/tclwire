@@ -65,7 +65,8 @@ log_level = "info"
 # libdir = "/opt/tclwire-apps/http"
 
 # The final table component is the application ID and, when "hosts" is
-# omitted, its hostname. Quote DNS names containing dots, for example:
+# omitted, its hostname. Application IDs containing dots must be quoted so
+# TOML treats the DNS name as one key instead of nested subtables, for example:
 # [http."www.example.test"]
 [http.default]
 # The bundled parser currently mishandles TOML arrays.  Until it is repaired,
@@ -109,13 +110,12 @@ maximum_workers = 20
 # Class-specific settings live under configure tables keyed by TclOO class
 # name.  Constructors decide how those values map to object state.
 #
-# [http.hello]
-# hosts = "hello.example.test"
+# [http."hello.example.test"]
 # class = "::tclwire::Hello"
 # file = "examples/hello.tcl"
 # docroot = "/tmp/tclwire"
 #
-# [http.hello.configure."::tclwire::Hello"]
+# [http."hello.example.test".configure."::tclwire::Hello"]
 # message = "Hello from a configured virtual host"
 
 [https]
