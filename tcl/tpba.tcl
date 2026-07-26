@@ -324,6 +324,25 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         return [lsort [dict keys $pools]]
     }
 
+    method diagnostics {} {
+        set result [dict create pools [dict create]]
+        dict for {pool_key record} $pools {
+            set master [dict get $record thread_master]
+            if {$master eq {}} {
+                set stats [dict create]
+            } else {
+                set stats [$master stats]
+            }
+            dict set result pools $pool_key [dict create \
+                lifecycle_state [dict get $record lifecycle_state] \
+                descriptor [dict get $record descriptor] \
+                policy [dict get $record policy] \
+                stats $stats]
+        }
+        dict set result pool_count [dict size $pools]
+        return $result
+    }
+
     method shutdown_pool {pool_key} {
         set pool_key [my normalize_pool_key $pool_key]
         set record [my require_pool $pool_key]
@@ -402,6 +421,9 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                 }
                 list_pools {
                     set result [my list_pools]
+                }
+                diagnostics {
+                    set result [my diagnostics]
                 }
                 shutdown_pool {
                     set result [my shutdown_pool [my command_value $command pool_key]]

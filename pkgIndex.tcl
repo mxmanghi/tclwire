@@ -92,6 +92,7 @@ package ifneeded tclwire::transaction_descriptor 0.1 \
 package ifneeded tclwire::console::protocol 0.1 [subst {
     package require tclwire::constants 0.1
     package require tclwire::accounting 1.2
+    package require tclwire::diagnostics 0.1
     source [list [file join $dir tcl console_protocol.tcl]]
 }]
 
@@ -195,6 +196,18 @@ package ifneeded tclwire::tpba::control 0.1 [subst {
     source [list [file join $dir tcl tpba_control.tcl]]
 }]
 
+package ifneeded tclwire::chore 0.1 [subst {
+    package require tclwire::constants 0.1
+    source [list [file join $dir tcl chore.tcl]]
+}]
+
+package ifneeded tclwire::diagnostics 0.1 [subst {
+    package require tclwire::accounting 1.2
+    package require tclwire::chore 0.1
+    package require tclwire::logger::client 0.1
+    source [list [file join $dir tcl diagnostics.tcl]]
+}]
+
 package ifneeded tclwire::runtime 0.1 [subst {
     package require tclwire::support 0.1
     package require tclwire::constants 0.1
@@ -203,6 +216,8 @@ package ifneeded tclwire::runtime 0.1 [subst {
     package require tclwire::logger::control 0.1
     package require tclwire::application_dispatcher 0.1
     package require tclwire::transport_reactor 0.1
+    package require tclwire::chore 0.1
+    package require tclwire::diagnostics 0.1
     package require tomlfile 0.1
     source [list [file join $dir tcl tclwire.tcl]]
 }]

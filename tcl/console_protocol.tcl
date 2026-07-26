@@ -31,6 +31,9 @@ namespace eval ::tclwire::console {
     ::tclwire::define_constant conf_columns {
         scope name value
     }
+    ::tclwire::define_constant diagnostic_columns {
+        probe metric value
+    }
     variable active_config {}
 
     proc configure {config} {
@@ -413,6 +416,15 @@ namespace eval ::tclwire::console {
                 }
                 return [table_message $command $conf_columns [conf_rows] \
                     [dict create] [dict create configuration [configuration_metadata]]]
+            }
+            DIAG {
+                variable diagnostic_columns
+                if {[llength $args] != 0} {
+                    return [error_message $command bad_arguments \
+                        "DIAG accepts no arguments"]
+                }
+                return [table_message $command $diagnostic_columns \
+                    [::tclwire::diagnostics rows]]
             }
             SHUT {
                 if {[llength $args] != 0} {

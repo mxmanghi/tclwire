@@ -484,6 +484,25 @@ oo::class create ::tclwire::TransportReactor {
         return $pending_max_attempts
     }
 
+    method diagnostic_snapshot {} {
+        set worker_connection_count 0
+        dict for {tid connections} $agent_threads {
+            incr worker_connection_count [dict size $connections]
+        }
+        return [dict create \
+            service_id $service_id \
+            protocol $protocol \
+            endpoint [my endpoint] \
+            listener_active [expr {$listener ne {}}] \
+            pool_key $pool_key \
+            agent_worker_threads [dict size $agent_threads] \
+            worker_connections $worker_connection_count \
+            pending_connections [llength $pending_connections] \
+            pending_retry_after_ms $pending_retry_after_ms \
+            pending_max_attempts $pending_max_attempts \
+            last_accept_error $last_accept_error]
+    }
+
     unexport validate_transport_config dispatch_connection defer_connection \
         schedule_pending_connections close_pending_connections \
         log_deferred_connection

@@ -1,0 +1,75 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+package require tclwire::chore 0.1
+
+namespace eval ::tclwire::chore_test {
+    proc cleanup {} {
+        catch {::tclwire::chore stop}
+        catch {::tsv::unset tclwire chore_test_events}
+    }
+}
+
+::tclwire::chore_test::cleanup
+
+test chore-1.1 {runner fires sync and async chores with wakeup sequence} -body {
+    set specs [list \
+        [dict create \
+            name sync_test \
+            package tclwire::chore \
+            class ::tclwire::TsvRecordingChore \
+            args [list -key chore_test_events -every 1] \
+            mode sync] \
+        [dict create \
+            name async_test \
+            package tclwire::chore \
+            class ::tclwire::TsvRecordingChore \
+            args [list -key chore_test_events -every 2] \
+            mode async]]
+    ::tclwire::chore start [dict create chore_interval_ms 100]
+    ::tclwire::chore register $specs
+    set deadline [expr {[clock milliseconds] + 2000}]
+    set events {}
+    while {[clock milliseconds] < $deadline} {
+        catch {set events [::tsv::get tclwire chore_test_events]}
+        set sync_count 0
+        set async_count 0
+        foreach event $events {
+            if {[dict get $event name] eq "sync_test"} {
+                incr sync_count
+            }
+            if {[dict get $event name] eq "async_test"} {
+                incr async_count
+            }
+        }
+        if {$sync_count >= 2 && $async_count >= 1} {
+            break
+        }
+        after 20
+    }
+    set status [::tclwire::chore status]
+    ::tclwire::chore stop
+    set sync_threads {}
+    set async_threads {}
+    foreach event $events {
+        if {[dict get $event name] eq "sync_test"} {
+            lappend sync_threads [dict get $event thread_id]
+        }
+        if {[dict get $event name] eq "async_test"} {
+            lappend async_threads [dict get $event thread_id]
+        }
+    }
+    list \
+        [dict get $status running] \
+        [expr {[dict get $status sequence] >= 2}] \
+        [expr {[llength $sync_threads] >= 2}] \
+        [expr {[llength $async_threads] >= 1}] \
+        [expr {[lindex $sync_threads 0] ne [lindex $async_threads 0]}]
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+} -result {1 1 1 1 1}
+
+cleanupTests

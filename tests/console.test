@@ -258,6 +258,19 @@ test console-protocol-1.4 {SHUT returns conventional OK JSON} -body {
         [dict get $response message]
 } -result {true ok SHUT {shutdown requested}}
 
+test console-protocol-1.4a {DIAG returns runtime diagnostic rows} -body {
+    set response [::json::json2dict [::tclwire::console dispatch DIAG]]
+    set row [lindex [dict get $response rows] 0]
+    list \
+        [dict get $response ok] \
+        [dict get $response type] \
+        [dict get $response command] \
+        [dict get $response columns] \
+        [dict get $row probe] \
+        [dict get $row metric] \
+        [dict get $row value]
+} -result {true table DIAG {probe metric value} runtime enabled 0}
+
 test console-protocol-1.5 {LOGROTATE reopens logger files and returns OK} -body {
     set logfile [file join [temporaryDirectory] tclwire-console-rotate-[pid].log]
     set logerr [file join [temporaryDirectory] tclwire-console-rotate-[pid].err]

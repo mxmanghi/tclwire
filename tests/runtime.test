@@ -58,6 +58,12 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config conn_max_wait] \
         [dict get $config conn_max_workers] \
         [dict get $config conn_max_per_thread] \
+        [dict get $config chores_enabled] \
+        [dict get $config chore_interval_ms] \
+        [dict get $config diagnostics_enabled] \
+        [dict get $config diagnostics_interval_ms] \
+        [dict get $config diagnostics_watchdog_max_age_ms] \
+        [dict get $config diagnostics_watchdog_mode] \
         [dict get $config help]
 } -result [list \
     127.0.0.1 \
@@ -79,6 +85,12 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     1000 \
     100 \
     5 \
+    0 \
+    5000 \
+    0 \
+    5000 \
+    10000 \
+    sync \
     0]
 
 test runtime-1.2 {legacy service options are normalized without starting services} -body {
@@ -166,6 +178,23 @@ test runtime-1.2b {connection queue limits are parsed from CLI aliases} -body {
         [dict get $config conn_max_workers] \
         [dict get $config conn_max_per_thread]
 } -result {250 3 4}
+
+test runtime-1.2ba {diagnostic options are parsed from CLI aliases} -body {
+    set config [::tclwire::runtime parse_args [list \
+        --enable-chores \
+        --chore-interval-ms 800 \
+        --diagnostics \
+        --diagnostics-interval-ms 1200 \
+        --diagnostics-watchdog-max-age-ms 2400 \
+        --diagnostics-watchdog-mode async]]
+    list \
+        [dict get $config chores_enabled] \
+        [dict get $config chore_interval_ms] \
+        [dict get $config diagnostics_enabled] \
+        [dict get $config diagnostics_interval_ms] \
+        [dict get $config diagnostics_watchdog_max_age_ms] \
+        [dict get $config diagnostics_watchdog_mode]
+} -result {1 800 1 1200 2400 async}
 
 test runtime-1.2c {HTTP services inherit and override the upload area} -body {
     set global_area [file normalize ./global-uploads]
@@ -489,6 +518,12 @@ ftp_user_check = false
 conn_max_wait = 750
 conn_max_workers = 8
 conn_max_per_thread = 4
+chores_enabled = true
+chore_interval_ms = 700
+diagnostics_enabled = true
+diagnostics_interval_ms = 1500
+diagnostics_watchdog_max_age_ms = 4500
+diagnostics_watchdog_mode = "async"
 default_application = "site.example.test"
 
 [http]
@@ -539,6 +574,12 @@ port = 8081
         [dict get $config conn_max_wait] \
         [dict get $config conn_max_workers] \
         [dict get $config conn_max_per_thread] \
+        [dict get $config chores_enabled] \
+        [dict get $config chore_interval_ms] \
+        [dict get $config diagnostics_enabled] \
+        [dict get $config diagnostics_interval_ms] \
+        [dict get $config diagnostics_watchdog_max_age_ms] \
+        [dict get $config diagnostics_watchdog_mode] \
         [dict get $config startservers] \
         [dict get $config services] \
         [dict get $config default_application] \
@@ -558,6 +599,12 @@ port = 8081
     750 \
     8 \
     4 \
+    1 \
+    700 \
+    1 \
+    1500 \
+    4500 \
+    async \
     {https ftp} \
     [list \
         [dict create protocol https port 8443 upload_area [file normalize /tmp] \

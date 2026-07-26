@@ -17,6 +17,8 @@ package require tclwire::logger::control 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::transport_reactor 0.1
 package require tclwire::console::reactor 0.1
+package require tclwire::chore 0.1
+package require tclwire::diagnostics 0.1
 package require tomlfile 0.1
 
 namespace eval ::tclwire {}
@@ -139,6 +141,18 @@ namespace eval ::tclwire::runtime {
         puts $channel "  --conn-max-per-thread <count>"
         puts $channel "      Maximum connections per connection-agent worker. Default: 5"
         puts $channel "  --unix-socket <path> Console socket. Default: /tmp/tclwire.sock"
+        puts $channel "  --enable-chores"
+        puts $channel "      Start the chore scheduler. Diagnostics enable it automatically."
+        puts $channel "  --chore-interval-ms <ms>"
+        puts $channel "      Chore scheduler wakeup interval. Default: 5000"
+        puts $channel "  --diagnostics"
+        puts $channel "      Periodically log runtime diagnostic snapshots. Default: off"
+        puts $channel "  --diagnostics-interval-ms <ms>"
+        puts $channel "      Diagnostic snapshot interval. Default: 5000"
+        puts $channel "  --diagnostics-watchdog-max-age-ms <ms>"
+        puts $channel "      Event-loop heartbeat age before watchdog alert. Default: 2 intervals"
+        puts $channel "  --diagnostics-watchdog-mode <sync|async>"
+        puts $channel "      Run watchdog in chore runner thread or a worker. Default: sync"
         puts $channel "  --quiet"
         puts $channel "  --debug"
         return
@@ -260,6 +274,14 @@ namespace eval ::tclwire::runtime {
 
     proc normalize_log_level {name value} {
         return [::tclwire::logger normalize_level $value]
+    }
+
+    proc normalize_diagnostics_mode {name value} {
+        set value [string tolower [string trim $value]]
+        if {$value ni {sync async}} {
+            error "invalid diagnostics mode for $name: $value"
+        }
+        return $value
     }
 
     proc resolve_config_path {config_dir value} {
@@ -395,6 +417,12 @@ namespace eval ::tclwire::runtime {
         set conn_max_wait       1000
         set conn_max_workers    100
         set conn_max_per_thread 5
+        set chores_enabled      0
+        set chore_interval_ms   5000
+        set diagnostics_enabled 0
+        set diagnostics_interval_ms 5000
+        set diagnostics_watchdog_max_age_ms 10000
+        set diagnostics_watchdog_mode sync
         set unix_socket         [file normalize /tmp/tclwire.sock]
         set ftp_user_check      1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
@@ -436,6 +464,12 @@ namespace eval ::tclwire::runtime {
                             conn_max_wait $conn_max_wait \
                             conn_max_workers $conn_max_workers \
                             conn_max_per_thread $conn_max_per_thread \
+                            chores_enabled $chores_enabled \
+                            chore_interval_ms $chore_interval_ms \
+                            diagnostics_enabled $diagnostics_enabled \
+                            diagnostics_interval_ms $diagnostics_interval_ms \
+                            diagnostics_watchdog_max_age_ms $diagnostics_watchdog_max_age_ms \
+                            diagnostics_watchdog_mode $diagnostics_watchdog_mode \
                             unix_socket  $unix_socket \
                             startservers $startservers \
                             services     $services \
@@ -503,6 +537,11 @@ namespace eval ::tclwire::runtime {
                     [normalize_log_level tclwire.log_level \
                         [dict get $global log_level]]
             }
+            if {[dict exists $global diagnostics_watchdog_mode]} {
+                dict set config diagnostics_watchdog_mode \
+                    [normalize_diagnostics_mode tclwire.diagnostics_watchdog_mode \
+                        [dict get $global diagnostics_watchdog_mode]]
+            }
 
             # dict filter selects the supported source fields; dict map
             # validates and replaces their values. The later merge applies
@@ -510,7 +549,8 @@ namespace eval ::tclwire::runtime {
             set booleans [dict map {field value} \
                     [dict filter $global key \
                         quiet debug debug_connection ftp_user_check \
-                        dump_multipart_requests] {
+                        dump_multipart_requests chores_enabled \
+                        diagnostics_enabled] {
                 parse_boolean "tclwire.$field" $value
             }]
             set paths [dict map {field value} \
@@ -524,6 +564,9 @@ namespace eval ::tclwire::runtime {
                 conn_max_wait 0
                 conn_max_workers 1
                 conn_max_per_thread 1
+                chore_interval_ms 100
+                diagnostics_interval_ms 100
+                diagnostics_watchdog_max_age_ms 100
                 max_request_bytes 1
                 max_header_bytes 1
                 request_memory_threshold 0
@@ -851,6 +894,34 @@ namespace eval ::tclwire::runtime {
                     dict set config unix_socket [file normalize \
                         [require_value $argv [incr i] $option]]
                 }
+                --enable-chores -
+                --chores {
+                    dict set config chores_enabled 1
+                }
+                --chore-interval-ms -
+                --chore_interval_ms {
+                    dict set config chore_interval_ms [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 100]
+                }
+                --diagnostics {
+                    dict set config diagnostics_enabled 1
+                }
+                --diagnostics-interval-ms -
+                --diagnostics_interval_ms {
+                    dict set config diagnostics_interval_ms [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 100]
+                }
+                --diagnostics-watchdog-max-age-ms -
+                --diagnostics_watchdog_max_age_ms {
+                    dict set config diagnostics_watchdog_max_age_ms [parse_integer_min $option \
+                        [require_value $argv [incr i] $option] 100]
+                }
+                --diagnostics-watchdog-mode -
+                --diagnostics_watchdog_mode {
+                    dict set config diagnostics_watchdog_mode \
+                        [normalize_diagnostics_mode $option \
+                            [require_value $argv [incr i] $option]]
+                }
                 --quiet {
                     dict set config quiet 1
                 }
@@ -1092,6 +1163,7 @@ namespace eval ::tclwire::runtime {
         set console_reactor {}
         set logger_started 0
         set tpba_started 0
+        set chore_started 0
         try {
 
             ::tclwire::logger start $config
@@ -1099,6 +1171,17 @@ namespace eval ::tclwire::runtime {
 
             ::tclwire::tpba start
             set tpba_started 1
+
+            if {[dict get $config chores_enabled] ||
+                [dict get $config diagnostics_enabled]} {
+                ::tclwire::chore start [dict create chore_interval_ms [dict get $config chore_interval_ms]]
+                set chore_started 1
+            }
+
+            if {[dict get $config diagnostics_enabled]} {
+                ::tclwire::diagnostics start $config \
+                    [list ::tclwire::runtime::transport_reactors]
+            }
 
             set configured_services {}
             foreach service [dict get $config services] {
@@ -1117,6 +1200,10 @@ namespace eval ::tclwire::runtime {
             $console_reactor start
 
         } on error {message options} {
+            catch {::tclwire::diagnostics stop}
+            if {$chore_started} {
+                catch {::tclwire::chore stop}
+            }
             if {$console_reactor ne {}} {
                 catch {$console_reactor destroy}
                 set console_reactor {}
@@ -1152,6 +1239,8 @@ namespace eval ::tclwire::runtime {
         variable console_reactor
         variable application_dispatcher
 
+        catch {::tclwire::diagnostics stop}
+        catch {::tclwire::chore stop}
         if {$console_reactor ne {}} {
             catch {$console_reactor destroy}
             set console_reactor {}
