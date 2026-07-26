@@ -204,7 +204,7 @@ namespace eval ::tclwire::http::multipart {
                 set channel [file tempfile path \
                     [file join $upload_area tclwire-upload]]
                 try {
-                    chan configure $channel -translation binary -encoding binary
+                    chan configure $channel -translation binary
                     puts -nonewline $channel [dict get $part body]
                 } finally {
                     close $channel
@@ -392,7 +392,7 @@ oo::class create ::tclwire::http::multipart::IncrementalParser {
         if {[dict exists $current_part filename]} {
             set current_channel \
                     [file tempfile current_path [file join $upload_area tclwire-upload]]
-            chan configure $current_channel -translation binary -encoding binary
+            chan configure $current_channel -translation binary
         }
         return
     }

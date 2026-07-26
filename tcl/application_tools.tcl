@@ -54,6 +54,11 @@ namespace eval ::tclwire::tools {
         return $authority
     }
 
+    proc origin_url {} {
+        set descriptor [current_request]
+        return "[request_scheme $descriptor]://[request_authority $descriptor]"
+    }
+
     proc script_path {descriptor} {
         if {![dict exists $descriptor path]} {
             error "current application request has no path"
@@ -67,7 +72,7 @@ namespace eval ::tclwire::tools {
 
     proc script_url {} {
         set descriptor [current_request]
-        return "[request_scheme $descriptor]://[request_authority $descriptor][script_path $descriptor]"
+        return "[origin_url][script_path $descriptor]"
     }
 
     proc directory_url {} {
@@ -89,8 +94,7 @@ namespace eval ::tclwire::tools {
 
         set path [lindex $args 0]
         if {[string match /* $path]} {
-            set descriptor [current_request]
-            return "[request_scheme $descriptor]://[request_authority $descriptor]$path"
+            return "[origin_url]$path"
         }
         return "[directory_url]$path"
     }
@@ -103,7 +107,7 @@ namespace eval ::tclwire::tools {
         return
     }
 
-    namespace export makeurl load_env
+    namespace export directory_url load_env makeurl origin_url script_url
 }
 
 package provide tclwire::application::tools 0.1

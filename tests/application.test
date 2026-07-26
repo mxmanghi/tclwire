@@ -107,6 +107,52 @@ test http-request-1.1 {HTTP request exposes a read-only semantic interface} -bod
     }
 } -result {GET /search {q Tcl} Tcl yes accepted payload 1}
 
+test http-request-1.1a {HTTP request exposes origin and absolute URL helpers} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /upload/form?mode=edit \
+        path /upload/form \
+        query mode=edit \
+        version 1.1 \
+        protocol https \
+        headers [dict create host example.test:9443] \
+        body_media raw \
+        body_storage in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 3]]
+    try {
+        list \
+            [$request scheme] \
+            [$request authority] \
+            [$request origin] \
+            [$request absolute_url] \
+            [$request absolute_url /submit] \
+            [$request absolute_url next]
+    } finally {
+        $request destroy
+    }
+} -result {https example.test:9443 https://example.test:9443 https://example.test:9443/upload/form?mode=edit https://example.test:9443/submit https://example.test:9443/upload/next}
+
+test application-tools-1.1 {request-scoped URL helpers expose the current origin} -body {
+    ::tclwire::tools::begin [dict create \
+        method POST \
+        target /tools/page \
+        path /tools/page \
+        protocol http \
+        headers [dict create host localhost:8990]]
+    try {
+        list \
+            [::tclwire::tools::origin_url] \
+            [::tclwire::tools::script_url] \
+            [::tclwire::tools::directory_url] \
+            [::tclwire::tools::makeurl /upload] \
+            [::tclwire::tools::makeurl result]
+    } finally {
+        ::tclwire::tools::end
+    }
+} -result {http://localhost:8990 http://localhost:8990/tools/page http://localhost:8990/tools/ http://localhost:8990/upload http://localhost:8990/tools/result}
+
 test http-request-1.2 {HTTP request exposes Content-Type parameters} -body {
     set request [::tclwire::HttpRequest new \
         [dict create    method      POST \

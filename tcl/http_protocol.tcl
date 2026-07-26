@@ -213,7 +213,7 @@ oo::class create ::tclwire::HttpProtocolSession {
             error "request body spool directory is not writable: $spool_directory"
         }
         set body_channel [file tempfile body_path [file join $spool_directory tclwire-request]]
-        chan configure $body_channel -translation binary -encoding binary
+        chan configure $body_channel -translation binary
         if {$body_data ne {}} {
             puts -nonewline $body_channel $body_data
             set body_data $::tclwire::constants::empty_bytearray

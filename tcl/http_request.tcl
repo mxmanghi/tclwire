@@ -87,6 +87,41 @@ oo::class create ::tclwire::HttpRequest {
         return $default_value
     }
 
+    method scheme {} {
+        switch -exact -- [my optional protocol http] {
+            https { return https }
+            default { return http }
+        }
+    }
+
+    method authority {} {
+        set authority [string trim [my header host]]
+        if {$authority eq {}} {
+            error "HTTP request has no Host header"
+        }
+        return $authority
+    }
+
+    method origin {} {
+        return "[my scheme]://[my authority]"
+    }
+
+    method absolute_url {{path {}}} {
+        if {$path eq {}} {
+            set path [my target]
+        }
+        if {[string match /* $path]} {
+            return "[my origin]$path"
+        }
+
+        set directory [my path]
+        if {![string match */ $directory]} {
+            set slash [string last / $directory]
+            set directory [string range $directory 0 $slash]
+        }
+        return "[my origin]$directory$path"
+    }
+
     method content_type {{default_value {}}} {
         return [my header content-type $default_value]
     }
