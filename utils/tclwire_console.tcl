@@ -15,6 +15,7 @@ package require tclreadline
 
 namespace eval ::tclwire::console_client {
     variable socket_path [file normalize /tmp/tclwire.sock]
+    variable channel      {}
     variable cmdcount    0
     variable history_file [file normalize ~/.tclwire-history]
     variable history_limit 200
@@ -27,6 +28,7 @@ namespace eval ::tclwire::console_client {
         CONF      {Show the effective runtime configuration.}
         LOGROTATE {Reopen the access and error log files.}
         SHUT      {Request an orderly server shutdown.}
+        RECONNECT {Reconnect to the console socket.}
         HELP      {List available console commands.}
         EXIT      {Leave the console client.}
     }
@@ -93,10 +95,29 @@ namespace eval ::tclwire::console_client {
         return $channel
     }
 
-    proc disconnect {channel} {
+    proc disconnect {{socket {}}} {
+        variable channel
         # unix_sockets 0.5 aborts Tcl when channels are explicitly closed on
         # this platform. Let interpreter teardown release the socket.
+        if {$socket eq {} || $socket eq $channel} {
+            set channel {}
+        }
         return
+    }
+
+    proc reconnect {} {
+        variable channel
+        disconnect $channel
+        set channel [connect]
+        return $channel
+    }
+
+    proc ensure_connected {} {
+        variable channel
+        if {$channel eq {}} {
+            set channel [connect]
+        }
+        return $channel
     }
 
     proc is_exit_command {command} {
@@ -105,6 +126,10 @@ namespace eval ::tclwire::console_client {
 
     proc is_help_command {command} {
         return [expr {[string toupper [string trim $command]] eq "HELP"}]
+    }
+
+    proc is_reconnect_command {command} {
+        return [expr {[string toupper [string trim $command]] eq "RECONNECT"}]
     }
 
     proc send_command {channel command} {
@@ -264,9 +289,11 @@ namespace eval ::tclwire::console_client {
         return
     }
 
-    proc interactive {channel} {
+    proc interactive {initial_channel} {
+        variable channel
         variable cmdcount
         variable readline_eof
+        set channel $initial_channel
         load_history
         set readline_eof 0
         set previous_eofchar [::tclreadline::readline eofchar]
@@ -294,10 +321,20 @@ namespace eval ::tclwire::console_client {
                     incr cmdcount
                     continue
                 }
+                if {[is_reconnect_command $line]} {
+                    if {[catch {reconnect} message]} {
+                        puts stderr $message
+                    } else {
+                        puts "reconnected"
+                    }
+                    incr cmdcount
+                    continue
+                }
                 if {[catch {
-                    set response [send_command $channel $line]
+                    set response [send_command [ensure_connected] $line]
                     print_response $response
                 } message]} {
+                    disconnect $channel
                     puts stderr $message
                 }
                 incr cmdcount
@@ -310,6 +347,7 @@ namespace eval ::tclwire::console_client {
 
     proc main {argv} {
         set command [parse_args $argv]
+        variable channel
         if {[llength $command] > 0 && [is_exit_command [join $command " "]]} {
             exit 0
         }

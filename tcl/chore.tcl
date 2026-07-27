@@ -7,11 +7,15 @@ package require Thread
 package require tclwire::constants 0.1
 
 namespace eval ::tclwire {}
+namespace eval ::tclwire::chores {}
 
 oo::class create ::tclwire::Chore {
-    variable name
+    variable name status
 
     constructor args {
+        if {[info object class [self]] eq "::tclwire::Chore"} {
+            error "::tclwire::Chore is abstract"
+        }
         array set options {
             -name {}
         }
@@ -25,6 +29,7 @@ oo::class create ::tclwire::Chore {
         if {$name eq {}} {
             set name [namespace tail [self class]]
         }
+        set status [dict create state idle runs 0 skips 0 failures 0]
     }
 
     method name {} {
@@ -36,14 +41,32 @@ oo::class create ::tclwire::Chore {
     }
 
     method run {wakeup} {
-        return {}
+        error "[self class] must implement run"
     }
 
     method wakeup {wakeup} {
         if {![my should_run $wakeup]} {
+            dict incr status skips
+            dict set status state skipped
+            dict set status last_wakeup $wakeup
             return [dict create skipped 1]
         }
-        return [my run $wakeup]
+        if {[catch {my run $wakeup} result options]} {
+            dict incr status failures
+            dict set status state failed
+            dict set status last_wakeup $wakeup
+            dict set status last_error $result
+            return -options $options $result
+        }
+        dict incr status runs
+        dict set status state ran
+        dict set status last_wakeup $wakeup
+        dict set status last_result $result
+        return $result
+    }
+
+    method status {} {
+        return $status
     }
 }
 
@@ -82,6 +105,44 @@ oo::class create ::tclwire::TsvRecordingChore {
     }
 }
 
+oo::class create ::tclwire::ApplicationChore {
+    superclass ::tclwire::Chore
+
+    variable application_id application_config pool_key
+
+    constructor args {
+        array set options {
+            -applicationid {}
+            -applicationconfig {}
+            -poolkey {}
+        }
+        set remaining {}
+        foreach {option value} $args {
+            if {[info exists options($option)]} {
+                set options($option) $value
+            } else {
+                lappend remaining $option $value
+            }
+        }
+        set application_id $options(-applicationid)
+        set application_config $options(-applicationconfig)
+        set pool_key $options(-poolkey)
+        next {*}$remaining
+    }
+
+    method application_id {} {
+        return $application_id
+    }
+
+    method application_config {} {
+        return $application_config
+    }
+
+    method pool_key {} {
+        return $pool_key
+    }
+}
+
 namespace eval ::tclwire::chore {
     variable runner_thread_id {}
     variable project_root [file dirname [file dirname [file normalize [info script]]]]
@@ -97,34 +158,154 @@ namespace eval ::tclwire::chore {
     #
     #   name    Stable chore id used in status output and passed as -name to
     #           the chore object constructor. Required.
-    #   package Package to require before constructing the chore. Optional for
-    #           sync chores, but async chores normally need it because worker
-    #           threads start with a fresh interpreter.
-    #   class   TclOO class derived from ::tclwire::Chore. Required.
+    #   package Package to require before constructing the chore. Optional.
+    #   file    Tcl file to source before constructing the chore. Optional.
+    #   class   TclOO class derived from ::tclwire::Chore. Required unless
+    #           file defines exactly one new chore subclass.
     #   args    Extra constructor option list appended after "-name $name".
-    #   mode    "sync" runs the chore in the scheduler thread; "async" gives
-    #           the chore its own worker thread and sends wakeups asynchronously.
+    #   paths   Directories appended to auto_path before package/file loading.
     #
-    # Runtime-only fields are added after registration: sync chores receive an
-    # object handle, async chores receive a worker thread id, and every wakeup
-    # stores last_status/last_wakeup for inspection.
+    # Runtime-only fields are added after registration: chore records receive an
+    # object handle, and every wakeup stores last_status/last_wakeup for
+    # inspection.
     proc normalize_chore_spec {spec} {
         if {[catch {dict size $spec}]} {
             error "chore spec must be a dictionary"
         }
         set spec [dict merge [dict create \
-            name {} package {} class {} args {} mode sync] $spec]
-        foreach field {name class} {
+            name {} package {} file {} class {} args {} paths {} \
+            application_context {}] $spec]
+        foreach field {name} {
             if {[string trim [dict get $spec $field]] eq {}} {
                 error "chore spec is missing $field"
             }
         }
-        set mode [string tolower [string trim [dict get $spec mode]]]
-        if {$mode ni {sync async}} {
-            error "chore mode must be sync or async"
+        if {[string trim [dict get $spec class]] eq {} &&
+                [string trim [dict get $spec file]] eq {}} {
+            error "chore spec is missing class or file"
         }
-        dict set spec mode $mode
+        if {[catch {llength [dict get $spec paths]}]} {
+            error "chore spec paths must be a list"
+        }
+        if {[dict exists $spec mode]} {
+            dict unset spec mode
+        }
         return $spec
+    }
+
+    proc chore_subclasses {{class ::tclwire::Chore}} {
+        set classes {}
+        foreach subclass [info class subclasses $class] {
+            lappend classes $subclass
+            lappend classes {*}[chore_subclasses $subclass]
+        }
+        return $classes
+    }
+
+    proc dict_from_list {values} {
+        set result [dict create]
+        foreach value $values {
+            dict set result $value 1
+        }
+        return $result
+    }
+
+    proc chore_namespace_commands {} {
+        return [info commands ::tclwire::chores::*]
+    }
+
+    proc qualify_chore_class {class} {
+        if {$class eq {} || [string match ::* $class]} {
+            return $class
+        }
+        return ::tclwire::chores::$class
+    }
+
+    proc infer_loaded_chore_class {file classes} {
+        if {[llength $classes] == 1} {
+            return [lindex $classes 0]
+        }
+        if {[llength $classes] == 0} {
+            error "chore file '$file' did not define a ::tclwire::Chore subclass"
+        }
+        error "chore file '$file' defines multiple chore classes: [join $classes {, }]"
+    }
+
+    proc chore_class_exists {class} {
+        set class [qualify_chore_class $class]
+        return [expr {![catch {info class superclasses $class}]}]
+    }
+
+    proc validate_chore_class {class} {
+        set class [qualify_chore_class $class]
+        if {[catch {info class superclasses $class}]} {
+            error "chore class does not exist: $class"
+        }
+        if {$class ni [chore_subclasses]} {
+            error "chore class does not inherit from ::tclwire::Chore: $class"
+        }
+        return $class
+    }
+
+    proc is_application_chore_class {class} {
+        return [expr {$class eq "::tclwire::ApplicationChore" ||
+                $class in [chore_subclasses ::tclwire::ApplicationChore]}]
+    }
+
+    proc agent_load_chore_file {file class} {
+        variable agent_chore_files
+
+        set file [file normalize $file]
+        set class [qualify_chore_class $class]
+        if {[dict exists $agent_chore_files $file]} {
+            set loaded_classes [dict get $agent_chore_files $file]
+            if {$class eq {}} {
+                return [infer_loaded_chore_class $file $loaded_classes]
+            }
+            validate_chore_class $class
+            if {$class ni $loaded_classes} {
+                error "chore file '$file' did not load chore class: $class"
+            }
+            return $class
+        }
+
+        if {$class ne {} && [chore_class_exists $class]} {
+            validate_chore_class $class
+            dict set agent_chore_files $file [list $class]
+            return $class
+        }
+
+        set before_commands [dict_from_list [chore_namespace_commands]]
+        set before_classes [chore_subclasses]
+        namespace eval ::tclwire::chores [list source $file]
+        set before [dict_from_list $before_classes]
+        set loaded_classes {}
+        foreach command [chore_namespace_commands] {
+            if {[dict exists $before_commands $command]} {
+                continue
+            }
+            if {[chore_class_exists $command] &&
+                    $command in [chore_subclasses]} {
+                lappend loaded_classes $command
+            }
+        }
+        foreach loaded_class [chore_subclasses] {
+            if {![dict exists $before $loaded_class] &&
+                    $loaded_class ni $loaded_classes} {
+                lappend loaded_classes $loaded_class
+            }
+        }
+
+        if {$class eq {}} {
+            set class [infer_loaded_chore_class $file $loaded_classes]
+        } else {
+            validate_chore_class $class
+            if {$class ni $loaded_classes} {
+                lappend loaded_classes $class
+            }
+        }
+        dict set agent_chore_files $file $loaded_classes
+        return $class
     }
 
     proc thread_id {} {
@@ -146,8 +327,8 @@ namespace eval ::tclwire::chore {
         }
         set interval_ms 5000
         if {[dict exists $config chore_interval_ms]} {
-            set interval_ms [validate_interval chore_interval_ms \
-                [dict get $config chore_interval_ms] 100]
+            set interval_ms \
+                [validate_interval chore_interval_ms [dict get $config chore_interval_ms] 100]
         }
         set normalized_specs {}
         foreach spec $chore_specs {
@@ -162,8 +343,8 @@ namespace eval ::tclwire::chore {
         try {
             ::thread::send $tid [list lappend auto_path $project_root]
             ::thread::send $tid {package require tclwire::chore 0.1}
-            ::thread::send $tid [list ::tclwire::chore::agent_initialize \
-                $interval_ms $normalized_specs]
+            ::thread::send $tid \
+                [list ::tclwire::chore::agent_initialize $interval_ms $normalized_specs]
         } on error {message options} {
             catch {::thread::send -async $tid [list ::thread::release $tid]}
             return -options $options $message
@@ -225,12 +406,14 @@ namespace eval ::tclwire::chore {
         variable agent_timer
         variable agent_chores
         variable agent_running
+        variable agent_chore_files
 
-        set agent_interval_ms $interval
-        set agent_sequence 0
-        set agent_timer {}
-        set agent_chores {}
-        set agent_running 1
+        set agent_interval_ms   $interval
+        set agent_sequence      0
+        set agent_timer         {}
+        set agent_chores        {}
+        set agent_running       1
+        set agent_chore_files   {}
 
         foreach spec $specs {
             lappend agent_chores [agent_create_chore $spec]
@@ -241,7 +424,7 @@ namespace eval ::tclwire::chore {
 
     # Scheduler-thread registration hook.  Subsystems call ::tclwire::chore
     # register from their own start path; the scheduler thread owns construction
-    # so sync chore objects remain local to this interpreter.
+    # so chore objects remain local to this interpreter.
     proc agent_register {specs} {
         variable agent_chores
 
@@ -251,63 +434,41 @@ namespace eval ::tclwire::chore {
         return [agent_status]
     }
 
-    # Scheduler-thread chore construction.  Sync chores live directly in the
-    # scheduler interpreter. Async chores get a fresh worker interpreter so slow
-    # or blocking work cannot delay later scheduler ticks.
+    # Scheduler-thread chore construction. Chores live directly in the
+    # scheduler interpreter and own their own run/refusal policy.
     proc agent_create_chore {spec} {
-        variable project_root
-        set package [dict get $spec package]
-        set class [dict get $spec class]
-        set args [dict get $spec args]
-        set mode [dict get $spec mode]
-        set name [dict get $spec name]
+        set package     [dict get $spec package]
+        set file        [dict get $spec file]
+        set class       [dict get $spec class]
+        set args        [dict get $spec args]
+        set name        [dict get $spec name]
+        set paths       [dict get $spec paths]
+        set application_context [dict get $spec application_context]
 
-        if {$mode eq "sync"} {
-            if {$package ne {}} {
-                package require $package
+        foreach directory $paths {
+            if {$directory ne {} && $directory ni $::auto_path} {
+                lappend ::auto_path $directory
             }
-            set object [{*}[list $class new -name $name] {*}$args]
-            return [dict merge $spec [dict create object $object worker {}]]
         }
 
-        set worker [::thread::create {
-            package require Thread
-            ::thread::wait
-        }]
-        try {
-            ::thread::send $worker [list lappend auto_path $project_root]
-            ::thread::send $worker {package require tclwire::chore 0.1}
-            if {$package ne {}} {
-                ::thread::send $worker [list package require $package]
-            }
-            ::thread::send $worker [list ::tclwire::chore::worker_initialize \
-                $class $name $args]
-        } on error {message options} {
-            catch {::thread::send -async $worker [list ::thread::release $worker]}
-            return -options $options $message
+        if {$package ne {}} {
+            package require $package
         }
-        return [dict merge $spec [dict create object {} worker $worker]]
-    }
-
-    # Async worker-thread entry point.  The scheduler sends wakeups to this
-    # interpreter after the chore object has been constructed here.
-    proc worker_initialize {class name args} {
-        variable worker_chore
-        set worker_chore [{*}[list $class new -name $name] {*}[lindex $args 0]]
-        return $worker_chore
-    }
-
-    proc worker_wakeup {wakeup} {
-        variable worker_chore
-        return [$worker_chore wakeup $wakeup]
-    }
-
-    proc worker_shutdown {} {
-        variable worker_chore
-        catch {$worker_chore destroy}
-        set worker_chore {}
-        after 0 [list ::thread::release [::thread::id]]
-        return
+        if {$file ne {}} {
+            set class [agent_load_chore_file $file $class]
+            dict set spec class $class
+        }
+        set class [validate_chore_class $class]
+        dict set spec class $class
+        if {$application_context ne {} && [is_application_chore_class $class]} {
+            lappend args \
+                -applicationid [dict get $application_context application_id] \
+                -applicationconfig [dict get $application_context application_config] \
+                -poolkey [dict get $application_context pool_key]
+        }
+        set object [{*}[list $class new -name $name] {*}$args]
+        dict unset spec application_context
+        return [dict merge $spec [dict create object $object]]
     }
 
     # Scheduler-thread timer arm.  Keeping one outstanding after token prevents
@@ -338,11 +499,10 @@ namespace eval ::tclwire::chore {
         }
         incr agent_sequence
         set now [clock milliseconds]
-        set wakeup [dict create \
-            sequence $agent_sequence \
-            now_ms $now \
-            interval_ms $agent_interval_ms \
-            scheduler_thread_id [::thread::id]]
+        set wakeup [dict create sequence    $agent_sequence \
+                                now_ms      $now \
+                                interval_ms $agent_interval_ms \
+                                scheduler_thread_id [::thread::id]]
         set updated {}
         foreach record $agent_chores {
             set status [agent_fire_chore $record $wakeup]
@@ -355,27 +515,14 @@ namespace eval ::tclwire::chore {
         return
     }
 
-    # Scheduler-thread dispatch boundary.  Sync mode executes and records the
-    # result immediately. Async mode queues work to the chore's worker and only
-    # records whether the send succeeded.
+    # Scheduler-thread dispatch boundary. The chore decides whether the wakeup
+    # means it has work to do and records its own status internally.
     proc agent_fire_chore {record wakeup} {
-        set mode [dict get $record mode]
-        if {$mode eq "sync"} {
-            if {[catch {[dict get $record object] wakeup $wakeup} result options]} {
-                return [dict create ok 0 error $result errorcode [dict get $options -errorcode]]
-            }
-            return [dict create ok 1 result $result]
-        }
-        set worker [dict get $record worker]
-        if {$worker eq {} || ![::thread::exists $worker]} {
-            return [dict create ok 0 error worker_not_running]
-        }
-        if {[catch {
-            ::thread::send -async $worker [list ::tclwire::chore::worker_wakeup $wakeup]
-        } result options]} {
+        set object [dict get $record object]
+        if {[catch {$object wakeup $wakeup} result options]} {
             return [dict create ok 0 error $result errorcode [dict get $options -errorcode]]
         }
-        return [dict create ok 1 async 1]
+        return [dict create ok 1 result $result status [$object status]]
     }
 
     # Scheduler-thread status snapshot.  Object handles are interpreter-local,
@@ -386,20 +533,21 @@ namespace eval ::tclwire::chore {
         variable agent_chores
         set chores {}
         foreach record $agent_chores {
+            if {[dict exists $record object]} {
+                dict set record status [[dict get $record object] status]
+            }
             dict unset record object
             lappend chores $record
         }
-        return [dict create \
-            running 1 \
-            thread_id [::thread::id] \
-            interval_ms $agent_interval_ms \
-            sequence $agent_sequence \
-            chores $chores]
+        return [dict create running     1 \
+                            thread_id   [::thread::id] \
+                            interval_ms $agent_interval_ms \
+                            sequence    $agent_sequence \
+                            chores      $chores]
     }
 
-    # Scheduler-thread shutdown.  Sync chore objects are destroyed in-place;
-    # async workers receive their own shutdown command before this interpreter
-    # releases itself.
+    # Scheduler-thread shutdown. Chore objects are destroyed in-place before
+    # this interpreter releases itself.
     proc agent_shutdown {} {
         variable agent_timer
         variable agent_running
@@ -411,14 +559,7 @@ namespace eval ::tclwire::chore {
             set agent_timer {}
         }
         foreach record $agent_chores {
-            if {[dict get $record mode] eq "sync"} {
-                catch {[dict get $record object] destroy}
-            } else {
-                set worker [dict get $record worker]
-                if {$worker ne {} && [::thread::exists $worker]} {
-                    catch {::thread::send $worker ::tclwire::chore::worker_shutdown}
-                }
-            }
+            catch {[dict get $record object] destroy}
         }
         set agent_chores {}
         after 0 [list ::thread::release [::thread::id]]

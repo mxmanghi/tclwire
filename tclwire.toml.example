@@ -11,8 +11,9 @@
 # option overrides the port below.
 #
 # Configuration paths are resolved relative to the directory containing this
-# file. Relative application "file" values are searched for under the
-# application's docroot, its effective libdir, and the TclWire installation.
+# file. Relative application "file" and application "chore" values are searched
+# for under the run directory, the application's docroot, its effective libdir,
+# and the TclWire installation.
 
 [tclwire]
 # Local address used by service listeners. Legacy "host" is still accepted.
@@ -46,6 +47,12 @@ request_memory_threshold = 1048576
 # libdir overrides this value. The application docroot still has precedence.
 # libdir = "/opt/tclwire-apps"
 
+# Optional server chore registered once for the TclWire runtime. Relative
+# paths are searched under the run directory, configuration directory, global
+# libdir when set, and the TclWire installation.
+# chore = "examples/five_minute_chore.tcl"
+# chore_class = "FiveMinuteLogChore"
+
 # Empty values preserve the runtime's current TLS defaults. Set these when
 # secure protocols should share one certificate and private key.
 certfile = ""
@@ -77,8 +84,18 @@ class = "::tclwire::CApplication"
 
 # "file" is the application entry point. Loading it should define the TclOO
 # class named by "class". Relative paths are searched for in this order:
-# application docroot, effective libdir, TclWire installation directory.
+# run directory, application docroot, effective libdir, TclWire installation
+# directory.
 file = "tcl/application.tcl"
+
+# Optional scheduler chore for this application. Loading it must define a
+# concrete TclOO class inheriting from ::tclwire::ApplicationChore when it
+# needs application_id, application_config, or pool_key. If the file defines
+# exactly one new chore subclass, the scheduler registers that class
+# automatically; otherwise set chore_class explicitly. Application chores are
+# not inherited from the default application into virtual hosts.
+# chore = "application-maintenance-chore.tcl"
+# chore_class = "ApplicationMaintenanceChore"
 
 # Optional per-application override for [tclwire].libdir.
 # libdir = "/opt/tclwire-apps/default"

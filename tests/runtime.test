@@ -63,7 +63,6 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config diagnostics_enabled] \
         [dict get $config diagnostics_interval_ms] \
         [dict get $config diagnostics_watchdog_max_age_ms] \
-        [dict get $config diagnostics_watchdog_mode] \
         [dict get $config help]
 } -result [list \
     127.0.0.1 \
@@ -90,7 +89,6 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     0 \
     5000 \
     10000 \
-    sync \
     0]
 
 test runtime-1.2 {legacy service options are normalized without starting services} -body {
@@ -185,16 +183,134 @@ test runtime-1.2ba {diagnostic options are parsed from CLI aliases} -body {
         --chore-interval-ms 800 \
         --diagnostics \
         --diagnostics-interval-ms 1200 \
-        --diagnostics-watchdog-max-age-ms 2400 \
-        --diagnostics-watchdog-mode async]]
+        --diagnostics-watchdog-max-age-ms 2400]]
     list \
         [dict get $config chores_enabled] \
         [dict get $config chore_interval_ms] \
         [dict get $config diagnostics_enabled] \
         [dict get $config diagnostics_interval_ms] \
-        [dict get $config diagnostics_watchdog_max_age_ms] \
-        [dict get $config diagnostics_watchdog_mode]
-} -result {1 800 1 1200 2400 async}
+        [dict get $config diagnostics_watchdog_max_age_ms]
+} -result {1 800 1 1200 2400}
+
+test runtime-1.2bb {application chore files resolve through application libdir} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "site.example.test"
+
+[http]
+enabled = true
+port = 8080
+
+[http."site.example.test"]
+class = "::example::Application"
+package = "tclwire::application"
+docroot = "www"
+libdir = "site-lib"
+chore = "site-chore.tcl"
+}]
+    set directory [file dirname $config_file]
+    file mkdir [file join $directory site-lib]
+    ::fileutil::writeFile [file join $directory site-lib site-chore.tcl] {
+package require tclwire::chore 0.1
+oo::class create ::example::SiteChore {
+    superclass ::tclwire::Chore
+    method run {wakeup} {
+        return [dict create ok 1]
+    }
+}
+}
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set specs [::tclwire::runtime::application_chore_specs $config]
+    set spec [lindex $specs 0]
+    list \
+        [::tclwire::runtime::config_has_application_chores $config] \
+        [dict get $config applications site.example.test chore] \
+        [dict get $spec name] \
+        [dict get $spec file] \
+        [expr {[file join $directory site-lib] in [dict get $spec paths]}]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    1 \
+    site-chore.tcl \
+    application:site.example.test \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] site-lib site-chore.tcl]] \
+    1]
+
+test runtime-1.2bc {server chore files resolve from tclwire stanza} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+chore = "server-chore.tcl"
+chore_class = "ServerChore"
+}]
+    set directory [file dirname $config_file]
+    ::fileutil::writeFile [file join $directory server-chore.tcl] {
+package require tclwire::chore 0.1
+oo::class create ServerChore {
+    superclass ::tclwire::Chore
+    method run {wakeup} {
+        return [dict create ok 1]
+    }
+}
+}
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set specs [::tclwire::runtime::server_chore_specs $config]
+    set spec [lindex $specs 0]
+    list \
+        [::tclwire::runtime::config_has_server_chores $config] \
+        [dict get $spec name] \
+        [dict get $spec file] \
+        [dict get $spec class] \
+        [expr {$directory in [dict get $spec paths]}]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    1 \
+    server:default \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] server-chore.tcl]] \
+    ServerChore \
+    1]
+
+test runtime-1.2bd {default application chore is not inherited by virtual hosts} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "default"
+
+[http]
+enabled = true
+port = 8080
+
+[http.default]
+class = "::example::Application"
+package = "tclwire::application"
+docroot = "www"
+chore = "default-chore.tcl"
+
+[http."hello.example.test"]
+docroot = "www"
+}]
+    set directory [file dirname $config_file]
+    file mkdir [file join $directory www]
+    ::fileutil::writeFile [file join $directory www default-chore.tcl] {
+package require tclwire::chore 0.1
+oo::class create DefaultChore {
+    superclass ::tclwire::ApplicationChore
+    method run {wakeup} {
+        return [dict create application [my application_id]]
+    }
+}
+}
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set specs [::tclwire::runtime::application_chore_specs $config]
+    list \
+        [llength $specs] \
+        [dict get [lindex $specs 0] name] \
+        [dict exists $config applications hello.example.test chore]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {1 application:default 0}
 
 test runtime-1.2c {HTTP services inherit and override the upload area} -body {
     set global_area [file normalize ./global-uploads]
@@ -290,11 +406,15 @@ test runtime-1.5a {missing document root is seeded from generated documentation}
     list \
         [file isdirectory $docroot] \
         [string match {*TclWire Documentation*} $index] \
-        [file isfile [file join $docroot worker_request_api.html]]
+        [file isfile [file join $docroot worker_request_api.html]] \
+        [file isfile [file join $docroot application_configuration.html]] \
+        [file isfile [file join $docroot chores.html]] \
+        [string match {*href="application_configuration.html"*} $index] \
+        [string match {*href="chores.html"*} $index]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $docroot}
-} -result {1 1 1}
+} -result {1 1 1 1 1 1 1}
 
 test runtime-1.5b {existing document root is not seeded or overwritten} -body {
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
@@ -332,11 +452,15 @@ test runtime-1.5d {forced document root seeding writes existing directory} -body
     set index [::fileutil::cat -encoding utf-8 [file join $docroot index.html]]
     list \
         [string match {*TclWire Documentation*} $index] \
-        [file isfile [file join $docroot worker_request_api.html]]
+        [file isfile [file join $docroot worker_request_api.html]] \
+        [file isfile [file join $docroot application_configuration.html]] \
+        [file isfile [file join $docroot chores.html]] \
+        [string match {*href="application_configuration.html"*} $index] \
+        [string match {*href="chores.html"*} $index]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $docroot}
-} -result {1 1}
+} -result {1 1 1 1 1 1}
 
 test runtime-1.5e {force docroot seeding is a global CLI option} -body {
     set config [::tclwire::runtime parse_args [list --force-docroot-seeding]]
@@ -366,6 +490,32 @@ test runtime-1.5f {repository site content is copied below manual directory} -bo
     catch {file delete -force $project_root}
     catch {file delete -force $docroot}
 } -result {1 manual-home manual-css}
+
+test runtime-1.5fa {manual site seeding merges existing directories} -body {
+    set original_project_root $::tclwire::support::project_root
+    set project_root [file join [temporaryDirectory] tclwire-runtime-site-[pid]]
+    set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    file mkdir [file join $project_root site stylesheets]
+    file mkdir [file join $docroot manual stylesheets]
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $project_root site stylesheets tclwire-manual.css] updated
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot manual stylesheets old.css] old
+
+    set ::tclwire::support::project_root $project_root
+    list \
+        [::tclwire::support seed_manual_site $docroot] \
+        [::fileutil::cat -encoding utf-8 \
+            [file join $docroot manual stylesheets tclwire-manual.css]] \
+        [::fileutil::cat -encoding utf-8 \
+            [file join $docroot manual stylesheets old.css]] \
+        [file exists [file join $docroot manual stylesheets stylesheets]]
+} -cleanup {
+    set ::tclwire::support::project_root $original_project_root
+    ::tclwire::runtime_test::cleanup
+    catch {file delete -force $project_root}
+    catch {file delete -force $docroot}
+} -result {1 updated old 0}
 
 test runtime-1.5g {connection queue limits configure reactor and pool policy} -body {
     ::tclwire::runtime start [list \
@@ -523,7 +673,6 @@ chore_interval_ms = 700
 diagnostics_enabled = true
 diagnostics_interval_ms = 1500
 diagnostics_watchdog_max_age_ms = 4500
-diagnostics_watchdog_mode = "async"
 default_application = "site.example.test"
 
 [http]
@@ -579,7 +728,6 @@ port = 8081
         [dict get $config diagnostics_enabled] \
         [dict get $config diagnostics_interval_ms] \
         [dict get $config diagnostics_watchdog_max_age_ms] \
-        [dict get $config diagnostics_watchdog_mode] \
         [dict get $config startservers] \
         [dict get $config services] \
         [dict get $config default_application] \
@@ -604,7 +752,6 @@ port = 8081
     1 \
     1500 \
     4500 \
-    async \
     {https ftp} \
     [list \
         [dict create protocol https port 8443 upload_area [file normalize /tmp] \

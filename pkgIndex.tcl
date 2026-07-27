@@ -205,6 +205,7 @@ package ifneeded tclwire::diagnostics 0.1 [subst {
     package require tclwire::accounting 1.2
     package require tclwire::chore 0.1
     package require tclwire::logger::client 0.1
+    package require tclwire::tpba::control 0.1
     source [list [file join $dir tcl diagnostics.tcl]]
 }]
 

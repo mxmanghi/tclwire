@@ -307,11 +307,11 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     }
 
     method pool_status {pool_key} {
-        set record [my require_pool $pool_key]
-        set master [dict get $record thread_master]
-        set stats [dict create  max_threads_number 0 \
-                                live_threads_number 0 \
-                                per_status_lists {}]
+        set record  [my require_pool $pool_key]
+        set master  [dict get $record thread_master]
+        set stats   [dict create    max_threads_number  0   \
+                                    live_threads_number 0   \
+                                    per_status_lists    {}]
         if {$master ne {}} {
             set stats [$master stats]
         }
@@ -328,16 +328,18 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         set result [dict create pools [dict create]]
         dict for {pool_key record} $pools {
             set master [dict get $record thread_master]
+
             if {$master eq {}} {
                 set stats [dict create]
             } else {
                 set stats [$master stats]
             }
-            dict set result pools $pool_key [dict create \
-                lifecycle_state [dict get $record lifecycle_state] \
-                descriptor [dict get $record descriptor] \
-                policy [dict get $record policy] \
-                stats $stats]
+
+            dict set result pools $pool_key \
+                [dict create lifecycle_state    [dict get $record lifecycle_state] \
+                             descriptor         [dict get $record descriptor] \
+                             policy             [dict get $record policy] \
+                             stats              $stats]
         }
         dict set result pool_count [dict size $pools]
         return $result
@@ -448,8 +450,13 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                             result          $result]
     }
 
-    unexport command_value normalize_pool_key normalize_policy pool_family require_pool \
-        metric_class dispatch_workload_notification
+    unexport    command_value   \
+                normalize_pool_key \
+                normalize_policy \
+                pool_family     \
+                require_pool    \
+                metric_class    \
+                dispatch_workload_notification
 }
 
 if {[info commands ::tclwire::TPBA] eq {}} {

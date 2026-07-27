@@ -16,6 +16,8 @@ kept under `runtime-doc/`:
 
 - [Worker Request API](runtime-doc/WORKER_REQUEST_API.md): worker-facing HTTP request
   and response API.
+- [Application Configuration](runtime-doc/APPLICATION_CONFIGURATION.md): immutable
+  application descriptor object and serialization envelope.
 - [Console](runtime-doc/CONSOLE.md): Unix-domain inspection and control socket,
   including `PS`, `CONN`, `LOGROTATE`, and `SHUT`.
 - [Inter-Thread Communication](runtime-doc/INTER_THREAD_COMMUNICATION.md): current
@@ -24,4 +26,6 @@ kept under `runtime-doc/`:
   buffering behavior and future body-mode constraints.
 - [Agent Communication Data Structures](runtime-doc/AGENT_DATA_STRUCTURES.md):
   dictionaries and event structures exchanged among current agents.
+- [Chores](runtime-doc/CHORES.md): scheduler-owned periodic maintenance tasks,
+  server/application chore registration, and implementation examples.
 - [Reimplementation TODO](runtime-doc/TODO.md): migration status and remaining gaps.

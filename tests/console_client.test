@@ -27,10 +27,17 @@ test console-client-1.2a {HELP is recognized and describes all commands} -body {
     list \
         [::tclwire::console_client::is_help_command { help }] \
         [::tclwire::console_client::is_help_command PS] \
-        [lmap command {PS SERVICES CONN CWORK CONF LOGROTATE SHUT HELP EXIT} {
+        [lmap command {PS SERVICES CONN CWORK CONF LOGROTATE SHUT RECONNECT HELP EXIT} {
             regexp -line "^  $command +\\S" $help
         }]
-} -result {1 0 {1 1 1 1 1 1 1 1 1}}
+} -result {1 0 {1 1 1 1 1 1 1 1 1 1}}
+
+test console-client-1.2b {RECONNECT is recognized as a local console command} -body {
+    list \
+        [::tclwire::console_client::is_reconnect_command RECONNECT] \
+        [::tclwire::console_client::is_reconnect_command { reconnect }] \
+        [::tclwire::console_client::is_reconnect_command SHUT]
+} -result {1 1 0}
 
 test console-client-1.3 {interactive EXIT does not send a server command} -body {
     rename ::tclreadline::readline ::tclreadline::readline.real
@@ -102,6 +109,143 @@ test console-client-1.3a {interactive Ctrl-D EOF exits without sending a command
         namespace delete ::tclwire::console_client_test
     }
 } -result {ok {}}
+
+test console-client-1.3b {interactive RECONNECT opens a fresh console socket} -body {
+    rename ::tclreadline::readline ::tclreadline::readline.real
+    namespace eval ::tclwire::console_client_test {
+        variable script {RECONNECT EXIT}
+        variable reconnect_calls 0
+    }
+    proc ::tclreadline::readline {args} {
+        variable ::tclwire::console_client_test::script
+        switch -exact -- [lindex $args 0] {
+            eofchar {
+                if {[llength $args] == 1} {
+                    return {}
+                }
+                return [lindex $args 1]
+            }
+            read {
+                set line [lindex $script 0]
+                set script [lrange $script 1 end]
+                return $line
+            }
+            add -
+            write {
+                return
+            }
+            default {
+                return {}
+            }
+        }
+    }
+    proc test_reconnect {} {
+        variable ::tclwire::console_client_test::reconnect_calls
+        incr reconnect_calls
+        return new-channel
+    }
+    proc test_send_command {channel command} {
+        error "unexpected send: $command"
+    }
+    rename ::puts ::puts.real
+    proc ::puts {args} {
+        return
+    }
+    rename ::tclwire::console_client::reconnect \
+        ::tclwire::console_client::reconnect.real
+    rename test_reconnect ::tclwire::console_client::reconnect
+    rename ::tclwire::console_client::send_command \
+        ::tclwire::console_client::send_command.real
+    rename test_send_command ::tclwire::console_client::send_command
+    try {
+        ::tclwire::console_client::interactive old-channel
+        set ::tclwire::console_client_test::reconnect_calls
+    } finally {
+        rename ::tclwire::console_client::send_command {}
+        rename ::tclwire::console_client::send_command.real \
+            ::tclwire::console_client::send_command
+        rename ::tclwire::console_client::reconnect {}
+        rename ::tclwire::console_client::reconnect.real \
+            ::tclwire::console_client::reconnect
+        rename ::puts {}
+        rename ::puts.real ::puts
+        rename ::tclreadline::readline {}
+        rename ::tclreadline::readline.real ::tclreadline::readline
+        namespace delete ::tclwire::console_client_test
+    }
+} -result 1
+
+test console-client-1.3c {interactive reconnects lazily after a failed command exchange} -body {
+    rename ::tclreadline::readline ::tclreadline::readline.real
+    namespace eval ::tclwire::console_client_test {
+        variable script {PS PS EXIT}
+        variable sends {}
+        variable connects 0
+    }
+    proc ::tclreadline::readline {args} {
+        variable ::tclwire::console_client_test::script
+        switch -exact -- [lindex $args 0] {
+            eofchar {
+                if {[llength $args] == 1} {
+                    return {}
+                }
+                return [lindex $args 1]
+            }
+            read {
+                set line [lindex $script 0]
+                set script [lrange $script 1 end]
+                return $line
+            }
+            add -
+            write {
+                return
+            }
+            default {
+                return {}
+            }
+        }
+    }
+    proc test_connect {} {
+        variable ::tclwire::console_client_test::connects
+        incr connects
+        return new-channel
+    }
+    proc test_send_command {channel command} {
+        variable ::tclwire::console_client_test::sends
+        lappend sends $channel $command
+        if {$channel eq "old-channel"} {
+            error "server closed the console socket without a response"
+        }
+        return [dict create ok true type ok command $command message ok]
+    }
+    rename ::puts ::puts.real
+    proc ::puts {args} {
+        return
+    }
+    rename ::tclwire::console_client::connect \
+        ::tclwire::console_client::connect.real
+    rename test_connect ::tclwire::console_client::connect
+    rename ::tclwire::console_client::send_command \
+        ::tclwire::console_client::send_command.real
+    rename test_send_command ::tclwire::console_client::send_command
+    try {
+        ::tclwire::console_client::interactive old-channel
+        list $::tclwire::console_client_test::connects \
+            $::tclwire::console_client_test::sends
+    } finally {
+        rename ::tclwire::console_client::send_command {}
+        rename ::tclwire::console_client::send_command.real \
+            ::tclwire::console_client::send_command
+        rename ::tclwire::console_client::connect {}
+        rename ::tclwire::console_client::connect.real \
+            ::tclwire::console_client::connect
+        rename ::puts {}
+        rename ::puts.real ::puts
+        rename ::tclreadline::readline {}
+        rename ::tclreadline::readline.real ::tclreadline::readline
+        namespace delete ::tclwire::console_client_test
+    }
+} -result {1 {old-channel PS new-channel PS}}
 
 test console-client-1.4 {table matrix formats timestamp columns for display} -body {
     set ts 1717245296

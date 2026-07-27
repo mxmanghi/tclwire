@@ -48,7 +48,13 @@ namespace eval ::tclwire::support {
             if {$entry in {. ..}} {
                 continue
             }
-            file copy -force [file join $source $entry] [file join $target $entry]
+            set source_entry [file join $source $entry]
+            set target_entry [file join $target $entry]
+            if {[file isdirectory $source_entry]} {
+                copy_tree_contents $source_entry $target_entry
+            } else {
+                file copy -force $source_entry $target_entry
+            }
         }
     }
 

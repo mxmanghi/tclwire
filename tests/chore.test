@@ -5,26 +5,28 @@ set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
 
 package require tclwire::chore 0.1
+package require tclwire::diagnostics 0.1
 
 namespace eval ::tclwire::chore_test {
     proc cleanup {} {
         catch {::tclwire::chore stop}
         catch {::tsv::unset tclwire chore_test_events}
+        catch {::tsv::set tclwire diagnostics_heartbeat {}}
+        catch {::tsv::set tclwire diagnostics_snapshot {}}
     }
 }
 
 ::tclwire::chore_test::cleanup
 
-test chore-1.1 {runner fires sync and async chores with wakeup sequence} -body {
+test chore-1.1 {runner fires registered chores with wakeup sequence} -body {
     set specs [list \
         [dict create \
-            name sync_test \
+            name every_tick_test \
             package tclwire::chore \
             class ::tclwire::TsvRecordingChore \
-            args [list -key chore_test_events -every 1] \
-            mode sync] \
+            args [list -key chore_test_events -every 1]] \
         [dict create \
-            name async_test \
+            name every_other_tick_test \
             package tclwire::chore \
             class ::tclwire::TsvRecordingChore \
             args [list -key chore_test_events -every 2] \
@@ -38,10 +40,10 @@ test chore-1.1 {runner fires sync and async chores with wakeup sequence} -body {
         set sync_count 0
         set async_count 0
         foreach event $events {
-            if {[dict get $event name] eq "sync_test"} {
+            if {[dict get $event name] eq "every_tick_test"} {
                 incr sync_count
             }
-            if {[dict get $event name] eq "async_test"} {
+            if {[dict get $event name] eq "every_other_tick_test"} {
                 incr async_count
             }
         }
@@ -55,11 +57,19 @@ test chore-1.1 {runner fires sync and async chores with wakeup sequence} -body {
     set sync_threads {}
     set async_threads {}
     foreach event $events {
-        if {[dict get $event name] eq "sync_test"} {
+        if {[dict get $event name] eq "every_tick_test"} {
             lappend sync_threads [dict get $event thread_id]
         }
-        if {[dict get $event name] eq "async_test"} {
+        if {[dict get $event name] eq "every_other_tick_test"} {
             lappend async_threads [dict get $event thread_id]
+        }
+    }
+    set chore_statuses {}
+    set has_mode 0
+    foreach chore [dict get $status chores] {
+        lappend chore_statuses [dict get $chore status]
+        if {[dict exists $chore mode]} {
+            set has_mode 1
         }
     }
     list \
@@ -67,9 +77,256 @@ test chore-1.1 {runner fires sync and async chores with wakeup sequence} -body {
         [expr {[dict get $status sequence] >= 2}] \
         [expr {[llength $sync_threads] >= 2}] \
         [expr {[llength $async_threads] >= 1}] \
-        [expr {[lindex $sync_threads 0] ne [lindex $async_threads 0]}]
+        [expr {[lindex $sync_threads 0] eq [lindex $async_threads 0]}] \
+        $has_mode \
+        [expr {[dict get [lindex $chore_statuses 0] runs] >= 2}]
 } -cleanup {
     ::tclwire::chore_test::cleanup
-} -result {1 1 1 1 1}
+} -result {1 1 1 1 1 0 1}
+
+test chore-1.2 {base chore class is abstract} -body {
+    ::tclwire::Chore new
+} -returnCodes error -match glob -result "*abstract*"
+
+test chore-1.2a {application chore stores immutable context handles} -body {
+    oo::class create ::tclwire::chore_test::ContextChore {
+        superclass ::tclwire::ApplicationChore
+        method run {wakeup} {
+            return [dict create \
+                application_id [my application_id] \
+                application_config [my application_config] \
+                pool_key [my pool_key]]
+        }
+    }
+    set envelope [dict create \
+        type tclwire.application_configuration \
+        version 1 \
+        application_id app \
+        values [dict create]]
+    set chore [::tclwire::chore_test::ContextChore new \
+        -name application:app \
+        -applicationid app \
+        -applicationconfig $envelope \
+        -poolkey app:app]
+    set result [$chore run [dict create]]
+    $chore destroy
+    list \
+        [dict get $result application_id] \
+        [dict get $result application_config] \
+        [dict get $result pool_key]
+} -cleanup {
+    catch {::tclwire::chore_test::ContextChore destroy}
+    ::tclwire::chore_test::cleanup
+} -result [list app [dict create \
+    type tclwire.application_configuration \
+    version 1 \
+    application_id app \
+    values [dict create]] app:app]
+
+test chore-1.2b {plain chores ignore scheduler application context} -body {
+    set spec [dict create \
+        name plain_application_chore \
+        package tclwire::chore \
+        class ::tclwire::TsvRecordingChore \
+        args [list -key chore_test_events] \
+        application_context [dict create \
+            application_id app \
+            application_config [dict create] \
+            pool_key app:app]]
+    ::tclwire::chore start [dict create chore_interval_ms 100]
+    ::tclwire::chore register [list $spec]
+    set deadline [expr {[clock milliseconds] + 1000}]
+    set events {}
+    while {[clock milliseconds] < $deadline} {
+        catch {set events [::tsv::get tclwire chore_test_events]}
+        if {[llength $events] >= 1} {
+            break
+        }
+        after 20
+    }
+    set status [::tclwire::chore status]
+    ::tclwire::chore stop
+    set chore [lindex [dict get $status chores] 0]
+    list \
+        [dict get [lindex $events 0] name] \
+        [dict exists $chore application_context] \
+        [expr {[dict get $chore status runs] >= 1}]
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+} -result {plain_application_chore 0 1}
+
+test chore-1.2c {application chore context is injected for opt-in subclasses} -setup {
+    set chore_file [makeFile [string map [list @KEY@ chore_test_events] {
+package require tclwire::chore 0.1
+oo::class create ContextFileChore {
+    superclass ::tclwire::ApplicationChore
+
+    method run {wakeup} {
+        set record [dict create \
+            name [my name] \
+            application_id [my application_id] \
+            pool_key [my pool_key]]
+        ::tsv::lappend tclwire @KEY@ $record
+        return $record
+    }
+}
+}] context-file-chore.tcl]
+} -body {
+    set spec [dict create \
+        name context_application_chore \
+        file $chore_file \
+        application_context [dict create \
+            application_id app \
+            application_config [dict create] \
+            pool_key app:app]]
+    ::tclwire::chore start [dict create chore_interval_ms 100]
+    ::tclwire::chore register [list $spec]
+    set deadline [expr {[clock milliseconds] + 1000}]
+    set events {}
+    while {[clock milliseconds] < $deadline} {
+        catch {set events [::tsv::get tclwire chore_test_events]}
+        if {[llength $events] >= 1} {
+            break
+        }
+        after 20
+    }
+    ::tclwire::chore stop
+    list \
+        [dict get [lindex $events 0] name] \
+        [dict get [lindex $events 0] application_id] \
+        [dict get [lindex $events 0] pool_key]
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+    catch {::tclwire::chores::ContextFileChore destroy}
+    removeFile context-file-chore.tcl
+} -result {context_application_chore app app:app}
+
+test chore-1.3 {diagnostic chore runs probes in scheduler} -body {
+    set config [dict create \
+        diagnostics_interval_ms 100 \
+        diagnostics_watchdog_max_age_ms 1000]
+    set specs [::tclwire::diagnostics::default_chore_specs $config]
+    ::tsv::set tclwire diagnostics_heartbeat [dict create \
+        sequence 1 \
+        now_ms [clock milliseconds] \
+        main_thread_id [::thread::id]]
+    ::tclwire::chore start [dict create chore_interval_ms 100]
+    ::tclwire::chore register $specs
+    set deadline [expr {[clock milliseconds] + 1000}]
+    set status {}
+    while {[clock milliseconds] < $deadline} {
+        set status [::tclwire::chore status]
+        set chore [lindex [dict get $status chores] 0]
+        if {[dict get $chore status runs] >= 1} {
+            break
+        }
+        after 20
+    }
+    set rows [::tclwire::diagnostics rows]
+    ::tclwire::chore stop
+    set chore [lindex [dict get $status chores] 0]
+    set found_event_loop 0
+    set found_accounting 0
+    foreach row $rows {
+        if {[dict get $row probe] eq "event_loop" &&
+                [dict get $row metric] eq "samples"} {
+            set found_event_loop 1
+        }
+        if {[dict get $row probe] eq "accounting" &&
+                [dict get $row metric] eq "threads"} {
+            set found_accounting 1
+        }
+    }
+    list \
+        [dict get $chore name] \
+        [dict exists $chore mode] \
+        [expr {[dict get $chore status runs] >= 1}] \
+        [dict get $chore last_status ok] \
+        [dict get $chore last_status result ok] \
+        [dict exists [dict get $chore last_status result snapshot] probes event_loop] \
+        [dict exists [dict get $chore last_status result snapshot] probes accounting] \
+        [dict exists [dict get $chore last_status result snapshot] probes tpba] \
+        $found_event_loop \
+        $found_accounting
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+} -result {diagnostics 0 1 1 1 1 1 1 1 1}
+
+test chore-1.4 {file-backed chore infers concrete class} -setup {
+    set chore_file [makeFile [string map [list @KEY@ chore_test_events] {
+package require tclwire::chore 0.1
+catch {::tclwire::chores::FileBackedChore destroy}
+oo::class create FileBackedChore {
+    superclass ::tclwire::Chore
+
+    method run {wakeup} {
+        set record [dict create name [my name] \
+            sequence [dict get $wakeup sequence] \
+            thread_id [::thread::id]]
+        ::tsv::lappend tclwire @KEY@ $record
+        return $record
+    }
+}
+}] file-backed-chore.tcl]
+} -body {
+    ::tclwire::chore start [dict create chore_interval_ms 100]
+    ::tclwire::chore register [list [dict create \
+        name file_backed_test \
+        file $chore_file]]
+    set deadline [expr {[clock milliseconds] + 1000}]
+    set events {}
+    while {[clock milliseconds] < $deadline} {
+        catch {set events [::tsv::get tclwire chore_test_events]}
+        if {[llength $events] >= 1} {
+            break
+        }
+        after 20
+    }
+    set status [::tclwire::chore status]
+    ::tclwire::chore stop
+    set chore [lindex [dict get $status chores] 0]
+    list \
+        [dict get $chore class] \
+        [dict get [lindex $events 0] name] \
+        [expr {[dict get $chore status runs] >= 1}]
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+    catch {::tclwire::chores::FileBackedChore destroy}
+    removeFile file-backed-chore.tcl
+} -result {::tclwire::chores::FileBackedChore file_backed_test 1}
+
+test chore-1.5 {file-backed chore source is loaded once for repeated specs} -setup {
+    set chore_file [makeFile [string map [list @KEY@ chore_test_events] {
+package require tclwire::chore 0.1
+oo::class create RepeatedFileChore {
+    superclass ::tclwire::Chore
+
+    method run {wakeup} {
+        set record [dict create name [my name] \
+            sequence [dict get $wakeup sequence] \
+            thread_id [::thread::id]]
+        ::tsv::lappend tclwire @KEY@ $record
+        return $record
+    }
+}
+}] repeated-file-chore.tcl]
+} -body {
+    ::tclwire::chore start [dict create chore_interval_ms 100]
+    ::tclwire::chore register [list \
+        [dict create name repeated_first file $chore_file] \
+        [dict create name repeated_second file $chore_file]]
+    set status [::tclwire::chore status]
+    set classes [lmap chore [dict get $status chores] {
+        dict get $chore class
+    }]
+    ::tclwire::chore stop
+    list \
+        [llength $classes] \
+        [lsort -unique $classes]
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+    catch {::tclwire::chores::RepeatedFileChore destroy}
+    removeFile repeated-file-chore.tcl
+} -result {2 ::tclwire::chores::RepeatedFileChore}
 
 cleanupTests

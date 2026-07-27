@@ -4,9 +4,10 @@
 
 package require TclOO
 package require Thread
-package require tclwire::accounting 1.2
-package require tclwire::chore 0.1
+package require tclwire::accounting     1.2
+package require tclwire::chore          0.1
 package require tclwire::logger::client 0.1
+package require tclwire::tpba::control  0.1
 
 namespace eval ::tclwire {}
 
@@ -23,13 +24,16 @@ oo::class create ::tclwire::DiagnosticProbe {
 oo::class create ::tclwire::EventLoopProbe {
     superclass ::tclwire::DiagnosticProbe
 
-    variable started_at last_sample_at sample_count last_lag_ms
+    variable started_at
+    variable last_sample_at
+    variable sample_count
+    variable last_lag_ms
 
     constructor {} {
-        set started_at [clock milliseconds]
-        set last_sample_at $started_at
-        set sample_count 0
-        set last_lag_ms 0
+        set started_at      [clock milliseconds]
+        set last_sample_at  $started_at
+        set sample_count    0
+        set last_lag_ms     0
     }
 
     method name {} {
@@ -37,19 +41,19 @@ oo::class create ::tclwire::EventLoopProbe {
     }
 
     method sample {{expected_interval_ms 0}} {
-        set now [clock milliseconds]
+        set now     [clock milliseconds]
         set elapsed [expr {$now - $last_sample_at}]
-        if {$expected_interval_ms > 0 && $sample_count > 0} {
+        if {($expected_interval_ms > 0) && ($sample_count > 0)} {
             set last_lag_ms [expr {$elapsed - $expected_interval_ms}]
         } else {
             set last_lag_ms 0
         }
         set last_sample_at $now
         incr sample_count
-        return [dict create samples     $sample_count \
-                            uptime_ms   [expr {$now - $started_at}] \
-                            sample_elapsed_ms $elapsed \
-                            timer_lag_ms $last_lag_ms]
+        return [dict create samples             $sample_count \
+                            uptime_ms           [expr {$now - $started_at}] \
+                            sample_elapsed_ms   $elapsed \
+                            timer_lag_ms        $last_lag_ms]
     }
 }
 
@@ -79,40 +83,10 @@ oo::class create ::tclwire::AccountingProbe {
             dict incr connection_counts $status
         }
 
-        return [dict create \
-            threads [dict size [::tclwire::accounting get_threads_database]] \
-            thread_status $thread_counts \
-            connections [dict size [::tclwire::accounting get_connections_database]] \
-            connection_status $connection_counts]
-    }
-}
-
-oo::class create ::tclwire::TransportProbe {
-    superclass ::tclwire::DiagnosticProbe
-
-    variable reactors_command
-
-    constructor {command} {
-        set reactors_command $command
-    }
-
-    method name {} {
-        return transport
-    }
-
-    method sample {} {
-        set reactors [{*}$reactors_command]
-        set services [dict create]
-        dict for {service_id reactor} $reactors {
-            if {![info object isa object $reactor]} {
-                continue
-            }
-            if {[catch {$reactor diagnostic_snapshot} snapshot]} {
-                set snapshot [dict create error $snapshot]
-            }
-            dict set services $service_id $snapshot
-        }
-        return [dict create services $services service_count [dict size $services]]
+        return [dict create threads         [dict size [::tclwire::accounting get_threads_database]] \
+                            thread_status   $thread_counts \
+                            connections     [dict size [::tclwire::accounting get_connections_database]] \
+                            connection_status $connection_counts]
     }
 }
 
@@ -135,15 +109,15 @@ oo::class create ::tclwire::TpbaProbe {
     }
 }
 
-oo::class create ::tclwire::EventLoopWatchdogChore {
+oo::class create ::tclwire::DiagnosticChore {
     superclass ::tclwire::Chore
 
-    variable max_age_ms last_alert_sequence last_ok_sequence
+    variable max_age_ms last_alert_sequence last_ok_sequence probes
 
     constructor args {
         array set options {
-            -name event_loop_watchdog
-            -maxage_ms 10000
+            -name       diagnostics
+            -maxage_ms  10000
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -151,37 +125,73 @@ oo::class create ::tclwire::EventLoopWatchdogChore {
             }
             set options($name) $value
         }
-        if {![string is integer -strict $options(-maxage_ms)] ||
-                $options(-maxage_ms) < 100} {
+        if {![string is integer -strict $options(-maxage_ms)] || ($options(-maxage_ms) < 100)} {
             error "event-loop watchdog max age must be an integer >= 100"
         }
         next -name $options(-name)
         set max_age_ms $options(-maxage_ms)
         set last_alert_sequence {}
-        set last_ok_sequence {}
+        set last_ok_sequence    {}
+        set probes [list [::tclwire::EventLoopProbe new]    \
+                         [::tclwire::AccountingProbe new]   \
+                         [::tclwire::TpbaProbe new]]
+    }
+
+    destructor {
+        foreach probe $probes {
+            catch {$probe destroy}
+        }
     }
 
     method run {wakeup} {
-        if {[catch {::tsv::get tclwire diagnostics_heartbeat} heartbeat] ||
-                $heartbeat eq {}} {
+        set heartbeat_status [my check_heartbeat $wakeup]
+        set samples [dict create]
+        foreach probe $probes {
+            set name [$probe name]
+            if {[catch {my sample_probe $probe $wakeup} sample]} {
+                set sample [dict create error $sample]
+            }
+            dict set samples $name $sample
+        }
+
+        set snapshot [dict create sequence  [dict get $wakeup sequence] \
+                                  now_ms    [dict get $wakeup now_ms]   \
+                                  scheduler_thread_id [dict get $wakeup scheduler_thread_id] \
+                                  heartbeat $heartbeat_status \
+                                  probes    $samples]
+
+        ::tsv::set tclwire diagnostics_snapshot $snapshot
+        return [dict create ok 1 snapshot $snapshot]
+    }
+
+    method sample_probe {probe wakeup} {
+        if {[info object isa typeof $probe ::tclwire::EventLoopProbe]} {
+            return [$probe sample [dict get $wakeup interval_ms]]
+        }
+        return [$probe sample]
+    }
+
+    method check_heartbeat {wakeup} {
+        if {[catch {::tsv::get tclwire diagnostics_heartbeat} heartbeat] || ($heartbeat eq {})} {
             return [my alert $wakeup [dict create reason missing_heartbeat]]
         }
-        set now [dict get $wakeup now_ms]
-        set heartbeat_ms [dict get $heartbeat now_ms]
-        set heartbeat_sequence [dict get $heartbeat sequence]
+        set now                 [dict get $wakeup    now_ms]
+        set heartbeat_ms        [dict get $heartbeat now_ms]
+        set heartbeat_sequence  [dict get $heartbeat sequence]
         set age_ms [expr {$now - $heartbeat_ms}]
         if {$age_ms > $max_age_ms} {
-            return [my alert $wakeup [dict create \
-                reason stale_heartbeat \
-                heartbeat_sequence $heartbeat_sequence \
-                heartbeat_age_ms $age_ms \
-                max_age_ms $max_age_ms]]
+            return [my alert $wakeup [dict create reason      stale_heartbeat     \
+                                           heartbeat_sequence $heartbeat_sequence \
+                                           heartbeat_age_ms   $age_ms             \
+                                           max_age_ms         $max_age_ms]]
         }
+
         if {$last_ok_sequence ne $heartbeat_sequence} {
             set last_ok_sequence $heartbeat_sequence
         }
-        return [dict create ok 1 heartbeat_sequence $heartbeat_sequence \
-                    heartbeat_age_ms $age_ms]
+        return [dict create ok               1 \
+                            heartbeat_sequence $heartbeat_sequence \
+                            heartbeat_age_ms $age_ms]
     }
 
     method alert {wakeup details} {
@@ -194,9 +204,9 @@ oo::class create ::tclwire::EventLoopWatchdogChore {
             return [dict merge [dict create ok 0 repeated 1] $details]
         }
         set last_alert_sequence $sequence
-        set fields [list \
-            event=event_loop_blocked \
-            wakeup_sequence=[dict get $wakeup sequence]]
+        set fields [list event=event_loop_blocked \
+                         wakeup_sequence=[dict get $wakeup sequence]]
+
         dict for {key value} $details {
             lappend fields "$key=[my log_value $value]"
         }
@@ -215,14 +225,6 @@ namespace eval ::tclwire::diagnostics {
     variable heartbeat_timer {}
     variable heartbeat_sequence 0
     variable heartbeat_interval_ms 1000
-
-    proc default_probes {reactors_command} {
-        return [list \
-            [::tclwire::EventLoopProbe new] \
-            [::tclwire::AccountingProbe new] \
-            [::tclwire::TpbaProbe new] \
-            [::tclwire::TransportProbe new $reactors_command]]
-    }
 
     proc heartbeat {} {
         variable heartbeat_timer
@@ -259,6 +261,7 @@ namespace eval ::tclwire::diagnostics {
             set heartbeat_timer {}
         }
         catch {::tsv::set tclwire diagnostics_heartbeat {}}
+        catch {::tsv::set tclwire diagnostics_snapshot {}}
         return
     }
 
@@ -268,19 +271,14 @@ namespace eval ::tclwire::diagnostics {
         if {[dict exists $config diagnostics_watchdog_max_age_ms]} {
             set max_age_ms [dict get $config diagnostics_watchdog_max_age_ms]
         }
-        set mode sync
-        if {[dict exists $config diagnostics_watchdog_mode]} {
-            set mode [dict get $config diagnostics_watchdog_mode]
-        }
         return [list [dict create \
-            name event_loop_watchdog \
+            name diagnostics \
             package tclwire::diagnostics \
-            class ::tclwire::EventLoopWatchdogChore \
-            args [list -maxage_ms $max_age_ms] \
-            mode $mode]]
+            class ::tclwire::DiagnosticChore \
+            args [list -maxage_ms $max_age_ms]]]
     }
 
-    proc start {config reactors_command} {
+    proc start {config} {
         stop
         if {![dict exists $config diagnostics_enabled] ||
                 ![dict get $config diagnostics_enabled]} {
@@ -303,14 +301,32 @@ namespace eval ::tclwire::diagnostics {
         if {[catch {::tsv::get tclwire diagnostics_heartbeat} heartbeat]} {
             set heartbeat {}
         }
-        return [dict create enabled 1 heartbeat $heartbeat chore_runner $runner]
+        if {[catch {::tsv::get tclwire diagnostics_snapshot} diagnostics] ||
+                $diagnostics eq {}} {
+            set diagnostics {}
+        }
+        return [dict create enabled 1 \
+                    heartbeat $heartbeat \
+                    diagnostics $diagnostics \
+                    chore_runner $runner]
     }
 
     proc rows {} {
         set snapshot [snapshot]
         set rows {}
-        dict for {name value} $snapshot {
-            lappend rows [dict create probe runtime metric $name value $value]
+        foreach name {enabled heartbeat diagnostics chore_runner} {
+            if {[dict exists $snapshot $name]} {
+                lappend rows [dict create \
+                    probe runtime metric $name value [dict get $snapshot $name]]
+            }
+        }
+        if {[dict exists $snapshot diagnostics probes]} {
+            dict for {probe metrics} [dict get $snapshot diagnostics probes] {
+                dict for {metric value} $metrics {
+                    lappend rows [dict create \
+                        probe $probe metric $metric value $value]
+                }
+            }
         }
         return $rows
     }

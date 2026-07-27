@@ -40,6 +40,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
         dict for {application_id original_descriptor} $applications {
             set descriptor $original_descriptor
             set had_hosts [dict exists $original_descriptor hosts]
+            set explicit_chore [dict exists $original_descriptor chore]
+            set explicit_chore_class [dict exists $original_descriptor chore_class]
             if {$application_id ne $default_application} {
                 if {[dict exists $default_descriptor pool_policy] &&
                     [dict exists $descriptor pool_policy]} {
@@ -52,6 +54,13 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 set descriptor [my merge_nested_dict_field \
                     $default_descriptor $descriptor configure]
                 set descriptor [dict merge $default_descriptor $descriptor]
+                if {!$explicit_chore && [dict exists $descriptor chore]} {
+                    dict unset descriptor chore
+                }
+                if {!$explicit_chore_class &&
+                        [dict exists $descriptor chore_class]} {
+                    dict unset descriptor chore_class
+                }
                 if {!$had_hosts} {
                     dict set descriptor hosts [list $application_id]
                 }
@@ -84,9 +93,15 @@ oo::class create ::tclwire::ApplicationDispatcher {
             }
             dict set descriptor application_paths \
                 [my application_paths $descriptor]
-            if {[dict exists $descriptor file]} {
-                dict set descriptor file \
-                    [my resolve_application_file $application_id $descriptor]
+            if {[dict exists $descriptor file] &&
+                    [dict get $descriptor file] ne {}} {
+                dict set descriptor file [my resolve_application_file \
+                    $application_id $descriptor file]
+            }
+            if {[dict exists $descriptor chore] &&
+                    [dict get $descriptor chore] ne {}} {
+                dict set descriptor chore [my resolve_application_file \
+                    $application_id $descriptor chore]
             }
             set configuration [::tclwire::ApplicationConfiguration new \
                 $application_id $descriptor]
@@ -129,8 +144,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
         }
     }
 
-    method resolve_application_file {application_id descriptor} {
-        set application_file [dict get $descriptor file]
+    method resolve_application_file {application_id descriptor {field file}} {
+        set application_file [dict get $descriptor $field]
         if {[file pathtype $application_file] eq "absolute"} {
             return [file normalize $application_file]
         }
@@ -148,7 +163,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 return $candidate
             }
         }
-        error "application '$application_id' file '$application_file' was not found; searched: [join $searched {, }]"
+        error "application '$application_id' $field '$application_file' was not found; searched: [join $searched {, }]"
     }
 
     method application_paths {descriptor} {

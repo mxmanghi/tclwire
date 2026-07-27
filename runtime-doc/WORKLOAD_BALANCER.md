@@ -26,6 +26,57 @@ This is being implemented in two steps:
 
 The first step is implemented. The second step remains future work.
 
+## TPBA Control Surface
+
+The public runtime-facing Tcl API is provided by
+`tclwire::tpba::control`:
+
+```tcl
+package require tclwire::tpba::control 0.1
+
+::tclwire::tpba start
+::tclwire::tpba stop
+::tclwire::tpba reset
+::tclwire::tpba thread_id
+::tclwire::tpba is_running
+::tclwire::tpba request $command_dict
+::tclwire::tpba notify_workload_transition $pool_key $transition_id
+```
+
+`request` sends a dictionary command to the TPBA thread and returns a
+dictionary response:
+
+```tcl
+ok 0|1
+correlation_id <caller-value-or-empty>
+result <operation-result>   ;# present on success
+error <message>             ;# present on failure
+errorcode <tcl-errorcode>   ;# present on failure
+```
+
+Supported request operations:
+
+| Operation | Required Fields | Result |
+| --- | --- | --- |
+| `pool_key` | `descriptor` | canonical pool key |
+| `create_pool` | `pool_key`, `worker_script` | created pool key/status |
+| `destroy_pool` | `pool_key` | empty result |
+| `shutdown_pool` | `pool_key` | empty result |
+| `shutdown_all` | none | empty result |
+| `acquire_worker` | `pool_key` | worker thread id or empty string |
+| `release_worker` | `pool_key`, `worker_id` | pool status/update result |
+| `remove_worker` | `pool_key`, `worker_id` | pool status/update result |
+| `resize_pool` | `pool_key`, `limits` | pool status |
+| `pool_status` | `pool_key` | one pool status dictionary |
+| `list_pools` | none | list of pool keys/statuses |
+| `diagnostics` | none | TPBA diagnostic snapshot |
+| `thread_workload_changed` | `notification` | workload update result |
+
+`notify_workload_transition` is the preferred helper for worker-side workload
+reports. It constructs the strict notification list
+`{thread_id pool_key transition_id}` and sends the
+`thread_workload_changed` request.
+
 ## Current Allocation Model
 
 Before workload metrics, allocation used only thread lifecycle state:

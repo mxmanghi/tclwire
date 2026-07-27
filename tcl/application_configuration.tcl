@@ -17,6 +17,8 @@ oo::class create ::tclwire::ApplicationConfiguration {
         set defaults [dict create \
             package {} \
             file {} \
+            chore {} \
+            chore_class {} \
             libdir {} \
             configure {} \
             log_level {} \
@@ -37,6 +39,10 @@ oo::class create ::tclwire::ApplicationConfiguration {
         if {[dict get $values file] ne {} &&
                 ![file isfile [dict get $values file]]} {
             error "application '$id' file does not exist: [dict get $values file]"
+        }
+        if {[dict get $values chore] ne {} &&
+                ![file isfile [dict get $values chore]]} {
+            error "application '$id' chore file does not exist: [dict get $values chore]"
         }
         if {[catch {llength [dict get $values hosts]}] ||
                 [catch {llength [dict get $values application_paths]}]} {
@@ -144,7 +150,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
     }
 
     foreach property {
-        class hosts docroot encoding application_paths package file libdir
+        class hosts docroot encoding application_paths package file chore chore_class libdir
         log_level reload_on_request retain_uploaded_files pool_policy
     } {
         method $property {} [format {my get %s} [list $property]]
