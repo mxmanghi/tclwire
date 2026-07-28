@@ -123,6 +123,78 @@ test chore-1.2a {application chore stores immutable context handles} -body {
     application_id app \
     values [dict create]] app:app]
 
+test chore-1.2aa {server chore stores server configuration envelope} -body {
+    oo::class create ::tclwire::chore_test::ServerContextChore {
+        superclass ::tclwire::ServerChore
+        method run {wakeup} {
+            return [my server_config]
+        }
+    }
+    set envelope [dict create \
+        type tclwire.server_configuration \
+        version 1 \
+        values [dict create host 127.0.0.1]]
+    set chore [::tclwire::chore_test::ServerContextChore new \
+        -name server:default \
+        -serverconfig $envelope]
+    set result [$chore run [dict create]]
+    $chore destroy
+    list \
+        [dict get $result type] \
+        [dict get $result version] \
+        [dict get $result values host]
+} -cleanup {
+    catch {::tclwire::chore_test::ServerContextChore destroy}
+    ::tclwire::chore_test::cleanup
+} -result {tclwire.server_configuration 1 127.0.0.1}
+
+test chore-1.2ab {server chore context is injected for opt-in subclasses} -setup {
+    set chore_file [makeFile [string map [list @KEY@ chore_test_events] {
+package require tclwire::chore 0.1
+oo::class create ServerContextFileChore {
+    superclass ::tclwire::ServerChore
+
+    method run {wakeup} {
+        set config [my server_config]
+        set record [dict create \
+            name [my name] \
+            type [dict get $config type] \
+            host [dict get $config values host]]
+        ::tsv::lappend tclwire @KEY@ $record
+        return $record
+    }
+}
+}] server-context-file-chore.tcl]
+} -body {
+    set spec [dict create \
+        name server_context_chore \
+        file $chore_file \
+        server_context [dict create \
+            type tclwire.server_configuration \
+            version 1 \
+            values [dict create host 127.0.0.1]]]
+    ::tclwire::chore start [dict create chore_interval_ms 100]
+    ::tclwire::chore register [list $spec]
+    set deadline [expr {[clock milliseconds] + 1000}]
+    set events {}
+    while {[clock milliseconds] < $deadline} {
+        catch {set events [::tsv::get tclwire chore_test_events]}
+        if {[llength $events] >= 1} {
+            break
+        }
+        after 20
+    }
+    ::tclwire::chore stop
+    list \
+        [dict get [lindex $events 0] name] \
+        [dict get [lindex $events 0] type] \
+        [dict get [lindex $events 0] host]
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+    catch {::tclwire::chores::ServerContextFileChore destroy}
+    removeFile server-context-file-chore.tcl
+} -result {server_context_chore tclwire.server_configuration 127.0.0.1}
+
 test chore-1.2b {plain chores ignore scheduler application context} -body {
     set spec [dict create \
         name plain_application_chore \

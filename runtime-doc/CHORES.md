@@ -68,7 +68,21 @@ method application_config {}
 method pool_key {}
 ```
 
-Server chores should normally inherit directly from `::tclwire::Chore`.
+### `::tclwire::ServerChore`
+
+Concrete server chores may inherit from `::tclwire::ServerChore` when they
+need the runtime configuration snapshot. It inherits from `::tclwire::Chore`
+and adds constructor support for scheduler-supplied server options.
+
+It provides:
+
+```tcl
+method server_config {}
+```
+
+`server_config` returns a registration-time serialized configuration envelope.
+Plain server chores that do not need configuration should inherit directly
+from `::tclwire::Chore`.
 
 ### `::tclwire::chore start config ?specs?`
 
@@ -113,6 +127,33 @@ file defines zero or multiple chore subclasses, registration fails unless
 
 `paths` entries are appended to the scheduler thread's `auto_path` before
 package or file loading.
+
+### `::tclwire::configuration tree configuration ?sink?`
+
+Renders a configuration dictionary or envelope as a structured ASCII tree.
+With no `sink`, it returns the tree text. With a `sink`, it emits each line to
+the command form. If any command word contains the literal substring `%s`, that
+substring is replaced with the line; otherwise the line is appended as the last
+argument.
+
+Examples:
+
+```tcl
+puts [::tclwire::configuration tree $configuration]
+
+::tclwire::configuration tree $configuration \
+    [list puts stderr]
+
+::tclwire::configuration tree $configuration \
+    [list ::tclwire::logger log_error chore %s info]
+
+::tclwire::configuration tree $configuration \
+    [list ::tclwire::io out "%s\n"]
+
+::tclwire::configuration tree $configuration [list apply {{line} {
+    ::tclwire::io out [format "%s\n" $line]
+}}]
+```
 
 ### `::tclwire::chore status`
 
@@ -194,6 +235,24 @@ The server chore path is searched as:
 
 The runtime registers the chore with the stable name `server:default`.
 
+Server chores that need configuration should inherit from
+`::tclwire::ServerChore`. The scheduler passes a copied configuration envelope
+to those classes:
+
+```tcl
+type tclwire.server_configuration
+version 1
+values <normalized-server-config-without-applications>
+server_chores <server-chore-specs-without-runtime-context>
+application_configs <dict-of-serialized-ApplicationConfiguration-envelopes>
+```
+
+This is a snapshot taken when the chore is registered. It is intentionally not
+stored as the authoritative configuration in `tsv`; `tsv` remains better
+suited for live shared state, counters, and snapshots. A server chore can still
+store derived data such as a configuration hash in `tsv` if other threads need
+to inspect it.
+
 ### Application Chores
 
 Application stanzas can register an application chore with the `chore`
@@ -251,10 +310,11 @@ The repository includes this example as `examples/five_minute_chore.tcl`:
 
 ```tcl
 package require tclwire::chore 0.1
+package require tclwire::configuration_tree 0.1
 package require tclwire::logger::client 0.1
 
 oo::class create FiveMinuteLogChore {
-    superclass ::tclwire::Chore
+    superclass ::tclwire::ServerChore
 
     variable every_ms last_run_ms
 
@@ -262,6 +322,10 @@ oo::class create FiveMinuteLogChore {
         next {*}$args
         set every_ms 300000
         set last_run_ms 0
+        catch {
+            ::tclwire::configuration tree [my server_config] \
+                [list ::tclwire::logger log_error chore %s info]
+        }
     }
 
     method should_run {wakeup} {

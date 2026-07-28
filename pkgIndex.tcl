@@ -19,6 +19,9 @@ package ifneeded tclwire::support 0.1 [subst {
     source [list [file join $dir tcl support.tcl]]
 }]
 
+package ifneeded tclwire::configuration_tree 0.1 \
+    [list source [file join $dir tcl configuration_tree.tcl]]
+
 package ifneeded tomlfile 0.1 \
     [list source [file join $dir tcl toml.tcl]]
 

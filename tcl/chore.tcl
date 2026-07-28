@@ -143,6 +143,32 @@ oo::class create ::tclwire::ApplicationChore {
     }
 }
 
+oo::class create ::tclwire::ServerChore {
+    superclass ::tclwire::Chore
+
+    variable server_config
+
+    constructor args {
+        array set options {
+            -serverconfig {}
+        }
+        set remaining {}
+        foreach {option value} $args {
+            if {[info exists options($option)]} {
+                set options($option) $value
+            } else {
+                lappend remaining $option $value
+            }
+        }
+        set server_config $options(-serverconfig)
+        next {*}$remaining
+    }
+
+    method server_config {} {
+        return $server_config
+    }
+}
+
 namespace eval ::tclwire::chore {
     variable runner_thread_id {}
     variable project_root [file dirname [file dirname [file normalize [info script]]]]
@@ -174,7 +200,7 @@ namespace eval ::tclwire::chore {
         }
         set spec [dict merge [dict create \
             name {} package {} file {} class {} args {} paths {} \
-            application_context {}] $spec]
+            application_context {} server_context {}] $spec]
         foreach field {name} {
             if {[string trim [dict get $spec $field]] eq {}} {
                 error "chore spec is missing $field"
@@ -250,6 +276,11 @@ namespace eval ::tclwire::chore {
     proc is_application_chore_class {class} {
         return [expr {$class eq "::tclwire::ApplicationChore" ||
                 $class in [chore_subclasses ::tclwire::ApplicationChore]}]
+    }
+
+    proc is_server_chore_class {class} {
+        return [expr {$class eq "::tclwire::ServerChore" ||
+                $class in [chore_subclasses ::tclwire::ServerChore]}]
     }
 
     proc agent_load_chore_file {file class} {
@@ -444,6 +475,7 @@ namespace eval ::tclwire::chore {
         set name        [dict get $spec name]
         set paths       [dict get $spec paths]
         set application_context [dict get $spec application_context]
+        set server_context [dict get $spec server_context]
 
         foreach directory $paths {
             if {$directory ne {} && $directory ni $::auto_path} {
@@ -466,8 +498,12 @@ namespace eval ::tclwire::chore {
                 -applicationconfig [dict get $application_context application_config] \
                 -poolkey [dict get $application_context pool_key]
         }
+        if {$server_context ne {} && [is_server_chore_class $class]} {
+            lappend args -serverconfig $server_context
+        }
         set object [{*}[list $class new -name $name] {*}$args]
         dict unset spec application_context
+        dict unset spec server_context
         return [dict merge $spec [dict create object $object]]
     }
 

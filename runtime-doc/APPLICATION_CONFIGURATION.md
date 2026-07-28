@@ -131,3 +131,8 @@ set docroot [$configuration docroot]
 The object should be treated as immutable scheduler-thread state. Application
 chores should use `pool_key` for TPBA queries instead of trying to retain a
 dispatcher or thread-pool object from another interpreter.
+
+Server chores that inherit from `::tclwire::ServerChore` receive a separate
+server configuration envelope through `server_config`. Its
+`application_configs` field is a dictionary of these same serialized
+application configuration envelopes keyed by application id.

@@ -18,6 +18,8 @@ kept under `runtime-doc/`:
   and response API.
 - [Application Configuration](runtime-doc/APPLICATION_CONFIGURATION.md): immutable
   application descriptor object and serialization envelope.
+- [Configuration Tree](runtime-doc/CONFIGURATION_TREE.md): structured ASCII
+  rendering for configuration dictionaries and envelopes.
 - [Console](runtime-doc/CONSOLE.md): Unix-domain inspection and control socket,
   including `PS`, `CONN`, `LOGROTATE`, and `SHUT`.
 - [Inter-Thread Communication](runtime-doc/INTER_THREAD_COMMUNICATION.md): current

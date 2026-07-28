@@ -1,0 +1,110 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+lappend auto_path $project_root
+
+package require tclwire::configuration_tree 0.1
+
+namespace eval ::tclwire::configuration_tree_test {
+    variable lines {}
+
+    proc collect {line} {
+        variable lines
+        lappend lines $line
+        return
+    }
+
+    proc collect_logger {source line level} {
+        variable lines
+        lappend lines [list $source $level $line]
+        return
+    }
+
+    proc reset {} {
+        variable lines
+        set lines {}
+        return
+    }
+}
+
+test configuration-tree-1.1 {configuration tree renders nested dictionaries and lists} -body {
+    set config [dict create \
+        type tclwire.server_configuration \
+        version 1 \
+        values [dict create \
+            host 127.0.0.1 \
+            startservers {http ftp} \
+            services [list [dict create protocol http port 8990]]] \
+        application_configs [dict create \
+            default [dict create \
+                type tclwire.application_configuration \
+                version 1 \
+                values [dict create hosts {localhost 127.0.0.1}]]]]
+    ::tclwire::configuration tree $config
+} -result {configuration
+|-- type = tclwire.server_configuration
+|-- version = 1
+|-- values
+|   |-- host = 127.0.0.1
+|   |-- startservers
+|   |   |-- [0] = http
+|   |   `-- [1] = ftp
+|   `-- services
+|       `-- [0]
+|           |-- protocol = http
+|           `-- port = 8990
+`-- application_configs
+    `-- default
+        |-- type = tclwire.application_configuration
+        |-- version = 1
+        `-- values
+            `-- hosts
+                |-- [0] = localhost
+                `-- [1] = 127.0.0.1}
+
+test configuration-tree-1.2 {configuration tree appends line to sink command} -body {
+    set ::tclwire::configuration_tree_test::lines {}
+    set config [dict create type example values [dict create host localhost]]
+    set text [::tclwire::configuration tree $config \
+        ::tclwire::configuration_tree_test::collect]
+    list $text $::tclwire::configuration_tree_test::lines
+} -result [list {configuration
+|-- type = example
+`-- values
+    `-- host = localhost} [list \
+    configuration \
+    {|-- type = example} \
+    {`-- values} \
+    {    `-- host = localhost}]]
+
+test configuration-tree-1.3 {configuration tree replaces sink placeholder} -body {
+    ::tclwire::configuration_tree_test::reset
+    set config [dict create type example]
+    ::tclwire::configuration tree $config \
+        [list ::tclwire::configuration_tree_test::collect_logger chore %s info]
+    set ::tclwire::configuration_tree_test::lines
+} -result [list \
+    [list chore info configuration] \
+    [list chore info {`-- type = example}]]
+
+test configuration-tree-1.4 {configuration tree replaces placeholders inside sink words} -body {
+    ::tclwire::configuration_tree_test::reset
+    set config [dict create type example]
+    ::tclwire::configuration tree $config \
+        [list ::tclwire::configuration_tree_test::collect "%s\n"]
+    set ::tclwire::configuration_tree_test::lines
+} -result [list "configuration\n" "`-- type = example\n"]
+
+test configuration-tree-1.5 {configuration tree sink can be arbitrary Tcl through apply} -body {
+    ::tclwire::configuration_tree_test::reset
+    set config [dict create type example]
+    ::tclwire::configuration tree $config [list apply {{line} {
+        ::tclwire::configuration_tree_test::collect [format "<pre>%s</pre>" $line]
+    }}]
+    set ::tclwire::configuration_tree_test::lines
+} -result [list \
+    {<pre>configuration</pre>} \
+    {<pre>`-- type = example</pre>}]
+
+cleanupTests

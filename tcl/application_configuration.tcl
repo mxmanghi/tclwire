@@ -14,17 +14,17 @@ oo::class create ::tclwire::ApplicationConfiguration {
             error "application configuration must be a dictionary"
         }
         set application_id $id
-        set defaults [dict create \
-            package {} \
-            file {} \
-            chore {} \
-            chore_class {} \
-            libdir {} \
-            configure {} \
-            log_level {} \
-            reload_on_request 0 \
-            retain_uploaded_files 0 \
-            pool_policy [dict create minimum_workers 0 maximum_workers 20]]
+        set defaults [dict create package     {} \
+                                  file        {} \
+                                  chore       {} \
+                                  chore_class {} \
+                                  libdir      {} \
+                                  configure   {} \
+                                  log_level   {} \
+                                  reload_on_request 0 \
+                                  retain_uploaded_files 0 \
+                                  pool_policy [dict create minimum_workers 0 maximum_workers 20]]
+
         set values [dict merge $defaults $descriptor]
 
         foreach property {class hosts docroot encoding application_paths} {
@@ -32,20 +32,16 @@ oo::class create ::tclwire::ApplicationConfiguration {
                 error "application '$id' is missing $property"
             }
         }
-        if {[dict get $values package] eq {} &&
-                [dict get $values file] eq {}} {
+        if {[dict get $values package] eq {} && [dict get $values file] eq {}} {
             error "application '$id' must define package or file"
         }
-        if {[dict get $values file] ne {} &&
-                ![file isfile [dict get $values file]]} {
+        if {[dict get $values file] ne {} && ![file isfile [dict get $values file]]} {
             error "application '$id' file does not exist: [dict get $values file]"
         }
-        if {[dict get $values chore] ne {} &&
-                ![file isfile [dict get $values chore]]} {
+        if {[dict get $values chore] ne {} && ![file isfile [dict get $values chore]]} {
             error "application '$id' chore file does not exist: [dict get $values chore]"
         }
-        if {[catch {llength [dict get $values hosts]}] ||
-                [catch {llength [dict get $values application_paths]}]} {
+        if {[catch {llength [dict get $values hosts]}] || [catch {llength [dict get $values application_paths]}]} {
             error "application '$id' hosts and application_paths must be lists"
         }
         if {[catch {

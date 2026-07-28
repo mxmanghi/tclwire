@@ -3,11 +3,12 @@
 # Example file-backed chore that writes one error-log line every five minutes.
 
 package require tclwire::chore 0.1
+package require tclwire::configuration_tree 0.1
 package require tclwire::logger::client 0.1
 package require tclwire::tpba::control 0.1
 
 oo::class create FiveMinuteLogChore {
-    superclass ::tclwire::Chore
+    superclass ::tclwire::ServerChore
 
     variable every_ms last_run_ms
 
@@ -15,6 +16,10 @@ oo::class create FiveMinuteLogChore {
         next {*}$args
         set every_ms 300000
         set last_run_ms 0
+        catch {
+            ::tclwire::configuration tree [my server_config] \
+                [list ::tclwire::logger log_error chore %s info]
+        }
     }
 
     method should_run {wakeup} {

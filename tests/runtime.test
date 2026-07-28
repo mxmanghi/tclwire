@@ -248,21 +248,25 @@ chore_class = "ServerChore"
     ::fileutil::writeFile [file join $directory server-chore.tcl] {
 package require tclwire::chore 0.1
 oo::class create ServerChore {
-    superclass ::tclwire::Chore
+    superclass ::tclwire::ServerChore
     method run {wakeup} {
-        return [dict create ok 1]
+        return [dict create ok 1 config_type [dict get [my server_config] type]]
     }
 }
 }
     set config [::tclwire::runtime parse_args [list --config $config_file]]
     set specs [::tclwire::runtime::server_chore_specs $config]
     set spec [lindex $specs 0]
+    set server_context [dict get $spec server_context]
     list \
         [::tclwire::runtime::config_has_server_chores $config] \
         [dict get $spec name] \
         [dict get $spec file] \
         [dict get $spec class] \
-        [expr {$directory in [dict get $spec paths]}]
+        [expr {$directory in [dict get $spec paths]}] \
+        [dict get $server_context type] \
+        [dict exists $server_context values applications] \
+        [dict exists $server_context application_configs default]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result [list \
@@ -271,6 +275,9 @@ oo::class create ServerChore {
     [file normalize [file join \
         [temporaryDirectory] tclwire-config-[pid] server-chore.tcl]] \
     ServerChore \
+    1 \
+    tclwire.server_configuration \
+    0 \
     1]
 
 test runtime-1.2bd {default application chore is not inherited by virtual hosts} -body {
@@ -408,13 +415,15 @@ test runtime-1.5a {missing document root is seeded from generated documentation}
         [string match {*TclWire Documentation*} $index] \
         [file isfile [file join $docroot worker_request_api.html]] \
         [file isfile [file join $docroot application_configuration.html]] \
+        [file isfile [file join $docroot configuration_tree.html]] \
         [file isfile [file join $docroot chores.html]] \
         [string match {*href="application_configuration.html"*} $index] \
+        [string match {*href="configuration_tree.html"*} $index] \
         [string match {*href="chores.html"*} $index]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $docroot}
-} -result {1 1 1 1 1 1 1}
+} -result {1 1 1 1 1 1 1 1 1}
 
 test runtime-1.5b {existing document root is not seeded or overwritten} -body {
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
@@ -454,13 +463,15 @@ test runtime-1.5d {forced document root seeding writes existing directory} -body
         [string match {*TclWire Documentation*} $index] \
         [file isfile [file join $docroot worker_request_api.html]] \
         [file isfile [file join $docroot application_configuration.html]] \
+        [file isfile [file join $docroot configuration_tree.html]] \
         [file isfile [file join $docroot chores.html]] \
         [string match {*href="application_configuration.html"*} $index] \
+        [string match {*href="configuration_tree.html"*} $index] \
         [string match {*href="chores.html"*} $index]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $docroot}
-} -result {1 1 1 1 1 1}
+} -result {1 1 1 1 1 1 1 1}
 
 test runtime-1.5e {force docroot seeding is a global CLI option} -body {
     set config [::tclwire::runtime parse_args [list --force-docroot-seeding]]
