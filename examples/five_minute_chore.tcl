@@ -44,6 +44,17 @@ oo::class create FiveMinuteLogChore {
         ::tclwire::logger log_error chore "pools=[join $pools ,]" info
         foreach pool $pools {
             ::tclwire::logger log_error chore "pool=$pool" info
+            set n 0
+            set thread_response [::tclwire::tpba request [dict create operation pool_thread_ids \
+                                                                      pool_key  $pool]]
+            if {![dict get $thread_response ok]} {
+                ::tclwire::logger log_error chore \
+                    "pool_thread_ids_rejected pool=$pool error=[dict get $thread_response error]" warn
+                continue
+            }
+            foreach thid [dict get $thread_response result] {
+                ::tclwire::logger log_error chore "pool=$pool thread=[incr n] thread_id=$thid" info
+            }
         }
 
         return [dict create logged 1 at_ms $last_run_ms pools $pools]

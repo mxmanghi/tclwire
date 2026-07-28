@@ -320,6 +320,15 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                                                 stats         $stats]]
     }
 
+    method pool_thread_ids {pool_key {filter all}} {
+        set record [my require_pool $pool_key]
+        set master [dict get $record thread_master]
+        if {$master eq {}} {
+            return {}
+        }
+        return [$master thread_ids $filter]
+    }
+
     method list_pools {} {
         return [lsort [dict keys $pools]]
     }
@@ -420,6 +429,11 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                 }
                 pool_status {
                     set result [my pool_status [my command_value $command pool_key]]
+                }
+                pool_thread_ids {
+                    set result [my pool_thread_ids \
+                        [my command_value $command pool_key] \
+                        [my command_value $command filter all]]
                 }
                 list_pools {
                     set result [my list_pools]

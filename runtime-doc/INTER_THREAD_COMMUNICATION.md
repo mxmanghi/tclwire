@@ -58,8 +58,8 @@ thread::send $tpba_thread_id \
 
 The request dictionary contains an `operation`, such as `create_pool`,
 `pool_key`, `acquire_worker`, `release_worker`, `remove_worker`,
-`thread_workload_changed`, `resize_pool`, `pool_status`, `list_pools`,
-`shutdown_pool`, or `destroy_pool`. The response is a dictionary with `ok`,
+`thread_workload_changed`, `resize_pool`, `pool_status`, `pool_thread_ids`,
+`list_pools`, `shutdown_pool`, or `destroy_pool`. The response is a dictionary with `ok`,
 `correlation_id`, `result` on success, or `error` and `errorcode` on failure.
 
 The TPBA thread owns `ThreadMaster` objects. Each `ThreadMaster` owns the

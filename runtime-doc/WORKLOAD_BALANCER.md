@@ -68,6 +68,7 @@ Supported request operations:
 | `remove_worker` | `pool_key`, `worker_id` | pool status/update result |
 | `resize_pool` | `pool_key`, `limits` | pool status |
 | `pool_status` | `pool_key` | one pool status dictionary |
+| `pool_thread_ids` | `pool_key`, optional `filter` | thread ids owned by one pool |
 | `list_pools` | none | list of pool keys/statuses |
 | `diagnostics` | none | TPBA diagnostic snapshot |
 | `thread_workload_changed` | `notification` | workload update result |

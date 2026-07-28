@@ -303,9 +303,11 @@ namespace eval ::tclwire::runtime {
                 continue
             }
             if {![catch {dict size $value}]} {
-                set quoted_id [ambiguous_application_id \
-                    $application_id $field $value]
-                error "application '$protocol.$application_id' contains nested table '$field'; quote dotted application ids, for example \[$protocol.\"$quoted_id\"\]"
+                set quoted_id [ambiguous_application_id $application_id $field $value]
+                error [join [list "application '$protocol.$application_id'" \
+                                  "contains nested table '$field';"         \
+                                  "quote dotted application ids,"           \
+                                  "for example \[$protocol.\"$quoted_id\"\]"] " "]
             }
         }
         return

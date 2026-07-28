@@ -151,6 +151,16 @@ oo::class create ::tclwire::tpba_test::FakeThreadMaster {
         return true
     }
 
+    method thread_ids {{filter all}} {
+        set result {}
+        dict for {worker_id status} $workers {
+            if {$filter eq "all" || $status eq $filter} {
+                lappend result $worker_id
+            }
+        }
+        return $result
+    }
+
     method thread_workload_changed {worker_id transition_id} {
         if {![dict exists $workloads $worker_id]} {
             dict set workloads $worker_id [my workload_record $worker_id 0 0]
@@ -333,6 +343,30 @@ test tpba-1.2.2 {dictionary command API removes workers from pools} -body {
         $broker destroy
     }
 } -result {1 true 0}
+
+test tpba-1.2.3 {dictionary command API reports thread ids for a pool key} -body {
+    set broker [::tclwire::tpba_test::new_broker]
+    try {
+        $broker create_pool app:docs {worker script} \
+            [dict create maximum_workers 2]
+        set first [$broker acquire_worker app:docs]
+        set second [$broker acquire_worker app:docs]
+        $broker release_worker app:docs $first
+        set all_response [$broker execute_command [dict create \
+            operation pool_thread_ids \
+            pool_key app:docs]]
+        set idle_response [$broker execute_command [dict create \
+            operation pool_thread_ids \
+            pool_key app:docs \
+            filter idle]]
+        list \
+            [dict get $all_response ok] \
+            [expr {[dict get $all_response result] eq [list $first $second]}] \
+            [expr {[dict get $idle_response result] eq [list $first]}]
+    } finally {
+        $broker destroy
+    }
+} -result {1 1 1}
 
 test tpba-1.3 {pool status retains descriptor policy and aggregate stats} -body {
     set broker [::tclwire::tpba_test::new_broker]
