@@ -110,7 +110,7 @@ oo::class create ::tclwire::TpbaProbe {
 }
 
 oo::class create ::tclwire::DiagnosticChore {
-    superclass ::tclwire::Chore
+    superclass ::tclwire::ServerChore
 
     variable max_age_ms last_alert_sequence last_ok_sequence probes
 
@@ -119,16 +119,18 @@ oo::class create ::tclwire::DiagnosticChore {
             -name       diagnostics
             -maxage_ms  10000
         }
+        set remaining {}
         foreach {name value} $args {
             if {![info exists options($name)]} {
-                error "unknown option: $name"
+                lappend remaining $name $value
+            } else {
+                set options($name) $value
             }
-            set options($name) $value
         }
         if {![string is integer -strict $options(-maxage_ms)] || ($options(-maxage_ms) < 100)} {
             error "event-loop watchdog max age must be an integer >= 100"
         }
-        next -name $options(-name)
+        next -name $options(-name) {*}$remaining
         set max_age_ms $options(-maxage_ms)
         set last_alert_sequence {}
         set last_ok_sequence    {}

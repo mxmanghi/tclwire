@@ -324,6 +324,25 @@ test chore-1.3 {diagnostic chore runs probes in scheduler} -body {
     ::tclwire::chore_test::cleanup
 } -result {diagnostics 0 1 1 1 1 1 1 1 1}
 
+test chore-1.3a {diagnostic chore accepts server chore context} -body {
+    set envelope [dict create \
+        type tclwire.server_configuration \
+        version 1 \
+        values [dict create host 127.0.0.1]]
+    set chore [::tclwire::DiagnosticChore new \
+        -name diagnostics \
+        -maxage_ms 1000 \
+        -serverconfig $envelope]
+    set result [list \
+        [info object isa typeof $chore ::tclwire::ServerChore] \
+        [dict get [$chore server_config] type] \
+        [dict get [$chore server_config] values host]]
+    $chore destroy
+    set result
+} -cleanup {
+    ::tclwire::chore_test::cleanup
+} -result {1 tclwire.server_configuration 127.0.0.1}
+
 test chore-1.4 {file-backed chore infers concrete class} -setup {
     set chore_file [makeFile [string map [list @KEY@ chore_test_events] {
 package require tclwire::chore 0.1

@@ -1,0 +1,57 @@
+package require tcltest
+namespace import ::tcltest::*
+
+set project_root [file dirname [file dirname [file normalize [info script]]]]
+source [file join $project_root utils replay_qualys_log.tcl]
+
+test qualys-replay-1.1 {argument parser requires log filename and accepts options} -body {
+    set options [::tclwire::qualys_replay::parse_arguments \
+        [list --hostname 127.0.0.1:18080 --delay-ms 0 \
+              --concurrency 8 /tmp/qualys.log]]
+    list \
+        [dict get $options hostname] \
+        [dict get $options delay_ms] \
+        [dict get $options concurrency] \
+        [dict get $options logfile]
+} -result [list 127.0.0.1:18080 0 8 [file normalize /tmp/qualys.log]]
+
+test qualys-replay-1.2 {request parser extracts HTTP methods and paths} -body {
+    set log [join [list \
+        {2026-07-24 10:36:58 http method=GET path=/ status=200 bytes=1 remote=127.0.0.1} \
+        {2026-07-24 10:36:58 http method=ABCD path=/<script>alert(1)</script> status=404 bytes=0 remote=127.0.0.1} \
+        {2026-07-24 10:39:34 ftp command=AUTH argument=TLS status=234 remote=127.0.0.1} \
+        {2026-07-24 10:36:58 https method=HEAD path=/robots.txt status=404 bytes=0 remote=127.0.0.1}] \n]
+    set records [::tclwire::qualys_replay::request_records $log]
+    list \
+        [llength $records] \
+        [dict get [lindex $records 0] method] \
+        [dict get [lindex $records 0] path] \
+        [dict get [lindex $records 1] method] \
+        [dict get [lindex $records 1] path] \
+        [dict get [lindex $records 2] method] \
+        [dict get [lindex $records 2] path]
+} -result {3 GET / ABCD /<script>alert(1)</script> HEAD /robots.txt}
+
+test qualys-replay-1.3 {request URL defaults to HTTP authority} -body {
+    list \
+        [::tclwire::qualys_replay::request_url localhost:8990 /index.html] \
+        [::tclwire::qualys_replay::request_url http://localhost:8990 /index.html] \
+        [::tclwire::qualys_replay::request_url https://localhost:9443 missing]
+} -result {http://localhost:8990/index.html http://localhost:8990/index.html https://localhost:9443/missing}
+
+test qualys-replay-1.4 {method options preserve unusual scanner methods} -body {
+    list \
+        [::tclwire::qualys_replay::method_options GET] \
+        [::tclwire::qualys_replay::method_options HEAD] \
+        [::tclwire::qualys_replay::method_options ABCD]
+} -result {{-httpget 1 -nobody 0} {-nobody 1} {-httpget 1 -nobody 0 -customrequest ABCD}}
+
+test qualys-replay-1.5 {argument parser rejects invalid concurrency} -body {
+    catch {
+        ::tclwire::qualys_replay::parse_arguments \
+            [list --concurrency 0 /tmp/qualys.log]
+    } message
+    set message
+} -result {--concurrency must be an integer greater than or equal to 1}
+
+cleanupTests

@@ -478,13 +478,16 @@ test runtime-1.5e {force docroot seeding is a global CLI option} -body {
     dict get $config force_docroot_seeding
 } -result 1
 
-test runtime-1.5f {repository site content is copied below manual directory} -body {
+test runtime-1.5f {manual site pages are copied below manual directory} -body {
     set original_project_root $::tclwire::support::project_root
     set project_root [file join [temporaryDirectory] tclwire-runtime-site-[pid]]
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    file mkdir [file join $project_root site manual]
     file mkdir [file join $project_root site assets]
     ::fileutil::writeFile -encoding utf-8 \
-        [file join $project_root site index.html] manual-home
+        [file join $project_root site index.html] site-home
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $project_root site manual index.html] manual-home
     ::fileutil::writeFile -encoding utf-8 \
         [file join $project_root site assets site.css] manual-css
 
@@ -494,39 +497,46 @@ test runtime-1.5f {repository site content is copied below manual directory} -bo
         [::fileutil::cat -encoding utf-8 \
             [file join $docroot manual index.html]] \
         [::fileutil::cat -encoding utf-8 \
-            [file join $docroot manual assets site.css]]
+            [file join $docroot assets site.css]] \
+        [file exists [file join $docroot manual manual]] \
+        [file exists [file join $docroot manual assets]]
 } -cleanup {
     set ::tclwire::support::project_root $original_project_root
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $project_root}
     catch {file delete -force $docroot}
-} -result {1 manual-home manual-css}
+} -result {1 manual-home manual-css 0 0}
 
 test runtime-1.5fa {manual site seeding merges existing directories} -body {
     set original_project_root $::tclwire::support::project_root
     set project_root [file join [temporaryDirectory] tclwire-runtime-site-[pid]]
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
+    file mkdir [file join $project_root site manual]
     file mkdir [file join $project_root site stylesheets]
     file mkdir [file join $docroot manual stylesheets]
+    file mkdir [file join $docroot stylesheets]
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $project_root site manual index.html] manual-home
     ::fileutil::writeFile -encoding utf-8 \
         [file join $project_root site stylesheets tclwire-manual.css] updated
     ::fileutil::writeFile -encoding utf-8 \
-        [file join $docroot manual stylesheets old.css] old
+        [file join $docroot stylesheets old.css] old
 
     set ::tclwire::support::project_root $project_root
     list \
         [::tclwire::support seed_manual_site $docroot] \
         [::fileutil::cat -encoding utf-8 \
-            [file join $docroot manual stylesheets tclwire-manual.css]] \
+            [file join $docroot stylesheets tclwire-manual.css]] \
         [::fileutil::cat -encoding utf-8 \
-            [file join $docroot manual stylesheets old.css]] \
+            [file join $docroot stylesheets old.css]] \
+        [file exists [file join $docroot manual manual]] \
         [file exists [file join $docroot manual stylesheets stylesheets]]
 } -cleanup {
     set ::tclwire::support::project_root $original_project_root
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $project_root}
     catch {file delete -force $docroot}
-} -result {1 updated old 0}
+} -result {1 updated old 0 0}
 
 test runtime-1.5g {connection queue limits configure reactor and pool policy} -body {
     ::tclwire::runtime start [list \

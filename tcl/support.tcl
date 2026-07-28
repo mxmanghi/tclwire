@@ -73,7 +73,18 @@ namespace eval ::tclwire::support {
             return 0
         }
 
-        copy_tree_contents $source [file join $doc_root manual]
+        set manual_source [file join $source manual]
+        if {![file isdirectory $manual_source]} {
+            return 0
+        }
+
+        copy_tree_contents $manual_source [file join $doc_root manual]
+        foreach support_directory {assets stylesheets} {
+            set support_source [file join $source $support_directory]
+            if {[file isdirectory $support_source]} {
+                copy_tree_contents $support_source [file join $doc_root $support_directory]
+            }
+        }
         return 1
     }
 
