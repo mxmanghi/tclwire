@@ -8,6 +8,7 @@ package require Thread
 package require fileutil
 package require tclwire::application::io 0.1
 package require tclwire::stdchans 0.1
+package require tclwire::rivet 0.1
 
 namespace eval ::tclwire::environment_test {
     variable events {}
@@ -168,5 +169,38 @@ test stdchans-1.5 {stdchans keeps app stdout virtualized after response completi
         $receiver destroy
     }
 } -result [list {} {output complete} "alpha\n"]
+
+test rivet-1.1 {rivet environment exposes lifecycle metadata} -body {
+    list \
+        [::tclwire::envs::rivet name] \
+        [::tclwire::envs::rivet requires] \
+        [::tclwire::envs::rivet path_namespaces] \
+        [::tclwire::envs::rivet application_class] \
+        [::tclwire::envs::rivet enabled]
+} -result [list rivet stdchans ::rivet ::tclwire::envs::rivet::Application 0]
+
+test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes owned namespaces} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        set installed [::tclwire::envs::rivet enabled]
+        set exists_after_install [list \
+            [namespace exists ::Rivet] \
+            [namespace exists ::rivet]]
+        ::tclwire::envs::rivet uninstall
+        list \
+            $installed \
+            $exists_after_install \
+            [::tclwire::envs::rivet enabled] \
+            [namespace exists ::Rivet] \
+            [namespace exists ::rivet]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result {1 {1 1} 0 0 0}
 
 cleanupTests

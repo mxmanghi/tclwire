@@ -469,36 +469,15 @@ test application-configuration-1.1e {
             docroot /tmp \
             encoding utf-8 \
             application_paths [list /tmp] \
-            environments {stdchans}]]
+            environment {stdchans}]]
     try {
         list \
-            [$configuration environments] \
-            [dict get [$configuration snapshot] environments]
+            [$configuration environment] \
+            [dict get [$configuration snapshot] environment]
     } finally {
         $configuration destroy
     }
 } -result {stdchans stdchans}
-
-test application-configuration-1.1f {
-    construction normalizes singular application environment alias
-} -body {
-    set configuration [::tclwire::ApplicationConfiguration new example \
-        [dict create \
-            class ::example::Application \
-            package example::application \
-            hosts example.test \
-            docroot /tmp \
-            encoding utf-8 \
-            application_paths [list /tmp] \
-            environment stdchans]]
-    try {
-        list \
-            [$configuration environments] \
-            [dict exists [$configuration snapshot] environment]
-    } finally {
-        $configuration destroy
-    }
-} -result {stdchans 0}
 
 test application-configuration-1.1a {
     construction qualifies bare application class and configure names
@@ -661,7 +640,7 @@ test application-configuration-1.4a {
             docroot [temporaryDirectory] \
             encoding utf-8 \
             application_paths [list [temporaryDirectory]] \
-            environments {stdchans}]]
+            environment {stdchans}]]
     try {
         ::tclwire::cga::initialize app:env-test [$configuration serialize]
         set installed [::tclwire::envs::stdchans enabled]
@@ -720,7 +699,7 @@ test application-configuration-1.4b {
             docroot [temporaryDirectory] \
             encoding utf-8 \
             application_paths [list [temporaryDirectory]] \
-            environments {stdchans}]]
+            environment {stdchans}]]
 } -body {
     ::tclwire::cga::initialize app:env-request-test [$configuration serialize]
     ::tclwire::cga::execute \
@@ -747,6 +726,127 @@ test application-configuration-1.4b {
     catch {::tclwire::application_test::StdchansApplication destroy}
     catch {::tclwire::io end}
 } -result [list output "alpha\nbeta" {output flush complete}]
+
+test application-configuration-1.4c {
+    CGA installs rivet environment dependencies
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new rivet-env-test \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {rivet}]]
+    try {
+        ::tclwire::cga::initialize app:rivet-env-test [$configuration serialize]
+        set path [namespace eval ::tclwire::app {namespace path}]
+        set result [list \
+            [::tclwire::cga::envs::list] \
+            [::tclwire::cga::envs::present stdchans] \
+            [::tclwire::cga::envs::present rivet] \
+            [namespace exists ::Rivet] \
+            [namespace exists ::rivet] \
+            [expr {"::tclwire::envs::stdchans" in $path}] \
+            [expr {"::rivet" in $path}]]
+        ::tclwire::cga::shutdown
+        lappend result \
+            [::tclwire::cga::envs::present rivet] \
+            [namespace exists ::Rivet] \
+            [namespace exists ::rivet]
+        set result
+    } finally {
+        catch {::tclwire::cga::shutdown}
+        catch {::tclwire::envs::rivet uninstall}
+        catch {::tclwire::envs::stdchans uninstall}
+        $configuration destroy
+    }
+} -result {{stdchans rivet} 1 1 1 1 1 1 0 0 0}
+
+test application-configuration-1.4d {
+    dispatcher uses environment-provided application class when class is omitted
+} -body {
+    set config [dict create \
+        docroot [temporaryDirectory] \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set configuration [$dispatcher application_configuration rivet-app]
+        list \
+            [$configuration class] \
+            [$configuration environment]
+    } finally {
+        $dispatcher destroy
+    }
+} -result [list ::tclwire::envs::rivet::Application rivet]
+
+test application-configuration-1.4e {
+    rivet default application sources requested Tcl scripts
+} -setup {
+    set docroot [makeDirectory rivet-docroot]
+    set script_path [file join $docroot hello.tcl]
+    ::fileutil::writeFile $script_path {
+puts "from rivet script"
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 93 \
+            method GET \
+            path /hello.tcl]
+    update
+    set output_event [lindex [lindex $::tclwire::application_test::events 0] 1]
+    list \
+        [$configuration class] \
+        [dict get $output_event type] \
+        [dict get $output_event data] \
+        [lmap item $::tclwire::application_test::events {
+            dict get [lindex $item 1] type
+        }]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result [list ::tclwire::envs::rivet::Application output \
+    "from rivet script\n" {output complete}]
 
 test application-configuration-1.5 {
     constructor failures reach the connection agent as error events

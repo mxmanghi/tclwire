@@ -34,7 +34,7 @@ file {}
 chore {}
 chore_class {}
 libdir {}
-environments {}
+environment {}
 configure {}
 log_level {}
 reload_on_request 0
@@ -42,8 +42,7 @@ retain_uploaded_files 0
 pool_policy {minimum_workers 0 maximum_workers 20}
 ```
 
-`environment` is accepted as a single-environment input alias and is
-normalized into `environments`.
+`environment` is a Tcl list of application environments.
 
 The constructor validates:
 
@@ -115,7 +114,7 @@ file
 chore
 chore_class
 libdir
-environments
+environment
 log_level
 reload_on_request
 retain_uploaded_files

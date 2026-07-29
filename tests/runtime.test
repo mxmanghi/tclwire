@@ -789,13 +789,44 @@ port = 8081
         docroot [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
         encoding utf-8 \
         class ::example::Application \
-        environments stdchans \
+        environment stdchans \
         configure [dict create \
             ::example::Application [dict create message {configured virtual host}]] \
         hosts site.example.test \
         libdir [file normalize [file join [temporaryDirectory] tclwire-config-[pid] site-lib]] \
         file [file join apps example.tcl] \
         pool_policy [dict create minimum_workers 2 maximum_workers 7]]]
+
+test runtime-1.12a {
+    application environment can provide the application class omitted by TOML
+} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "default"
+docroot = "www"
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost"
+
+[http.rivet]
+hosts = "rivet.rivetweb.org"
+environment = "rivet"
+docroot = "rivet"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set descriptor [dict get $config applications rivet]
+    list \
+        [dict get $descriptor class] \
+        [dict get $descriptor environment] \
+        [dict get $descriptor docroot]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    ::tclwire::envs::rivet::Application \
+    rivet \
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] rivet]]]
 
 test runtime-1.13 {CLI values supersede TOML configuration} -body {
     set config_file [::tclwire::runtime_test::make_config {

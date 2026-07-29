@@ -109,7 +109,7 @@ file = "tcl/application.tcl"
 # Application environments are optional and are loaded before application
 # instances are created in each content-generator worker.
 # environment = "stdchans"
-# environments = "stdchans otherenv"
+# environment = "stdchans otherenv"
 
 # When "file" is absent, the worker loads "package" with package require.
 # Before loading it, the worker places the application's docroot, effective

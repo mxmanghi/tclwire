@@ -66,7 +66,7 @@ namespace eval ::tclwire::cga {
         # configuration with each request.
 
         set configuration [::tclwire::ApplicationConfiguration deserialize $serialized_configuration]
-        envs::install [$configuration environments]
+        envs::install [$configuration environment]
 
         set pool_key $worker_pool_key
         set application_class [$configuration class]

@@ -52,6 +52,11 @@ package ifneeded tclwire::stdchans 0.1 [subst {
     source [list [file join $dir environments stdchans.tcl]]
 }]
 
+package ifneeded tclwire::rivet 0.1 [subst {
+    package require tclwire::stdchans 0.1
+    source [list [file join $dir environments rivet.tcl]]
+}]
+
 package ifneeded tclwire::http::application::io 0.1 [subst {
     package require tclwire::application::io 0.1
     source [list [file join $dir tcl http_application_io.tcl]]
@@ -71,6 +76,9 @@ package ifneeded tclwire::application::tools 0.1 \
 
 package ifneeded tclwire::application_configuration 0.1 \
     [list source [file join $dir tcl application_configuration.tcl]]
+
+package ifneeded tclwire::environment 0.1 \
+    [list source [file join $dir tcl environment.tcl]]
 
 package ifneeded tclwire::http::query 0.1 \
     [list source [file join $dir tcl http_query.tcl]]
@@ -131,6 +139,7 @@ package ifneeded tclwire::content_generator_agent 0.1 [subst {
 
 package ifneeded tclwire::application_dispatcher 0.1 [subst {
     package require tclwire::application_configuration 0.1
+    package require tclwire::environment 0.1
     package require tclwire::tpba::control 0.1
     source [list [file join $dir tcl application_dispatcher.tcl]]
 }]
@@ -215,6 +224,7 @@ package ifneeded tclwire::diagnostics 0.1 [subst {
 package ifneeded tclwire::runtime 0.1 [subst {
     package require tclwire::support 0.1
     package require tclwire::constants 0.1
+    package require tclwire::environment 0.1
     package require tclwire::accounting 1.2
     package require tclwire::tpba::control 0.1
     package require tclwire::logger::control 0.1

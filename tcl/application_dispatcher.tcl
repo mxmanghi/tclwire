@@ -5,6 +5,7 @@
 package require TclOO
 package require Thread
 package require tclwire::application_configuration 0.1
+package require tclwire::environment 0.1
 package require tclwire::support 0.1
 package require tclwire::tpba::control 0.1
 
@@ -44,6 +45,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 [::tclwire::normalize_application_descriptor_classes \
                     $original_descriptor]
             set had_hosts [dict exists $original_descriptor hosts]
+            set explicit_class [dict exists $original_descriptor class]
             set explicit_chore [dict exists $original_descriptor chore]
             set explicit_chore_class [dict exists $original_descriptor chore_class]
             if {$application_id ne $default_application} {
@@ -67,6 +69,14 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
                 if {!$had_hosts} {
                     dict set descriptor hosts [list $application_id]
+                }
+            }
+            if {!$explicit_class} {
+                set environment_class \
+                    [::tclwire::environment application_class \
+                        $application_id $descriptor]
+                if {$environment_class ne {}} {
+                    dict set descriptor class $environment_class
                 }
             }
             if {![dict exists $descriptor docroot]} {

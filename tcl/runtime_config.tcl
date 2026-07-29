@@ -260,7 +260,7 @@ namespace eval ::tclwire::runtime {
     proc application_descriptor_key {field} {
         return [expr {$field in {
             class package hosts encoding log_level reload_on_request
-            retain_uploaded_files configure docroot libdir file environment environments
+            retain_uploaded_files configure docroot libdir file environment
             minimum_workers maximum_workers
         }}]
     }
@@ -634,15 +634,7 @@ namespace eval ::tclwire::runtime {
                 # separately below.
                 set application [dict filter $descriptor key \
                     class package hosts encoding log_level reload_on_request \
-                    retain_uploaded_files chore chore_class environment environments]
-                if {[dict exists $application environment] &&
-                        ![dict exists $application environments]} {
-                    dict set application environments \
-                        [dict get $application environment]
-                }
-                if {[dict exists $application environment]} {
-                    dict unset application environment
-                }
+                    retain_uploaded_files chore chore_class environment]
                 if {[dict exists $descriptor configure]} {
                     dict set application configure [dict get $descriptor configure]
                 }
@@ -706,6 +698,7 @@ namespace eval ::tclwire::runtime {
                     [dict get $config applications $default_application]
             }
             dict for {application_id descriptor} $applications {
+                set explicit_class [dict exists $descriptor class]
                 set explicit_chore [dict exists $descriptor chore]
                 set explicit_chore_class [dict exists $descriptor chore_class]
                 if {[dict exists $merged_applications $application_id]} {
@@ -725,6 +718,14 @@ namespace eval ::tclwire::runtime {
                     if {!$explicit_chore_class &&
                             [dict exists $descriptor chore_class]} {
                         dict unset descriptor chore_class
+                    }
+                }
+                if {!$explicit_class} {
+                    set environment_class \
+                        [::tclwire::environment application_class \
+                            $application_id $descriptor]
+                    if {$environment_class ne {}} {
+                        dict set descriptor class $environment_class
                     }
                 }
                 dict set merged_applications $application_id $descriptor
