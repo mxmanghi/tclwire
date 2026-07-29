@@ -680,6 +680,9 @@ namespace eval ::tclwire::runtime {
                 if {[dict size $pool_policy]} {
                     dict set application pool_policy $pool_policy
                 }
+                set application \
+                    [::tclwire::normalize_application_descriptor_classes \
+                        $application]
                 if {[dict exists $applications $application_id] &&
                         [dict get $applications $application_id] ne $application} {
                     error "application '$application_id' differs between HTTP and HTTPS"
@@ -922,13 +925,18 @@ namespace eval ::tclwire::runtime {
         if {![dict exists $applications $default_application]} {
             error "default application is not registered: $default_application"
         }
-        set default_descriptor [dict get $applications $default_application]
+        set default_descriptor \
+            [::tclwire::normalize_application_descriptor_classes \
+                [dict get $applications $default_application]]
 
         dict for {application_id descriptor} $applications {
             set application_hosts {}
             if {[dict exists $descriptor hosts]} {
                 set application_hosts [dict get $descriptor hosts]
             }
+            set descriptor \
+                [::tclwire::normalize_application_descriptor_classes \
+                    $descriptor]
             set explicit_chore [dict exists $descriptor chore]
             set explicit_chore_class [dict exists $descriptor chore_class]
 

@@ -36,9 +36,13 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {![dict exists $applications $default_application]} {
             error "default application is not registered: $default_application"
         }
-        set default_descriptor [dict get $applications $default_application]
+        set default_descriptor \
+            [::tclwire::normalize_application_descriptor_classes \
+                [dict get $applications $default_application]]
         dict for {application_id original_descriptor} $applications {
-            set descriptor $original_descriptor
+            set descriptor \
+                [::tclwire::normalize_application_descriptor_classes \
+                    $original_descriptor]
             set had_hosts [dict exists $original_descriptor hosts]
             set explicit_chore [dict exists $original_descriptor chore]
             set explicit_chore_class [dict exists $original_descriptor chore_class]
@@ -257,7 +261,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
         set loader {}
         if {[dict exists $application_descriptor file] &&
                 [dict get $application_descriptor file] ne {}} {
-            set loader [list source [dict get $application_descriptor file]]
+            set loader [list namespace eval ::tclwire::app \
+                [list source [dict get $application_descriptor file]]]
         } else {
             set loader [list package require \
                 [dict get $application_descriptor package] 0.1]

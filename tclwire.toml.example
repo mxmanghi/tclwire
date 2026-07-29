@@ -125,14 +125,16 @@ maximum_workers = 20
 # [http.default]. Any of them may still be overridden in the host table.
 #
 # Class-specific settings live under configure tables keyed by TclOO class
-# name.  Constructors decide how those values map to object state.
+# name. Bare application class names are sourced under ::tclwire::app and
+# configure keys are qualified the same way. Constructors decide how those
+# values map to object state.
 #
 # [http."hello.example.test"]
-# class = "::tclwire::Hello"
+# class = "Hello"
 # file = "examples/hello.tcl"
 # docroot = "/tmp/tclwire"
 #
-# [http."hello.example.test".configure."::tclwire::Hello"]
+# [http."hello.example.test".configure.Hello]
 # message = "Hello from a configured virtual host"
 
 [https]

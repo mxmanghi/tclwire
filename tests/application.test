@@ -458,6 +458,30 @@ test application-configuration-1.1 {
     }
 } -result {example {} 0 0 20 configured}
 
+test application-configuration-1.1a {
+    construction qualifies bare application class and configure names
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class Hello \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp] \
+            configure [dict create \
+                Hello [dict create message configured]]]]
+    try {
+        list \
+            [$configuration class] \
+            [dict get \
+                [$configuration class_configuration ::tclwire::app::Hello] \
+                message]
+    } finally {
+        $configuration destroy
+    }
+} -result {::tclwire::app::Hello configured}
+
 test application-configuration-1.2 {
     dispatcher exposes validated immutable application configurations
 } -body {
@@ -506,6 +530,40 @@ test application-configuration-1.2b {
         $dispatcher destroy
     }
 } -result {index.html host plain}
+
+test application-configuration-1.2c {
+    dispatcher qualifies bare application classes and configure keys
+} -body {
+    set config [dict create \
+        docroot /tmp \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class DefaultApplication \
+                package example::default \
+                hosts localhost \
+                configure [dict create \
+                    DefaultApplication [dict create directory_index index.html] \
+                    Hello [dict create message default style plain]]] \
+            hello [dict create \
+                class Hello \
+                package example::hello \
+                hosts hello.example.test \
+                configure [dict create \
+                    Hello [dict create message host]]]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set configuration [$dispatcher application_configuration hello]
+        list \
+            [$configuration class] \
+            [dict get [$configuration class_configuration ::tclwire::app::DefaultApplication] directory_index] \
+            [dict get [$configuration class_configuration ::tclwire::app::Hello] message] \
+            [dict get [$configuration class_configuration ::tclwire::app::Hello] style]
+    } finally {
+        $dispatcher destroy
+    }
+} -result {::tclwire::app::Hello index.html host plain}
 
 test application-configuration-1.3 {
     serialized configurations reconstruct validated immutable objects
@@ -694,7 +752,9 @@ oo::class create ::example::Application {
         set script [$dispatcher worker_script \
             [$dispatcher application_configuration default] app:default]
         list \
-            [expr {[string first [list source $application_file] $script] >= 0}] \
+            [expr {[string first \
+                [list namespace eval ::tclwire::app \
+                    [list source $application_file]] $script] >= 0}] \
             [expr {[string first {package require tclwire::application 0.1} \
                 $script] < 0}]
     } finally {
@@ -752,6 +812,45 @@ oo::class create ::example::ReloadableApplication {
 } -cleanup {
     catch {$configuration destroy}
     catch {::example::ReloadableApplication destroy}
+    removeFile $application_file
+} -result second
+
+test application-dispatcher-1.9ra {
+    file-backed bare application classes reload under the app namespace
+} -setup {
+    set application_file [makeFile {
+oo::class create ReloadableApplication {
+    method version {} { return first }
+}
+} bare-reloadable-application.tcl]
+    namespace eval ::tclwire::app [list source $application_file]
+} -body {
+    set descriptor [dict create \
+        class ::tclwire::app::ReloadableApplication \
+        hosts localhost \
+        docroot [temporaryDirectory] \
+        encoding utf-8 \
+        application_paths [list [temporaryDirectory]] \
+        file $application_file \
+        reload_on_request 1]
+    set configuration [::tclwire::ApplicationConfiguration new \
+        reload-test $descriptor]
+    ::fileutil::writeFile $application_file {
+oo::class create ReloadableApplication {
+    method version {} { return second }
+}
+}
+    ::tclwire::cga::reload_application_class \
+        ::tclwire::app::ReloadableApplication $configuration
+    set application [::tclwire::app::ReloadableApplication new]
+    try {
+        $application version
+    } finally {
+        $application destroy
+    }
+} -cleanup {
+    catch {$configuration destroy}
+    catch {::tclwire::app::ReloadableApplication destroy}
     removeFile $application_file
 } -result second
 

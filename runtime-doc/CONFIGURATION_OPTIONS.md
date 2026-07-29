@@ -228,7 +228,8 @@ Host-specific applications inherit from the configured default application,
 then from global runtime defaults.
 
 `class`
-: TclOO application class name. Required after inheritance.
+: TclOO application class name. Required after inheritance. Bare names are
+  qualified under `::tclwire::app`; fully qualified names are left unchanged.
 
 `hosts`
 : Host names served by the application. If omitted by the default application
@@ -251,7 +252,9 @@ then from global runtime defaults.
 
 `file`
 : Application source file. Relative values are searched under the application
-  `docroot`, effective `libdir`, and TclWire installation.
+  `docroot`, effective `libdir`, and TclWire installation. File-backed
+  applications are sourced under `::tclwire::app`, so bare class definitions
+  become `::tclwire::app::<ClassName>`.
 
 `libdir`
 : Application-specific library directory. Overrides service and global

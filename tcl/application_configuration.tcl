@@ -5,6 +5,49 @@
 package require TclOO
 
 namespace eval ::tclwire {}
+namespace eval ::tclwire::app {}
+
+proc ::tclwire::qualify_application_class {class_name} {
+    if {$class_name eq {} || [string match ::* $class_name]} {
+        return $class_name
+    }
+    return ::tclwire::app::$class_name
+}
+
+proc ::tclwire::qualify_application_configure {configuration} {
+    if {$configuration eq {}} {
+        return $configuration
+    }
+    if {[catch {dict size $configuration}]} {
+        return $configuration
+    }
+    set qualified [dict create]
+    dict for {class_name class_options} $configuration {
+        set class_name [::tclwire::qualify_application_class $class_name]
+        if {[dict exists $qualified $class_name] &&
+                ![catch {dict size [dict get $qualified $class_name]}] &&
+                ![catch {dict size $class_options}]} {
+            dict set qualified $class_name \
+                [dict merge [dict get $qualified $class_name] $class_options]
+        } else {
+            dict set qualified $class_name $class_options
+        }
+    }
+    return $qualified
+}
+
+proc ::tclwire::normalize_application_descriptor_classes {descriptor} {
+    if {[dict exists $descriptor class]} {
+        dict set descriptor class \
+            [::tclwire::qualify_application_class [dict get $descriptor class]]
+    }
+    if {[dict exists $descriptor configure]} {
+        dict set descriptor configure \
+            [::tclwire::qualify_application_configure \
+                [dict get $descriptor configure]]
+    }
+    return $descriptor
+}
 
 oo::class create ::tclwire::ApplicationConfiguration {
     variable application_id values
@@ -25,7 +68,8 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   retain_uploaded_files 0 \
                                   pool_policy [dict create minimum_workers 0 maximum_workers 20]]
 
-        set values [dict merge $defaults $descriptor]
+        set values [::tclwire::normalize_application_descriptor_classes \
+            [dict merge $defaults $descriptor]]
 
         foreach property {class hosts docroot encoding application_paths} {
             if {![dict exists $descriptor $property]} {

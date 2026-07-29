@@ -938,6 +938,48 @@ message = "Hello from RivetWeb"
     [file normalize [file join [pwd] examples hello.tcl]] \
     [dict create ::tclwire::Hello [dict create message {Hello from RivetWeb}]]]
 
+test runtime-1.13bab {bare application classes and configure tables use app namespace} -setup {
+    set application_file [makeFile {
+package require tclwire::application 0.1
+oo::class create Hello {
+    superclass ::tclwire::CApplication
+}
+} bare-hello.tcl]
+} -body {
+    set config_file [::tclwire::runtime_test::make_config [format {
+[tclwire]
+docroot = "www"
+default_application = "default"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost 127.0.0.1"
+
+[http."hello.rivetweb.org"]
+class = "Hello"
+file = "%s"
+
+[http."hello.rivetweb.org".configure.Hello]
+message = "Hello from concise config"
+} [list $application_file]]]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set descriptor [dict get $config applications hello.rivetweb.org]
+    list \
+        [dict get $descriptor class] \
+        [dict get $descriptor configure]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    removeFile $application_file
+} -result [list \
+    ::tclwire::app::Hello \
+    [dict create ::tclwire::app::Hello \
+        [dict create message {Hello from concise config}]]]
+
 test runtime-1.13baa {unquoted dotted application tables are rejected} -body {
     set config_file [::tclwire::runtime_test::make_config {
 [tclwire]

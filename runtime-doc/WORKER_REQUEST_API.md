@@ -84,15 +84,20 @@ configuration request by request.
 
 Application descriptors may include a `configure` dictionary keyed by TclOO
 class name. This is class-owned instance configuration, not automatic variable
-injection. Each class decides how to map its block to object state:
+injection. Each class decides how to map its block to object state.
+
+Bare application class names are deployment adapter classes. The runtime
+qualifies them under `::tclwire::app`, and file-backed applications are
+sourced in that namespace. Bare `configure` table names are qualified the same
+way:
 
 ```toml
 [http.hello]
 hosts = "hello.example.test"
-class = "::tclwire::Hello"
+class = "Hello"
 file = "examples/hello.tcl"
 
-[http.hello.configure."::tclwire::Hello"]
+[http.hello.configure.Hello]
 message = "Hello from a configured virtual host"
 ```
 
@@ -100,8 +105,12 @@ The corresponding application code can read its block through the immutable
 configuration object:
 
 ```tcl
-set options [[my configuration_object] class_configuration ::tclwire::Hello]
+set options [[my configuration_object] class_configuration [info object class [self]]]
 ```
+
+Fully qualified class names remain explicit and are not rewritten. Use them
+for package-defined or project-owned application classes outside
+`::tclwire::app`.
 
 The application package or file is loaded when each worker interpreter is
 initialized. For each request, the CGA invokes:

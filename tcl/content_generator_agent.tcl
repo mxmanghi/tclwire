@@ -190,7 +190,7 @@ namespace eval ::tclwire::cga {
             $application_class destroy
         }
 
-        uplevel #0 [list source $application_file]
+        namespace eval ::tclwire::app [list source $application_file]
         if {![info object isa class $application_class]} {
             error "reloaded application file did not define class $application_class"
         }
