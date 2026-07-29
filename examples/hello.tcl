@@ -3,7 +3,7 @@ package require tclwire::application 0.1
 namespace eval ::tclwire {}
 namespace eval ::tclwire::app {}
 
-oo::class create ::tclwire::app::Hello {
+oo::class create Hello {
     superclass ::tclwire::CApplication
 
     variable message
@@ -20,11 +20,19 @@ oo::class create ::tclwire::app::Hello {
 
     method handle_request {request} {
         ::tclwire::io response  200 OK \
-                                [list "Content-Type: text/plain; charset=[my encoding]"] \
+                                [list "Content-Type: text/html; charset=[my encoding]"] \
                                 text    \
                                 [my encoding]
 
-        ::tclwire::io out "$message\n"
+        ::tclwire::io out "<html><head><title>Hello from Tclwire</title></head>"
+        ::tclwire::io out "<div>$message</div>\n"
+
+        ::tclwire::io out "<table>"
+        ::tclwire::io out "<tr><td>Namespace</td><td>[namespace current]</td></tr>"
+        ::tclwire::io out "<tr><td>App Object</td><td>[self]</td></tr>"
+        ::tclwire::io out "<tr><td>App class</td><td>[info object class [self]]</td></tr>"
+        ::tclwire::io out "</table>"
+        ::tclwire::io out "</html>"
         return
     }
 }

@@ -129,13 +129,14 @@ maximum_workers = 20
 # configure keys are qualified the same way. Constructors decide how those
 # values map to object state.
 #
-# [http."hello.example.test"]
-# class = "Hello"
-# file = "examples/hello.tcl"
-# docroot = "/tmp/tclwire"
-#
-# [http."hello.example.test".configure.Hello]
-# message = "Hello from a configured virtual host"
+[http.hello]
+hosts = "<my-hello-app>"
+class = "Hello"
+file = "examples/hello.tcl"
+docroot = "/tmp/tclwire"
+
+[http.hello.configure.Hello]
+message = "Hello from a configured virtual host"
 
 [https]
 enabled = false
@@ -169,7 +170,7 @@ user_check = true
 
 [ftps]
 enabled = false
-port = 990
+port = 8992
 root = "/tmp/tclwire"
 user_check = true
 certfile = ""
@@ -177,4 +178,4 @@ keyfile = ""
 
 [proxy]
 enabled = false
-port = 8992
+port = 8993
