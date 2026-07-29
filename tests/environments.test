@@ -29,20 +29,29 @@ test stdchans-1.1 {stdchans environment exposes lifecycle metadata} -body {
     list \
         [::tclwire::envs::stdchans name] \
         [::tclwire::envs::stdchans requires] \
+        [::tclwire::envs::stdchans path_namespaces] \
         [::tclwire::envs::stdchans enabled]
-} -result {stdchans {} 0}
+} -result [list stdchans {} ::tclwire::envs::stdchans 0]
 
-test stdchans-1.2 {stdchans captures stdout puts during active output transaction} -body {
+test stdchans-1.2 {stdchans captures app-namespace stdout during active output transaction} -body {
     set ::tclwire::environment_test::events {}
     set receiver [::tclwire::environment_test::OutputReceiver new]
+    namespace eval ::tclwire::app {
+        variable saved_path [namespace path]
+        namespace path [list ::tclwire::envs::stdchans]
+    }
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 21
-        puts stdout alpha
-        puts -nonewline stdout beta
-        puts gamma
+        namespace eval ::tclwire::app {
+            puts stdout alpha
+            puts -nonewline stdout beta
+            puts gamma
+        }
         set buffered [::tclwire::io buffer]
-        flush stdout
+        namespace eval ::tclwire::app {
+            flush stdout
+        }
         ::tclwire::io complete
         ::tclwire::io end
         update
@@ -58,6 +67,12 @@ test stdchans-1.2 {stdchans captures stdout puts during active output transactio
             }]
     } finally {
         catch {::tclwire::io end}
+        catch {
+            namespace eval ::tclwire::app {
+                namespace path $saved_path
+                unset saved_path
+            }
+        }
         catch {::tclwire::envs::stdchans uninstall}
         $receiver destroy
     }
@@ -83,6 +98,17 @@ test stdchans-1.3 {stdchans delegates non-stdout puts to native channels} -body 
     }
 } -result "alpha\nbeta"
 
+test stdchans-1.3a {stdchans delegates malformed puts calls to native command} -body {
+    try {
+        ::tclwire::envs::stdchans install
+        catch {::tclwire::envs::stdchans::puts a b c} message options
+        list $message [dict get $options -errorcode]
+    } finally {
+        catch {::tclwire::envs::stdchans uninstall}
+    }
+} -result [list {wrong # args: should be "::puts ?-nonewline? ?channelId? string"} \
+    {TCL WRONGARGS}]
+
 test stdchans-1.4 {stdchans install is idempotent and uninstall restores commands} -body {
     set original_puts [info command ::puts]
     set original_flush [info command ::flush]
@@ -101,16 +127,24 @@ test stdchans-1.4 {stdchans install is idempotent and uninstall restores command
     }
 } -result {1 0 1 1}
 
-test stdchans-1.5 {stdchans keeps stdout virtualized after response completion} -body {
+test stdchans-1.5 {stdchans keeps app stdout virtualized after response completion} -body {
     set ::tclwire::environment_test::events {}
     set receiver [::tclwire::environment_test::OutputReceiver new]
+    namespace eval ::tclwire::app {
+        variable saved_path [namespace path]
+        namespace path [list ::tclwire::envs::stdchans]
+    }
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 22
-        puts stdout alpha
+        namespace eval ::tclwire::app {
+            puts stdout alpha
+        }
         ::tclwire::io complete
-        puts stdout ignored
-        flush stdout
+        namespace eval ::tclwire::app {
+            puts stdout ignored
+            flush stdout
+        }
         set buffered [::tclwire::io buffer]
         ::tclwire::io end
         update
@@ -124,6 +158,12 @@ test stdchans-1.5 {stdchans keeps stdout virtualized after response completion} 
                 $::tclwire::environment_test::events 0] 1] data]
     } finally {
         catch {::tclwire::io end}
+        catch {
+            namespace eval ::tclwire::app {
+                namespace path $saved_path
+                unset saved_path
+            }
+        }
         catch {::tclwire::envs::stdchans uninstall}
         $receiver destroy
     }

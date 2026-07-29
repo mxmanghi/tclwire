@@ -9,7 +9,7 @@ namespace eval ::tclwire::configuration {
         application_configs applications configure pool_policy values
     }
     variable list_fields {
-        application_paths args hosts paths server_chores services startservers
+        application_paths args environments hosts paths server_chores services startservers
     }
 
     proc tree {configuration {sink {}}} {

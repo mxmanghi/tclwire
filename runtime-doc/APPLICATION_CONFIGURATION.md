@@ -34,6 +34,7 @@ file {}
 chore {}
 chore_class {}
 libdir {}
+environments {}
 configure {}
 log_level {}
 reload_on_request 0
@@ -111,6 +112,7 @@ file
 chore
 chore_class
 libdir
+environments
 log_level
 reload_on_request
 retain_uploaded_files

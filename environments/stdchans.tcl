@@ -9,8 +9,6 @@ namespace eval ::tclwire::envs {}
 
 namespace eval ::tclwire::envs::stdchans {
     variable installed 0
-    variable native_puts {}
-    variable native_flush {}
 
     proc name {} {
         return stdchans
@@ -20,6 +18,10 @@ namespace eval ::tclwire::envs::stdchans {
         return {}
     }
 
+    proc path_namespaces {} {
+        return [list [namespace current]]
+    }
+
     proc enabled {} {
         variable installed
         return $installed
@@ -27,26 +29,9 @@ namespace eval ::tclwire::envs::stdchans {
 
     proc install {} {
         variable installed
-        variable native_puts
-        variable native_flush
 
         if {$installed} {
             return
-        }
-        set native_puts ::tclwire::envs::stdchans::native_puts
-        set native_flush ::tclwire::envs::stdchans::native_flush
-        if {[info commands $native_puts] ne {} ||
-                [info commands $native_flush] ne {}} {
-            error "stdchans native command aliases already exist"
-        }
-
-        rename ::puts $native_puts
-        rename ::flush $native_flush
-        proc ::puts args {
-            ::tclwire::envs::stdchans::puts {*}$args
-        }
-        proc ::flush args {
-            ::tclwire::envs::stdchans::flush {*}$args
         }
         set installed 1
         return
@@ -54,19 +39,11 @@ namespace eval ::tclwire::envs::stdchans {
 
     proc uninstall {} {
         variable installed
-        variable native_puts
-        variable native_flush
 
         if {!$installed} {
             return
         }
-        rename ::puts {}
-        rename ::flush {}
-        rename $native_puts ::puts
-        rename $native_flush ::flush
         set installed 0
-        set native_puts {}
-        set native_flush {}
         return
     }
 
@@ -76,8 +53,6 @@ namespace eval ::tclwire::envs::stdchans {
     }
 
     proc puts {args} {
-        variable native_puts
-
         set original_args $args
         set nonewline 0
         if {[llength $args] > 0 && [lindex $args 0] eq "-nonewline"} {
@@ -92,7 +67,7 @@ namespace eval ::tclwire::envs::stdchans {
             set channel [lindex $args 0]
             set data [lindex $args 1]
         } else {
-            tailcall $native_puts {*}$original_args
+            tailcall ::puts {*}$original_args
         }
 
         if {$channel eq "stdout" && [transaction_active]} {
@@ -104,12 +79,10 @@ namespace eval ::tclwire::envs::stdchans {
             return
         }
 
-        tailcall $native_puts {*}$original_args
+        tailcall ::puts {*}$original_args
     }
 
     proc flush {args} {
-        variable native_flush
-
         if {[llength $args] == 1 &&
                 [lindex $args 0] eq "stdout" &&
                 [transaction_active]} {
@@ -117,10 +90,10 @@ namespace eval ::tclwire::envs::stdchans {
             return
         }
 
-        tailcall $native_flush {*}$args
+        tailcall ::flush {*}$args
     }
 
-    namespace export name requires enabled install uninstall puts flush
+    namespace export name requires path_namespaces enabled install uninstall puts flush
     namespace ensemble create
 }
 

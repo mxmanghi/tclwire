@@ -62,6 +62,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   chore       {} \
                                   chore_class {} \
                                   libdir      {} \
+                                  environments {} \
                                   configure   {} \
                                   log_level   {} \
                                   reload_on_request 0 \
@@ -85,8 +86,10 @@ oo::class create ::tclwire::ApplicationConfiguration {
         if {[dict get $values chore] ne {} && ![file isfile [dict get $values chore]]} {
             error "application '$id' chore file does not exist: [dict get $values chore]"
         }
-        if {[catch {llength [dict get $values hosts]}] || [catch {llength [dict get $values application_paths]}]} {
-            error "application '$id' hosts and application_paths must be lists"
+        if {[catch {llength [dict get $values hosts]}] ||
+                [catch {llength [dict get $values application_paths]}] ||
+                [catch {llength [dict get $values environments]}]} {
+            error "application '$id' hosts, application_paths, and environments must be lists"
         }
         if {[catch {
             set pool_policy [dict merge \
@@ -191,7 +194,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
 
     foreach property {
         class hosts docroot encoding application_paths package file chore chore_class libdir
-        log_level reload_on_request retain_uploaded_files pool_policy
+        environments log_level reload_on_request retain_uploaded_files pool_policy
     } {
         method $property {} [format {my get %s} [list $property]]
     }

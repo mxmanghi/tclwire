@@ -66,12 +66,193 @@ namespace eval ::tclwire::cga {
         # configuration with each request.
 
         set configuration [::tclwire::ApplicationConfiguration deserialize $serialized_configuration]
+        envs::install [$configuration environments]
         set pool_key $worker_pool_key
         set application_class [$configuration class]
         set application_descriptor [$configuration snapshot]
         dict set application_descriptor application_id [$configuration id]
         set initialized 1
         return
+    }
+
+    proc environments {} {
+        tailcall ::tclwire::cga::envs::list
+    }
+
+    proc has_environment {environment} {
+        tailcall ::tclwire::cga::envs::present $environment
+    }
+
+    namespace eval envs {
+        variable installed {}
+        variable installed_names {}
+        variable installing {}
+        variable application_namespace_path {}
+        variable application_namespace_path_saved 0
+
+    proc command {environment} {
+        if {[string match ::* $environment]} {
+            return $environment
+        }
+        return ::tclwire::envs::$environment
+    }
+
+    proc name {environment command} {
+        if {[info commands ${command}::name] ne {}} {
+            return [${command}::name]
+        }
+        return [namespace tail $command]
+    }
+
+    proc normalize {environment} {
+        set environment [string trim $environment]
+        if {[string match ::* $environment]} {
+            return [namespace tail $environment]
+        }
+        return $environment
+    }
+
+    proc list {} {
+        variable installed_names
+        return $installed_names
+    }
+
+    proc present {environment} {
+        variable installed_names
+        return [expr {[normalize $environment] in $installed_names}]
+    }
+
+    proc require_contract {environment command} {
+        if {![namespace exists $command]} {
+            error "application environment '$environment' is not a namespace"
+        }
+        foreach method {install uninstall} {
+            if {[info commands ${command}::$method] eq {}} {
+                error "application environment '$environment' does not implement $method"
+            }
+        }
+        return
+    }
+
+    proc load {environment} {
+        set environment [string trim $environment]
+        if {$environment eq {}} {
+            error "application environment name must not be empty"
+        }
+        set command [command $environment]
+        if {![namespace exists $command]} {
+            if {[string match ::* $environment]} {
+                error "application environment is not available: $environment"
+            }
+            package require tclwire::$environment
+        }
+        if {![namespace exists $command]} {
+            error "application environment is not available: $environment"
+        }
+        return $command
+    }
+
+    proc append_path {namespaces} {
+        namespace eval ::tclwire::app {}
+        set path [namespace eval ::tclwire::app {namespace path}]
+        foreach namespace $namespaces {
+            if {![namespace exists $namespace]} {
+                error "application environment path namespace does not exist: $namespace"
+            }
+            if {$namespace ni $path} {
+                lappend path $namespace
+            }
+        }
+        namespace eval ::tclwire::app [::list namespace path $path]
+        return
+    }
+
+    proc install_one {environment} {
+        variable installed
+        variable installed_names
+        variable installing
+
+        set command [load $environment]
+        require_contract $environment $command
+        if {$command in $installed} {
+            return
+        }
+        if {$command in $installing} {
+            error "cyclic application environment dependency involving $command"
+        }
+        lappend installing $command
+
+        try {
+            set required_environments {}
+            if {[info commands ${command}::requires] ne {}} {
+                set required_environments [${command}::requires]
+            }
+            foreach required $required_environments {
+                install_one $required
+            }
+
+            ${command}::install
+            if {[info commands ${command}::path_namespaces] ne {}} {
+                set namespaces [${command}::path_namespaces]
+            } else {
+                set namespaces [::list $command]
+            }
+            append_path $namespaces
+        } finally {
+            set index [lsearch -exact $installing $command]
+            if {$index >= 0} {
+                set installing [lreplace $installing $index $index]
+            }
+        }
+
+        lappend installed $command
+        set environment_name [name $environment $command]
+        if {$environment_name ni $installed_names} {
+            lappend installed_names $environment_name
+        }
+        return
+    }
+
+    proc install {environments} {
+        variable application_namespace_path
+        variable application_namespace_path_saved
+
+        if {[catch {llength $environments}]} {
+            error "application environments must be a list"
+        }
+        namespace eval ::tclwire::app {}
+        set application_namespace_path \
+            [namespace eval ::tclwire::app {namespace path}]
+        set application_namespace_path_saved 1
+        foreach environment $environments {
+            install_one $environment
+        }
+        return
+    }
+
+    proc shutdown {} {
+        variable installed
+        variable installed_names
+        variable installing
+        variable application_namespace_path
+        variable application_namespace_path_saved
+
+        if {$application_namespace_path_saved} {
+            catch {
+                namespace eval ::tclwire::app \
+                    [::list namespace path $application_namespace_path]
+            }
+        }
+        foreach environment [lreverse $installed] {
+            catch {${environment}::uninstall}
+        }
+        set installed {}
+        set installed_names {}
+        set installing {}
+        set application_namespace_path {}
+        set application_namespace_path_saved 0
+        return
+    }
     }
 
     proc initialize_pending {} {
@@ -132,6 +313,7 @@ namespace eval ::tclwire::cga {
         if {$configuration ne {}} {
             catch {$configuration destroy}
         }
+        envs::shutdown
         set initialized 0
         set pool_key {}
         set application_class {}

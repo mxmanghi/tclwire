@@ -458,6 +458,27 @@ test application-configuration-1.1 {
     }
 } -result {example {} 0 0 20 configured}
 
+test application-configuration-1.1e {
+    construction preserves application environment list
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp] \
+            environments {stdchans}]]
+    try {
+        list \
+            [$configuration environments] \
+            [dict get [$configuration snapshot] environments]
+    } finally {
+        $configuration destroy
+    }
+} -result {stdchans stdchans}
+
 test application-configuration-1.1a {
     construction qualifies bare application class and configure names
 } -body {
@@ -606,6 +627,54 @@ test application-configuration-1.4 {
     } message
     set message
 } -result {unsupported application configuration version: 2}
+
+test application-configuration-1.4a {
+    CGA initialization loads environments into the application namespace path
+} -body {
+    set original_path [namespace eval ::tclwire::app {namespace path}]
+    set configuration [::tclwire::ApplicationConfiguration new env-test \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environments {stdchans}]]
+    try {
+        ::tclwire::cga::initialize app:env-test [$configuration serialize]
+        set installed [::tclwire::envs::stdchans enabled]
+        set cga_environments [::tclwire::cga::envs::list]
+        set has_environment [::tclwire::cga::envs::present stdchans]
+        set has_qualified_environment [::tclwire::cga::envs::present \
+            ::tclwire::envs::stdchans]
+        set compatibility_list [::tclwire::cga::environments]
+        set compatibility_present [::tclwire::cga::has_environment stdchans]
+        set resolved [namespace eval ::tclwire::app {
+            namespace which -command puts
+        }]
+        set global_puts [namespace which -command ::puts]
+        ::tclwire::cga::shutdown
+        list \
+            $installed \
+            $cga_environments \
+            $has_environment \
+            $has_qualified_environment \
+            $compatibility_list \
+            $compatibility_present \
+            [::tclwire::cga::envs::present stdchans] \
+            $resolved \
+            $global_puts \
+            [expr {[namespace eval ::tclwire::app {namespace path}] eq \
+                $original_path}]
+    } finally {
+        catch {::tclwire::cga::shutdown}
+        catch {::tclwire::envs::stdchans uninstall}
+        namespace eval ::tclwire::app [list namespace path $original_path]
+        $configuration destroy
+    }
+} -result [list 1 stdchans 1 1 stdchans 1 0 \
+    ::tclwire::envs::stdchans::puts ::puts 1]
 
 test application-configuration-1.5 {
     constructor failures reach the connection agent as error events

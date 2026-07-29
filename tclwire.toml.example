@@ -100,6 +100,16 @@ file = "tcl/application.tcl"
 # Optional per-application override for [tclwire].libdir.
 # libdir = "/opt/tclwire-apps/default"
 
+# Load stdchans when an application writes its response body with ordinary
+# standard-channel commands such as "puts" or "flush stdout" instead of calling
+# TclWire's response API directly. This is useful for porting classic CGI-style
+# Tcl applications or scripts that expect stdout to become the HTTP
+# response body.
+#
+# Application environments are optional and are loaded before application
+# instances are created in each content-generator worker.
+# environments = "stdchans"
+
 # When "file" is absent, the worker loads "package" with package require.
 # Before loading it, the worker places the application's docroot, effective
 # libdir, and the TclWire installation directory at the front of auto_path, in

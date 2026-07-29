@@ -709,6 +709,7 @@ class = "::example::Application"
 file = "apps/example.tcl"
 libdir = "site-lib"
 encoding = "utf-8"
+environments = "stdchans"
 minimum_workers = 2
 maximum_workers = 7
 
@@ -788,6 +789,7 @@ port = 8081
         docroot [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
         encoding utf-8 \
         class ::example::Application \
+        environments stdchans \
         configure [dict create \
             ::example::Application [dict create message {configured virtual host}]] \
         hosts site.example.test \
