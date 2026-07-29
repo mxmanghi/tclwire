@@ -709,7 +709,7 @@ class = "::example::Application"
 file = "apps/example.tcl"
 libdir = "site-lib"
 encoding = "utf-8"
-environments = "stdchans"
+environment = "stdchans"
 minimum_workers = 2
 maximum_workers = 7
 

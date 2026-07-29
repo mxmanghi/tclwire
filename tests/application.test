@@ -479,6 +479,27 @@ test application-configuration-1.1e {
     }
 } -result {stdchans stdchans}
 
+test application-configuration-1.1f {
+    construction normalizes singular application environment alias
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp] \
+            environment stdchans]]
+    try {
+        list \
+            [$configuration environments] \
+            [dict exists [$configuration snapshot] environment]
+    } finally {
+        $configuration destroy
+    }
+} -result {stdchans 0}
+
 test application-configuration-1.1a {
     construction qualifies bare application class and configure names
 } -body {
@@ -675,6 +696,57 @@ test application-configuration-1.4a {
     }
 } -result [list 1 stdchans 1 1 stdchans 1 0 \
     ::tclwire::envs::stdchans::puts ::puts 1]
+
+test application-configuration-1.4b {
+    CGA applies environment namespace path to request-time application objects
+} -setup {
+    oo::class create ::tclwire::application_test::StdchansApplication {
+        method handle_request {request} {
+            puts stdout alpha
+            puts -nonewline stdout beta
+            flush stdout
+        }
+    }
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set configuration [::tclwire::ApplicationConfiguration new env-request-test \
+        [dict create \
+            class ::tclwire::application_test::StdchansApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environments {stdchans}]]
+} -body {
+    ::tclwire::cga::initialize app:env-request-test [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id env-request-test \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 92 \
+            method GET \
+            path /]
+    update
+    set output_event [lindex [lindex $::tclwire::application_test::events 0] 1]
+    list \
+        [dict get $output_event type] \
+        [dict get $output_event data] \
+        [lmap item $::tclwire::application_test::events {
+            dict get [lindex $item 1] type
+        }]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::application_test::StdchansApplication destroy}
+    catch {::tclwire::io end}
+} -result [list output "alpha\nbeta" {output flush complete}]
 
 test application-configuration-1.5 {
     constructor failures reach the connection agent as error events

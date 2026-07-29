@@ -260,7 +260,7 @@ namespace eval ::tclwire::runtime {
     proc application_descriptor_key {field} {
         return [expr {$field in {
             class package hosts encoding log_level reload_on_request
-            retain_uploaded_files configure docroot libdir file environments
+            retain_uploaded_files configure docroot libdir file environment environments
             minimum_workers maximum_workers
         }}]
     }
@@ -634,7 +634,15 @@ namespace eval ::tclwire::runtime {
                 # separately below.
                 set application [dict filter $descriptor key \
                     class package hosts encoding log_level reload_on_request \
-                    retain_uploaded_files chore chore_class environments]
+                    retain_uploaded_files chore chore_class environment environments]
+                if {[dict exists $application environment] &&
+                        ![dict exists $application environments]} {
+                    dict set application environments \
+                        [dict get $application environment]
+                }
+                if {[dict exists $application environment]} {
+                    dict unset application environment
+                }
                 if {[dict exists $descriptor configure]} {
                     dict set application configure [dict get $descriptor configure]
                 }

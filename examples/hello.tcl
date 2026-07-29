@@ -31,8 +31,22 @@ oo::class create Hello {
         ::tclwire::io out "<tr><td>Namespace</td><td>[namespace current]</td></tr>"
         ::tclwire::io out "<tr><td>App Object</td><td>[self]</td></tr>"
         ::tclwire::io out "<tr><td>App class</td><td>[info object class [self]]</td></tr>"
-        ::tclwire::io out "</table>"
+        ::tclwire::io out "<tr><td>App namespace</td><td>[info object namespace [self]]</td></tr>"
+        ::tclwire::io out "</table><hr />"
+
+        puts "<pre> stdchans present: [::tclwire::cga::has_environment stdchans]</pre>"
+        if {[::tclwire::cga::has_environment stdchans]} {
+            puts "<pre>running within the stdchans environment. I sending output with puts</pre>"
+            set n 5
+            while {[incr n -1] > 0} {
+                puts -nonewline ".....$n"
+                flush stdout
+                after 500
+            }
+        }
+
         ::tclwire::io out "</html>"
+
         return
     }
 }

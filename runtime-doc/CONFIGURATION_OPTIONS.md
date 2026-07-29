@@ -260,10 +260,14 @@ then from global runtime defaults.
 : Application-specific library directory. Overrides service and global
   `libdir` values.
 
+`environment`
+: Single application environment loaded into each CGA worker before
+  request-time application instances are created.
+
 `environments`
-: Tcl list of application environments loaded into each CGA worker before
-  request-time application instances are created. Environment path namespaces
-  are appended to `::tclwire::app`'s command resolution path.
+: Tcl list of application environments. This is the canonical normalized
+  configuration field; `environment` is accepted as a single-environment
+  convenience alias.
 
 `minimum_workers`
 : Minimum number of content-generator workers for the application pool.

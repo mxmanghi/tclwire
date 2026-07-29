@@ -71,6 +71,13 @@ oo::class create ::tclwire::ApplicationConfiguration {
 
         set values [::tclwire::normalize_application_descriptor_classes \
             [dict merge $defaults $descriptor]]
+        if {[dict exists $values environment] &&
+                [dict get $values environments] eq {}} {
+            dict set values environments [dict get $values environment]
+        }
+        if {[dict exists $values environment]} {
+            dict unset values environment
+        }
 
         foreach property {class hosts docroot encoding application_paths} {
             if {![dict exists $descriptor $property]} {

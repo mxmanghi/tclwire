@@ -61,12 +61,13 @@ namespace eval ::tclwire::cga {
 
         # A CGA worker belongs to one application pool.  The immutable
         # application configuration is therefore worker initialization state,
-        # not request payload.  Runtime reconfiguration should replace pools
+        # not request payload. Runtime reconfiguration should replace pools
         # and retire their workers instead of sending a different application
         # configuration with each request.
 
         set configuration [::tclwire::ApplicationConfiguration deserialize $serialized_configuration]
         envs::install [$configuration environments]
+
         set pool_key $worker_pool_key
         set application_class [$configuration class]
         set application_descriptor [$configuration snapshot]
@@ -87,6 +88,7 @@ namespace eval ::tclwire::cga {
         variable installed {}
         variable installed_names {}
         variable installing {}
+        variable path_namespaces {}
         variable application_namespace_path {}
         variable application_namespace_path_saved 0
 
@@ -153,6 +155,8 @@ namespace eval ::tclwire::cga {
     }
 
     proc append_path {namespaces} {
+        variable path_namespaces
+
         namespace eval ::tclwire::app {}
         set path [namespace eval ::tclwire::app {namespace path}]
         foreach namespace $namespaces {
@@ -162,8 +166,30 @@ namespace eval ::tclwire::cga {
             if {$namespace ni $path} {
                 lappend path $namespace
             }
+            if {$namespace ni $path_namespaces} {
+                lappend path_namespaces $namespace
+            }
         }
         namespace eval ::tclwire::app [::list namespace path $path]
+        return
+    }
+
+    proc append_to_namespace {target_namespace} {
+        variable path_namespaces
+
+        if {$path_namespaces eq {}} {
+            return
+        }
+        if {![namespace exists $target_namespace]} {
+            error "target namespace does not exist: $target_namespace"
+        }
+        set path [namespace eval $target_namespace {namespace path}]
+        foreach namespace $path_namespaces {
+            if {$namespace ni $path} {
+                lappend path $namespace
+            }
+        }
+        namespace eval $target_namespace [::list namespace path $path]
         return
     }
 
@@ -234,6 +260,7 @@ namespace eval ::tclwire::cga {
         variable installed
         variable installed_names
         variable installing
+        variable path_namespaces
         variable application_namespace_path
         variable application_namespace_path_saved
 
@@ -249,6 +276,7 @@ namespace eval ::tclwire::cga {
         set installed {}
         set installed_names {}
         set installing {}
+        set path_namespaces {}
         set application_namespace_path {}
         set application_namespace_path_saved 0
         return
@@ -447,6 +475,9 @@ namespace eval ::tclwire::cga {
             # exit.
             reload_application_class $application_class $configuration
             set application [$application_class new $application_descriptor]
+
+            envs::append_to_namespace [info object namespace $application]
+
             ::tclwire::tools::begin $request_descriptor
             set request [::tclwire::HttpRequest new $request_descriptor]
             $application handle_request $request

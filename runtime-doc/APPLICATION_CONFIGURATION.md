@@ -42,6 +42,9 @@ retain_uploaded_files 0
 pool_policy {minimum_workers 0 maximum_workers 20}
 ```
 
+`environment` is accepted as a single-environment input alias and is
+normalized into `environments`.
+
 The constructor validates:
 
 - `file` and `chore` when present;

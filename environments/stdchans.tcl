@@ -83,9 +83,9 @@ namespace eval ::tclwire::envs::stdchans {
     }
 
     proc flush {args} {
-        if {[llength $args] == 1 &&
-                [lindex $args 0] eq "stdout" &&
-                [transaction_active]} {
+        if {([llength $args] == 1) && \
+            ([lindex $args 0] eq "stdout") && \
+            [transaction_active]} {
             ::tclwire::io flush
             return
         }
