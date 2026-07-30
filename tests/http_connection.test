@@ -414,6 +414,51 @@ test http-protocol-1.5 {response framing does not infer a media type} -body {
     }
 } -result {1 1 caffè}
 
+test http-protocol-1.5a {responses include default security headers} -body {
+    set protocol [::tclwire::HttpProtocolSession new]
+    try {
+        set response [$protocol build_response 200 OK body utf-8]
+        set separator [string first "\r\n\r\n" $response]
+        set headers [string range $response 0 $separator-1]
+        list \
+            [regexp -nocase {X-Content-Type-Options: nosniff} $headers] \
+            [expr {![regexp -nocase {Strict-Transport-Security:} $headers]}]
+    } finally {
+        $protocol destroy
+    }
+} -result {1 1}
+
+test http-protocol-1.5b {HTTPS responses include HSTS} -body {
+    set protocol [::tclwire::HttpProtocolSession new -secure 1]
+    try {
+        set response [$protocol build_response 200 OK body utf-8]
+        set separator [string first "\r\n\r\n" $response]
+        set headers [string range $response 0 $separator-1]
+        list \
+            [regexp -nocase {X-Content-Type-Options: nosniff} $headers] \
+            [regexp -nocase {Strict-Transport-Security: max-age=31536000; includeSubDomains} $headers]
+    } finally {
+        $protocol destroy
+    }
+} -result {1 1}
+
+test http-protocol-1.5c {application security headers are not duplicated} -body {
+    set protocol [::tclwire::HttpProtocolSession new -secure 1]
+    try {
+        set response [$protocol build_response 200 OK body utf-8 \
+            [list "X-Content-Type-Options: nosniff" \
+                  "Strict-Transport-Security: max-age=86400"]]
+        set separator [string first "\r\n\r\n" $response]
+        set headers [string range $response 0 $separator-1]
+        list \
+            [regexp -all -nocase {X-Content-Type-Options:} $headers] \
+            [regexp -all -nocase {Strict-Transport-Security:} $headers] \
+            [regexp -nocase {Strict-Transport-Security: max-age=86400} $headers]
+    } finally {
+        $protocol destroy
+    }
+} -result {1 1 1}
+
 test http-protocol-1.6 {chunked request completion waits for the terminator} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
@@ -559,6 +604,7 @@ test http-protocol-1.12 {protocol session frames chunked response bytes} -body {
             [string match "HTTP/1.1 200 OK*" $head] \
             [regexp -nocase {Transfer-Encoding: chunked} $head] \
             [expr {![regexp -nocase {Content-Length:} $head]}] \
+            [regexp -nocase {X-Content-Type-Options: nosniff} $head] \
             [expr {![regexp -nocase {Content-Type:} $untyped_head]}] \
             [binary encode hex $first] \
             [binary encode hex $second] \
@@ -567,7 +613,7 @@ test http-protocol-1.12 {protocol session frames chunked response bytes} -body {
         $protocol destroy
     }
 } -result [list \
-    1 1 1 1 \
+    1 1 1 1 1 \
     350d0a616c7068610d0a \
     330d0a0080ff0d0a \
     "0\r\n\r\n"]

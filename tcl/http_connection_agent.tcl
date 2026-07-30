@@ -55,7 +55,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         }
         set protocol_session [::tclwire::HttpProtocolSession new -bodythreshold  $protocol_threshold \
                                                                  -spooldirectory $options(-uploadarea) \
-                                                                 -maxbodybytes   $options(-maxrequestbytes)]
+                                                                 -maxbodybytes   $options(-maxrequestbytes) \
+                                                                 -secure         [expr {$options(-protocol) eq "https"}]]
         set application_dispatcher [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]

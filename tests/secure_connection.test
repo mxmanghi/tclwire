@@ -161,12 +161,14 @@ test secure-connection-1.1 {
     set response [::tclwire::secure_connection_test::read_until_eof $channel]
     list \
         [string match "HTTP/1.1 200 OK*" $response] \
+        [regexp -nocase {X-Content-Type-Options: nosniff} $response] \
+        [regexp -nocase {Strict-Transport-Security: max-age=31536000; includeSubDomains} $response] \
         [string match {*TclWire*} $response] \
         [[::tclwire::runtime transport_reactor https 9443] pool_key]
 } -cleanup {
     ::tclwire::secure_connection_test::cleanup
     catch {file delete -force $directory}
-} -result {1 1 connection:https:9443}
+} -result {1 1 1 1 connection:https:9443}
 
 test secure-connection-1.2 {
     implicit FTPS protects control and passive data channels
