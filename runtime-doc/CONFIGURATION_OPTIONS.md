@@ -262,7 +262,14 @@ then from global runtime defaults.
 
 `environment`
 : Tcl list of application environments loaded into each CGA worker before
-  request-time application instances are created.
+  request-time application instances are created. An environment may also
+  provide the application class when `class` is omitted.
+
+`configure`
+: Application-owned configuration dictionary. Direct values under
+  `[http.<application>.configure]` or `[https.<application>.configure]` apply
+  to the resolved application class. Child tables keyed by TclOO class name
+  target that class explicitly.
 
 `minimum_workers`
 : Minimum number of content-generator workers for the application pool.

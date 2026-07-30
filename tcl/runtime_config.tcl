@@ -699,6 +699,10 @@ namespace eval ::tclwire::runtime {
             }
             dict for {application_id descriptor} $applications {
                 set explicit_class [dict exists $descriptor class]
+                set explicit_package [dict exists $descriptor package]
+                set explicit_file [dict exists $descriptor file]
+                set explicit_reload_on_request \
+                    [dict exists $descriptor reload_on_request]
                 set explicit_chore [dict exists $descriptor chore]
                 set explicit_chore_class [dict exists $descriptor chore_class]
                 if {[dict exists $merged_applications $application_id]} {
@@ -726,6 +730,16 @@ namespace eval ::tclwire::runtime {
                             $application_id $descriptor]
                     if {$environment_class ne {}} {
                         dict set descriptor class $environment_class
+                        dict set descriptor class_from_environment 1
+                        if {!$explicit_package && [dict exists $descriptor package]} {
+                            dict unset descriptor package
+                        }
+                        if {!$explicit_file && [dict exists $descriptor file]} {
+                            dict unset descriptor file
+                        }
+                        if {!$explicit_file} {
+                            dict set descriptor reload_on_request 0
+                        }
                     }
                 }
                 dict set merged_applications $application_id $descriptor
@@ -943,6 +957,14 @@ namespace eval ::tclwire::runtime {
             if {[dict exists $descriptor hosts]} {
                 set application_hosts [dict get $descriptor hosts]
             }
+            set class_from_environment [expr {
+                [dict exists $descriptor class_from_environment] &&
+                [dict get $descriptor class_from_environment]
+            }]
+            set explicit_package [dict exists $descriptor package]
+            set explicit_file [dict exists $descriptor file]
+            set explicit_reload_on_request \
+                [dict exists $descriptor reload_on_request]
             set descriptor \
                 [::tclwire::normalize_application_descriptor_classes \
                     $descriptor]
@@ -977,6 +999,18 @@ namespace eval ::tclwire::runtime {
                 if {$application_hosts ne {}} {
                     dict set descriptor hosts $application_hosts
                 }
+            }
+            if {$class_from_environment} {
+                if {!$explicit_package && [dict exists $descriptor package]} {
+                    dict unset descriptor package
+                }
+                if {!$explicit_file && [dict exists $descriptor file]} {
+                    dict unset descriptor file
+                }
+                if {!$explicit_file} {
+                    dict set descriptor reload_on_request 0
+                }
+                dict unset descriptor class_from_environment
             }
             if {[dict exists $config libdir] &&
                     ![dict exists $descriptor libdir]} {

@@ -135,10 +135,10 @@ maximum_workers = 20
 # class, file/package, encoding, libdir, and worker limits are inherited from
 # [http.default]. Any of them may still be overridden in the host table.
 #
-# Class-specific settings live under configure tables keyed by TclOO class
-# name. Bare application class names are sourced under ::tclwire::app and
-# configure keys are qualified the same way. Constructors decide how those
-# values map to object state.
+# Direct settings under configure apply to the resolved application class.
+# Class-specific child tables can still target another TclOO class, or make
+# the target explicit. Bare class names are qualified under ::tclwire::app.
+# Constructors decide how those values map to object state.
 #
 [http.hello]
 hosts = "<my-hello-app>"
@@ -146,8 +146,11 @@ class = "Hello"
 file = "examples/hello.tcl"
 docroot = "/tmp/tclwire"
 
-[http.hello.configure.Hello]
+[http.hello.configure]
 message = "Hello from a configured virtual host"
+
+# [http.hello.configure.Hello]
+# message = "Override the direct configure value for Hello"
 
 [https]
 enabled = false

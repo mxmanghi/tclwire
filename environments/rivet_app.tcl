@@ -5,11 +5,13 @@
 
 package require tclwire::application 0.1
 
+source [file join [file dirname [info script]] rivet_commands.tcl]
+
 namespace eval ::tclwire {}
 namespace eval ::tclwire::envs {}
-namespace eval ::tclwire::envs::rivet {}
+namespace eval ::tclwire::envs::app {}
 
-oo::class create ::tclwire::envs::rivet::Application {
+oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
 
     method rivet_script_path {request} {
@@ -23,13 +25,49 @@ oo::class create ::tclwire::envs::rivet::Application {
         return $candidate
     }
 
-    method handle_request {request} {
-        set script [my rivet_script_path $request]
-        if {$script eq {}} {
-            next $request
-            return
+    method content_type {path} {
+        if {[string tolower [file extension $path]] in {".tcl" ".rvt"}} {
+            return "text/html; charset=[my encoding]"
         }
-        source $script
+        return [next $path]
+    }
+
+    method handle_request {request} {
+        set script {}
+        ::try {
+            ::Rivet::initialize_request
+        } on error {err} {
+            ::rivet::apache_log_error crit "Rivet request initialization failed: $::errorInfo"
+        }
+
+        ::try {
+            set script [::rivet::url_script]
+            if {$script eq {}} {
+                next $request
+                return
+            }
+
+            ::tclwire::http::io header set Content-Type [my content_type [$request path]]
+
+            set before_script [::rivet::inspect BeforeScript]
+            if {$before_script ne ""} {
+                set ::Rivet::script $before_script
+                eval $before_script
+            }
+
+            ::rivet::apache_log_error crit "script: $script"
+            set ::Rivet::script $script
+            namespace eval ::request $script
+        } trap {RIVET ABORTPAGE} {err opts} {
+            ::Rivet::finish_request $script $err $opts AbortScript
+        } trap {RIVET THREAD_EXIT} {err opts} {
+            ::Rivet::finish_request $script $err $opts AbortScript
+        } on error {err opts} {
+            ::Rivet::finish_request $script $err $opts
+        } finally {
+            ::Rivet::finish_request $script "" "" AfterEveryScript
+        }
+
         return
     }
 }

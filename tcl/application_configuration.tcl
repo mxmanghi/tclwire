@@ -14,37 +14,115 @@ proc ::tclwire::qualify_application_class {class_name} {
     return ::tclwire::app::$class_name
 }
 
-proc ::tclwire::qualify_application_configure {configuration} {
+# Decide whether one key in an application `configure` dictionary is meant to
+# name a TclOO class rather than an ordinary application option.
+#
+# TclWire accepts two related configuration shapes:
+#
+#   configure {
+#       message "hello"
+#       timeout 30
+#   }
+#
+# and:
+#
+#   configure {
+#       ::example::Application {
+#           message "hello"
+#       }
+#   }
+#
+# The first shape is convenient in TOML as `[http.site.configure]`; those
+# direct keys apply to the already-resolved application class.  The second
+# shape is an explicit class-targeted block, used by nested TOML tables such as
+# `[http.site.configure."::example::Application"]`.
+#
+# This predicate recognizes the second shape's *key*.  A key is class-like when
+# it is the resolved application class, when it is namespace-qualified, or when
+# its final namespace component starts with an uppercase letter.  The uppercase
+# rule lets bare class names such as `Hello` be written without `::tclwire::app`
+# in TOML.  The caller still verifies that the value is a dictionary before it
+# treats the entry as a class block; that second check is what keeps scalar
+# direct options from being reinterpreted as class configuration.
+
+proc ::tclwire::application_configure_class_key {key application_class} {
+    if {$application_class ne {} &&
+        [::tclwire::qualify_application_class $key] eq $application_class} {
+        return 1
+    }
+    if {[string match ::* $key] || [string first :: $key] >= 0} {
+        return 1
+    }
+    set tail [namespace tail $key]
+    return [string is upper -strict [string index $tail 0]]
+}
+
+proc ::tclwire::qualify_application_configure {configuration {application_class {}}} {
     if {$configuration eq {}} {
         return $configuration
     }
     if {[catch {dict size $configuration}]} {
         return $configuration
     }
+    if {$application_class ne {}} {
+        set application_class [::tclwire::qualify_application_class $application_class]
+    }
     set qualified [dict create]
-    dict for {class_name class_options} $configuration {
-        set class_name [::tclwire::qualify_application_class $class_name]
-        if {[dict exists $qualified $class_name] &&
-                ![catch {dict size [dict get $qualified $class_name]}] &&
-                ![catch {dict size $class_options}]} {
-            dict set qualified $class_name \
-                [dict merge [dict get $qualified $class_name] $class_options]
+    set direct [dict create]
+    dict for {key value} $configuration {
+
+        # A class-targeted configure entry must satisfy both conditions:
+        #
+        # 1. The key must look like a class name, as defined by
+        #    application_configure_class_key.
+        # 2. The value must itself be a dictionary, because a class block is a
+        #    set of option/value pairs for that class.
+        #
+        # The value test is not just validation; it is part of the
+        # classification.  It lets direct scalar entries like
+        # `message = "hello"` or `child_init_script = "init.tcl"` remain direct
+        # application options.  When an application class is known, those direct
+        # options are collected in `direct` and attached to that class after the
+        # loop.  If the same class also has an explicit block, the explicit
+        # block is merged afterward and therefore overrides direct defaults.
+
+        if {[::tclwire::application_configure_class_key $key $application_class] && ![catch {dict size $value}]} {
+
+            set class_name [::tclwire::qualify_application_class $key]
+            if {[dict exists $qualified $class_name] && ![catch {dict size [dict get $qualified $class_name]}]} {
+                dict set qualified $class_name [dict merge [dict get $qualified $class_name] $value]
+            } else {
+                dict set qualified $class_name $value
+            }
+
+        } elseif {$application_class ne {}} {
+            dict set direct $key $value
         } else {
-            dict set qualified $class_name $class_options
+            dict set qualified $key $value
         }
+    }
+
+    if {$application_class ne {} && [dict size $direct]} {
+        set class_options $direct
+        if {[dict exists $qualified $application_class]} {
+            set class_options [dict merge $class_options [dict get $qualified $application_class]]
+        }
+        dict set qualified $application_class $class_options
     }
     return $qualified
 }
 
 proc ::tclwire::normalize_application_descriptor_classes {descriptor} {
+    set application_class {}
     if {[dict exists $descriptor class]} {
         dict set descriptor class \
             [::tclwire::qualify_application_class [dict get $descriptor class]]
+        set application_class [dict get $descriptor class]
     }
     if {[dict exists $descriptor configure]} {
         dict set descriptor configure \
             [::tclwire::qualify_application_configure \
-                [dict get $descriptor configure]]
+                [dict get $descriptor configure] $application_class]
     }
     return $descriptor
 }
@@ -77,8 +155,10 @@ oo::class create ::tclwire::ApplicationConfiguration {
                 error "application '$id' is missing $property"
             }
         }
-        if {[dict get $values package] eq {} && [dict get $values file] eq {}} {
-            error "application '$id' must define package or file"
+        if {[dict get $values package] eq {} &&
+                [dict get $values file] eq {} &&
+                [dict get $values environment] eq {}} {
+            error "application '$id' must define package, file, or environment"
         }
         if {[dict get $values file] ne {} && ![file isfile [dict get $values file]]} {
             error "application '$id' file does not exist: [dict get $values file]"

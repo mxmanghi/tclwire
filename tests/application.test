@@ -503,6 +503,36 @@ test application-configuration-1.1a {
     }
 } -result {::tclwire::app::Hello configured}
 
+test application-configuration-1.1b {
+    construction binds generic configure values to the application class
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp] \
+            configure [dict create \
+                message generic \
+                aliases {one two} \
+                ::example::Application [dict create \
+                    message explicit \
+                    style plain]]]]
+    try {
+        set options \
+            [$configuration class_configuration ::example::Application]
+        list \
+            [dict get $options message] \
+            [dict get $options aliases] \
+            [dict get $options style] \
+            [dict keys [$configuration configure]]
+    } finally {
+        $configuration destroy
+    }
+} -result [list explicit {one two} plain ::example::Application]
+
 test application-configuration-1.2 {
     dispatcher exposes validated immutable application configurations
 } -body {
@@ -727,6 +757,76 @@ test application-configuration-1.4b {
     catch {::tclwire::io end}
 } -result [list output "alpha\nbeta" {output flush complete}]
 
+test application-configuration-1.4ba {
+    CGA splits stable application context from request context
+} -setup {
+    oo::class create ::tclwire::application_test::ContextApplication {
+        method handle_request {request} {
+            set application_context [::tclwire::app::application_snapshot]
+            set request_context [::tclwire::app::request_snapshot]
+            puts [list \
+                [::tclwire::app::application_active] \
+                [::tclwire::app::request_active] \
+                [expr {[::tclwire::app::current] eq [self]}] \
+                [expr {[::tclwire::app::request] eq $request}] \
+                [dict get [::tclwire::app::request_descriptor] path] \
+                [[::tclwire::app::configuration] id] \
+                [dict get $application_context pool_key] \
+                [expr {[dict get $request_context request] eq $request}]]
+        }
+    }
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set configuration [::tclwire::ApplicationConfiguration new context-test \
+        [dict create \
+            class ::tclwire::application_test::ContextApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {stdchans}]]
+} -body {
+    ::tclwire::cga::initialize app:context-test [$configuration serialize]
+    set application_after_initialize [expr {[::tclwire::app::current] ne {}}]
+    set application_active_after_initialize \
+        [::tclwire::app::application_active]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id context-test \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 921 \
+            method GET \
+            path /context]
+    update
+    set output_event [lindex [lindex $::tclwire::application_test::events 0] 1]
+    set request_after_error {}
+    set request_after [catch {::tclwire::app::request} request_after_error]
+    list \
+        $application_active_after_initialize \
+        $application_after_initialize \
+        [dict get $output_event data] \
+        [::tclwire::app::application_active] \
+        [::tclwire::app::request_active] \
+        $request_after \
+        $request_after_error \
+        [expr {[::tclwire::app::current] ne {}}]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::application_test::ContextApplication destroy}
+    catch {::tclwire::io end}
+} -result [list \
+    1 1 \
+    "1 1 1 1 /context context-test app:context-test 1\n" \
+    1 0 1 {no TclWire request context is active} 1]
+
 test application-configuration-1.4c {
     CGA installs rivet environment dependencies
 } -body {
@@ -789,7 +889,41 @@ test application-configuration-1.4d {
     } finally {
         $dispatcher destroy
     }
-} -result [list ::tclwire::envs::rivet::Application rivet]
+} -result [list ::tclwire::envs::app::Rivet rivet]
+
+test application-configuration-1.4da {
+    environment-provided application class does not inherit default loader
+} -body {
+    set config [dict create \
+        docroot [temporaryDirectory] \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                file tcl/application.tcl \
+                reload_on_request 1 \
+                hosts localhost] \
+            rivet-app [dict create \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set configuration [$dispatcher application_configuration rivet-app]
+        set script [$dispatcher worker_script $configuration app:rivet-app]
+        list \
+            [$configuration class] \
+            [$configuration file] \
+            [$configuration package] \
+            [$configuration reload_on_request] \
+            [expr {[string first {tcl/application.tcl} $script] >= 0}] \
+            [expr {[string first \
+                {package require tclwire::application 0.1} $script] >= 0}]
+    } finally {
+        $dispatcher destroy
+    }
+} -result [list ::tclwire::envs::app::Rivet {} {} 0 0 0]
 
 test application-configuration-1.4e {
     rivet default application sources requested Tcl scripts
@@ -830,9 +964,18 @@ puts "from rivet script"
             method GET \
             path /hello.tcl]
     update
-    set output_event [lindex [lindex $::tclwire::application_test::events 0] 1]
+    set header_event {}
+    set output_event {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        switch -exact -- [dict get $event type] {
+            http_header { set header_event $event }
+            output { set output_event $event }
+        }
+    }
     list \
         [$configuration class] \
+        [dict get $header_event flags] \
         [dict get $output_event type] \
         [dict get $output_event data] \
         [lmap item $::tclwire::application_test::events {
@@ -845,8 +988,87 @@ puts "from rivet script"
     catch {::tclwire::accounting remove_thread $worker_id}
     catch {::tclwire::io end}
     removeDirectory $docroot
-} -result [list ::tclwire::envs::rivet::Application output \
-    "from rivet script\n" {output complete}]
+} -result [list \
+    ::tclwire::envs::app::Rivet \
+    [dict create action set name Content-Type \
+        value "text/html; charset=utf-8"] \
+    output \
+    "from rivet script\n" {http_header output complete}]
+
+test application-configuration-1.4f {
+    rivet inspect reads the application configure block
+} -setup {
+    set docroot [makeDirectory rivet-inspect-docroot]
+    set script_path [file join $docroot inspect.tcl]
+    ::fileutil::writeFile $script_path {
+puts [::rivet::inspect ChildInitScript]
+puts [inspect UploadDirectory]
+puts [::rivet::inspect HonorHeadRequests]
+puts [::rivet::inspect BeforeScript]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet} \
+                configure [dict create \
+                    child_init_script child-init.tcl \
+                    upload_directory /tmp/rivet-upload \
+                    honor_head_requests true]]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 94 \
+            method GET \
+            path /inspect.tcl]
+    update
+    set header_event {}
+    set output_event {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        switch -exact -- [dict get $event type] {
+            http_header { set header_event $event }
+            output { set output_event $event }
+        }
+    }
+    list \
+        [$configuration class_configuration ::tclwire::envs::app::Rivet] \
+        [dict get $header_event flags] \
+        [dict get $output_event data]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result [list \
+    [dict create \
+        child_init_script child-init.tcl \
+        upload_directory /tmp/rivet-upload \
+        honor_head_requests true] \
+    [dict create action set name Content-Type \
+        value "text/html; charset=utf-8"] \
+    "child-init.tcl\n/tmp/rivet-upload\ntrue\n\n"]
 
 test application-configuration-1.5 {
     constructor failures reach the connection agent as error events

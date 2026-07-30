@@ -82,14 +82,38 @@ configuration request by request.
 
 `CApplication configuration_object` exposes the worker-local object.
 
-Application descriptors may include a `configure` dictionary keyed by TclOO
-class name. This is class-owned instance configuration, not automatic variable
-injection. Each class decides how to map its block to object state.
+The CGA exposes its application constitution through `::tclwire::app`.
+Application state is stable for the worker after the application object has
+been constructed, while request state is scoped to the current
+`handle_request` invocation:
+
+```tcl
+::tclwire::app::current
+::tclwire::app::configuration
+::tclwire::app::application_snapshot
+::tclwire::app::application_active
+
+::tclwire::app::request
+::tclwire::app::request_descriptor
+::tclwire::app::request_snapshot
+::tclwire::app::request_active
+```
+
+Environment commands should use these helpers instead of discovering
+application state through caller frames. `::tclwire::cga::context` remains as a
+compatibility wrapper for request-time callers, but new code should not depend
+on it.
+
+Application descriptors may include a `configure` dictionary. Direct values in
+the TOML `configure` table apply to the resolved application class. Child
+tables keyed by TclOO class name target that class explicitly. This is
+class-owned instance configuration, not automatic variable injection. Each
+class decides how to map its block to object state.
 
 Bare application class names are deployment adapter classes. The runtime
 qualifies them under `::tclwire::app`, and file-backed applications are
-sourced in that namespace. Bare `configure` table names are qualified the same
-way:
+sourced in that namespace. Bare class names in `configure` child tables are
+qualified the same way:
 
 ```toml
 [http.hello]
@@ -97,7 +121,7 @@ hosts = "hello.example.test"
 class = "Hello"
 file = "examples/hello.tcl"
 
-[http.hello.configure.Hello]
+[http.hello.configure]
 message = "Hello from a configured virtual host"
 ```
 

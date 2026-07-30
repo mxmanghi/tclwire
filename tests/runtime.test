@@ -814,19 +814,57 @@ hosts = "localhost"
 hosts = "rivet.rivetweb.org"
 environment = "rivet"
 docroot = "rivet"
+
+[http.rivet.configure]
+message = "configured implicitly"
+aliases = "one two"
 }]
     set config [::tclwire::runtime parse_args [list --config $config_file]]
     set descriptor [dict get $config applications rivet]
     list \
         [dict get $descriptor class] \
         [dict get $descriptor environment] \
-        [dict get $descriptor docroot]
+        [dict get $descriptor docroot] \
+        [dict get $descriptor configure]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result [list \
-    ::tclwire::envs::rivet::Application \
+    ::tclwire::envs::app::Rivet \
     rivet \
-    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] rivet]]]
+    [file normalize [file join [temporaryDirectory] tclwire-config-[pid] rivet]] \
+    [dict create ::tclwire::envs::app::Rivet \
+        [dict create message {configured implicitly} aliases {one two}]]]
+
+test runtime-1.12b {
+    environment-provided application class does not inherit default loader
+} -body {
+    set config_file [::tclwire::runtime_test::make_config [format {
+[tclwire]
+default_application = "default"
+docroot = "www"
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+file = "%s"
+reload_on_request = true
+hosts = "localhost"
+
+[http.rivet]
+hosts = "rivet.rivetweb.org"
+environment = "rivet"
+docroot = "rivet"
+} [file join [pwd] tcl application.tcl]]]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set descriptor [dict get $config applications rivet]
+    list \
+        [dict get $descriptor class] \
+        [dict exists $descriptor file] \
+        [dict exists $descriptor package] \
+        [dict get $descriptor reload_on_request]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list ::tclwire::envs::app::Rivet 0 0 0]
 
 test runtime-1.13 {CLI values supersede TOML configuration} -body {
     set config_file [::tclwire::runtime_test::make_config {

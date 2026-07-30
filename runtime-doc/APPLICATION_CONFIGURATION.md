@@ -44,6 +44,9 @@ pool_policy {minimum_workers 0 maximum_workers 20}
 
 `environment` is a Tcl list of application environments.
 
+Direct `configure` entries apply to the resolved application class. Nested
+class-specific entries remain keyed by TclOO class name.
+
 The constructor validates:
 
 - `file` and `chore` when present;
@@ -80,8 +83,8 @@ $configuration configure ?class_name?
 $configuration class_configuration $class_name
 ```
 
-Returns the complete `configure` dictionary, or the block for one TclOO class.
-Missing class blocks return an empty dictionary.
+Returns the complete class-keyed `configure` dictionary, or the block for one
+TclOO class. Missing class blocks return an empty dictionary.
 
 ```tcl
 $configuration serialize

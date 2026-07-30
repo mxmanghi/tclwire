@@ -23,7 +23,7 @@ namespace eval ::tclwire::envs::rivet {
     }
 
     proc application_class {} {
-        return ::tclwire::envs::rivet::Application
+        return ::tclwire::envs::app::Rivet
     }
 
     proc enabled {} {
@@ -38,7 +38,7 @@ namespace eval ::tclwire::envs::rivet {
             return
         }
         namespace eval ::Rivet {}
-        namespace eval ::rivet {}
+        ::tclwire::envs::rivet::install_commands
         set installed 1
         return
     }
@@ -55,8 +55,9 @@ namespace eval ::tclwire::envs::rivet {
         return
     }
 
-    namespace export name requires path_namespaces application_class \
-        enabled install uninstall
+    namespace export name requires \
+                     path_namespaces application_class \
+                     enabled install uninstall
     namespace ensemble create
 }
 

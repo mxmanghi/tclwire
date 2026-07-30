@@ -13,9 +13,168 @@ package require tclwire::tpba::control 0.1
 
 namespace eval ::tclwire {}
 
+namespace eval ::tclwire::app {
+    variable application_active 0
+    variable application_values {}
+    variable request_active 0
+    variable request_values {}
+
+    proc require_dictionary {label values} {
+        if {[catch {dict size $values}]} {
+            error "$label context must be a dictionary"
+        }
+        return
+    }
+
+    proc begin_application {context_values} {
+        variable application_active
+        variable application_values
+
+        if {$application_active} {
+            error "a TclWire application context is already active"
+        }
+        require_dictionary application $context_values
+        set application_values $context_values
+        set application_active 1
+        return
+    }
+
+    proc end_application {} {
+        variable application_active
+        variable application_values
+
+        set application_active 0
+        set application_values {}
+        return
+    }
+
+    proc application_active {} {
+        variable application_active
+        return $application_active
+    }
+
+    proc application_get {field} {
+        variable application_active
+        variable application_values
+
+        if {!$application_active} {
+            error "no TclWire application context is active"
+        }
+        if {![dict exists $application_values $field]} {
+            error "unknown TclWire application context field: $field"
+        }
+        return [dict get $application_values $field]
+    }
+
+    proc application_snapshot {} {
+        variable application_active
+        variable application_values
+
+        if {!$application_active} {
+            error "no TclWire application context is active"
+        }
+        return $application_values
+    }
+
+    proc current {} {
+        tailcall application_get application
+    }
+
+    proc application {} {
+        tailcall application_get application
+    }
+
+    proc application_class {} {
+        tailcall application_get application_class
+    }
+
+    proc application_descriptor {} {
+        tailcall application_get application_descriptor
+    }
+
+    proc configuration {} {
+        tailcall application_get configuration
+    }
+
+    proc pool_key {} {
+        tailcall application_get pool_key
+    }
+
+    proc begin_request {context_values} {
+        variable request_active
+        variable request_values
+
+        if {$request_active} {
+            error "a TclWire request context is already active"
+        }
+        require_dictionary request $context_values
+        set request_values $context_values
+        set request_active 1
+        return
+    }
+
+    proc end_request {} {
+        variable request_active
+        variable request_values
+
+        set request_active 0
+        set request_values {}
+        return
+    }
+
+    proc request_active {} {
+        variable request_active
+        return $request_active
+    }
+
+    proc in_request {} {
+        tailcall request_active
+    }
+
+    proc request_get {field} {
+        variable request_active
+        variable request_values
+
+        if {!$request_active} {
+            error "no TclWire request context is active"
+        }
+        if {![dict exists $request_values $field]} {
+            error "unknown TclWire request context field: $field"
+        }
+        return [dict get $request_values $field]
+    }
+
+    proc request_snapshot {} {
+        variable request_active
+        variable request_values
+
+        if {!$request_active} {
+            error "no TclWire request context is active"
+        }
+        return $request_values
+    }
+
+    proc request {} {
+        tailcall request_get request
+    }
+
+    proc request_descriptor {} {
+        tailcall request_get request_descriptor
+    }
+
+    proc snapshot {} {
+        set values [application_snapshot]
+        if {[request_active]} {
+            set values [dict merge $values [request_snapshot]]
+        }
+        return $values
+    }
+}
+
 namespace eval ::tclwire::cga {
     variable initialized 0
     variable pool_key {}
+    variable application {}
     variable application_class {}
     variable application_descriptor {}
     variable configuration {}
@@ -23,6 +182,79 @@ namespace eval ::tclwire::cga {
     variable pending_serialized_configuration {}
     variable initialization_error {}
     variable initialization_options {}
+
+    namespace eval context {
+        proc begin {context_values} {
+            if {[catch {dict size $context_values}]} {
+                error "CGA application context must be a dictionary"
+            }
+            set application_values [dict create]
+            foreach field {
+                application application_class application_descriptor
+                configuration pool_key
+            } {
+                if {[dict exists $context_values $field]} {
+                    dict set application_values $field \
+                        [dict get $context_values $field]
+                }
+            }
+            set request_values [dict create]
+            foreach field {request request_descriptor} {
+                if {[dict exists $context_values $field]} {
+                    dict set request_values $field \
+                        [dict get $context_values $field]
+                }
+            }
+            if {[dict size $application_values]} {
+                if {[::tclwire::app::application_active]} {
+                    ::tclwire::app::end_application
+                }
+                ::tclwire::app::begin_application $application_values
+            }
+            if {[dict size $request_values]} {
+                ::tclwire::app::begin_request $request_values
+            }
+            return
+        }
+
+        proc end {} {
+            ::tclwire::app::end_request
+            return
+        }
+
+        proc active {} {
+            tailcall ::tclwire::app::request_active
+        }
+
+        proc get {field} {
+            if {![::tclwire::app::request_active]} {
+                error "no CGA application context is active"
+            }
+            switch -exact -- $field {
+                request -
+                request_descriptor {
+                    tailcall ::tclwire::app::request_get $field
+                }
+                default {
+                    tailcall ::tclwire::app::application_get $field
+                }
+            }
+        }
+
+        proc snapshot {} {
+            if {![::tclwire::app::request_active]} {
+                error "no CGA application context is active"
+            }
+            tailcall ::tclwire::app::snapshot
+        }
+
+        foreach field {
+            application application_class application_descriptor configuration
+            pool_key request request_descriptor
+        } {
+            proc $field {} [format {get %s} [list $field]]
+        }
+    }
 
     proc install_configuration_envelope {worker_pool_key serialized_configuration} {
         variable pending_pool_key
@@ -46,16 +278,19 @@ namespace eval ::tclwire::cga {
     proc initialize {worker_pool_key serialized_configuration} {
         variable initialized
         variable pool_key
+        variable application
         variable application_class
         variable application_descriptor
         variable configuration
+        variable initialization_error
+        variable initialization_options
 
         set worker_pool_key [string trim $worker_pool_key]
         if {$worker_pool_key eq {}} {
             error "content generator worker pool key must not be empty"
         }
 
-        if {$initialized} {
+        if {$initialized || $configuration ne {} || $initialization_error ne {}} {
             shutdown
         }
 
@@ -69,10 +304,20 @@ namespace eval ::tclwire::cga {
         envs::install [$configuration environment]
 
         set pool_key $worker_pool_key
+        set application {}
         set application_class [$configuration class]
         set application_descriptor [$configuration snapshot]
         dict set application_descriptor application_id [$configuration id]
         set initialized 1
+        set initialization_error {}
+        set initialization_options {}
+        if {[catch {
+            create_application_object 0
+        } message options]} {
+            set initialized 0
+            set initialization_error $message
+            set initialization_options $options
+        }
         return
     }
 
@@ -318,11 +563,11 @@ namespace eval ::tclwire::cga {
              $pending_pool_key ne {}} {
             initialize_pending
         }
-        if {$initialized && $configuration ne {}} {
-            return
-        }
         if {$initialization_error ne {}} {
             return -options $initialization_options $initialization_error
+        }
+        if {$initialized && $configuration ne {}} {
+            return
         }
         error "content generator worker is not initialized"
     }
@@ -330,6 +575,7 @@ namespace eval ::tclwire::cga {
     proc shutdown {} {
         variable initialized
         variable pool_key
+        variable application
         variable application_class
         variable application_descriptor
         variable configuration
@@ -338,6 +584,12 @@ namespace eval ::tclwire::cga {
         variable initialization_error
         variable initialization_options
 
+        catch {::tclwire::app::end_request}
+        if {$application ne {}} {
+            catch {$application destroy}
+        }
+        set application {}
+        catch {::tclwire::app::end_application}
         if {$configuration ne {}} {
             catch {$configuration destroy}
         }
@@ -407,6 +659,50 @@ namespace eval ::tclwire::cga {
         return
     }
 
+    proc destroy_application_object {} {
+        variable application
+
+        if {$application ne {}} {
+            catch {$application destroy}
+        }
+        set application {}
+        catch {::tclwire::app::end_application}
+        return
+    }
+
+    proc create_application_object {reload} {
+        variable pool_key
+        variable application
+        variable application_class
+        variable application_descriptor
+        variable configuration
+
+        destroy_application_object
+        if {$reload} {
+            reload_application_class $application_class $configuration
+        }
+        set application [$application_class new $application_descriptor]
+        envs::append_to_namespace [info object namespace $application]
+        ::tclwire::app::begin_application \
+            [dict create application            $application \
+                         application_class      $application_class \
+                         application_descriptor $application_descriptor \
+                         configuration          $configuration \
+                         pool_key               $pool_key]
+        return $application
+    }
+
+    proc application_object {} {
+        variable application
+        variable configuration
+
+        set reload [$configuration reload_on_request]
+        if {$application eq {} || $reload} {
+            create_application_object $reload
+        }
+        return $application
+    }
+
     proc log_application_error {request_descriptor message options} {
         set context [dict create]
         if {[dict exists $request_descriptor application_id]} {
@@ -449,17 +745,13 @@ namespace eval ::tclwire::cga {
     proc execute {request_descriptor} {
         variable initialized
         variable pool_key
+        variable application
         variable application_class
         variable application_descriptor
         variable configuration
 
-        ensure_initialized
-
         set worker_id [::thread::id]
-        ::tclwire::accounting change_thread_status $worker_id running \
-                [list $application_class [dict get $request_descriptor transaction_id]]
 
-        set application {}
         set request {}
         try {
             # Establish the error-reporting path before any application-owned
@@ -468,18 +760,24 @@ namespace eval ::tclwire::cga {
                                 [dict get $request_descriptor connection_agent_id]  \
                                 [dict get $request_descriptor transaction_id]
 
+            ensure_initialized
+            ::tclwire::accounting change_thread_status $worker_id running \
+                [list $application_class \
+                      [dict get $request_descriptor transaction_id]]
+
             # The configuration and application descriptor are owned by the
             # worker and are stable for the lifetime of this CGA pool member.
             # Per-request work may read them, but cleanup must not destroy the
             # configuration object; it is released by cga::shutdown on worker
             # exit.
-            reload_application_class $application_class $configuration
-            set application [$application_class new $application_descriptor]
-
-            envs::append_to_namespace [info object namespace $application]
+            application_object
 
             ::tclwire::tools::begin $request_descriptor
             set request [::tclwire::HttpRequest new $request_descriptor]
+            ::tclwire::app::begin_request \
+                [dict create request            $request \
+                             request_descriptor $request_descriptor]
+
             $application handle_request $request
             if {[::tclwire::io::accepting_output]} {
                 ::tclwire::io complete
@@ -488,15 +786,15 @@ namespace eval ::tclwire::cga {
             log_application_error $request_descriptor $message $options
             catch {::tclwire::io fail $message}
         } finally {
+            catch {::tclwire::app::end_request}
             catch {::tclwire::tools::end}
             catch {::tclwire::io end}
             if {$request ne {}} {
                 catch {$request destroy}
             }
-            if {$application ne {}} {
-                catch {$application destroy}
+            if {$configuration ne {}} {
+                cleanup_uploaded_files $configuration $request_descriptor
             }
-            cleanup_uploaded_files $configuration $request_descriptor
             catch {
                 ::tclwire::tpba notify_workload_transition \
                     $pool_key request-processed

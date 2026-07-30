@@ -150,10 +150,10 @@ oo::class create ::tclwire::CApplication {
             dict set context host [$request header host]
         }
 
-        set fields [list \
-            "method=[::tclwire::logger log_value [$request method]]" \
-            "path=[::tclwire::logger log_value [$request path]]" \
-            "status=$status"]
+        set fields [list "method=[::tclwire::logger log_value [$request method]]" \
+                         "path=[::tclwire::logger log_value [$request path]]" \
+                         "status=$status"]
+
         if {$resolved_path ne {}} {
             lappend fields \
                 "resolved_path=[::tclwire::logger log_value $resolved_path]"

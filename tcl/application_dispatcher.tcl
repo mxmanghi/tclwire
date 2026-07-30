@@ -46,8 +46,14 @@ oo::class create ::tclwire::ApplicationDispatcher {
                     $original_descriptor]
             set had_hosts [dict exists $original_descriptor hosts]
             set explicit_class [dict exists $original_descriptor class]
+            set explicit_package [dict exists $original_descriptor package]
+            set explicit_file [dict exists $original_descriptor file]
+            set explicit_reload_on_request \
+                [dict exists $original_descriptor reload_on_request]
             set explicit_chore [dict exists $original_descriptor chore]
             set explicit_chore_class [dict exists $original_descriptor chore_class]
+            set environment_class_applied 0
+            set suppress_inherited_loader 0
             if {$application_id ne $default_application} {
                 if {[dict exists $default_descriptor pool_policy] &&
                     [dict exists $descriptor pool_policy]} {
@@ -70,6 +76,15 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 if {!$had_hosts} {
                     dict set descriptor hosts [list $application_id]
                 }
+                if {[dict exists $original_descriptor environment] &&
+                        $explicit_class &&
+                        !$explicit_package &&
+                        !$explicit_file &&
+                        [dict exists $default_descriptor class] &&
+                        [dict get $descriptor class] ne
+                            [dict get $default_descriptor class]} {
+                    set suppress_inherited_loader 1
+                }
             }
             if {!$explicit_class} {
                 set environment_class \
@@ -77,6 +92,19 @@ oo::class create ::tclwire::ApplicationDispatcher {
                         $application_id $descriptor]
                 if {$environment_class ne {}} {
                     dict set descriptor class $environment_class
+                    set environment_class_applied 1
+                    set suppress_inherited_loader 1
+                }
+            }
+            if {$suppress_inherited_loader} {
+                if {!$explicit_package && [dict exists $descriptor package]} {
+                    dict unset descriptor package
+                }
+                if {!$explicit_file && [dict exists $descriptor file]} {
+                    dict unset descriptor file
+                }
+                if {!$explicit_file} {
+                    dict set descriptor reload_on_request 0
                 }
             }
             if {![dict exists $descriptor docroot]} {
@@ -273,7 +301,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 [dict get $application_descriptor file] ne {}} {
             set loader [list namespace eval ::tclwire::app \
                 [list source [dict get $application_descriptor file]]]
-        } else {
+        } elseif {[dict exists $application_descriptor package] &&
+                [dict get $application_descriptor package] ne {}} {
             set loader [list package require \
                 [dict get $application_descriptor package] 0.1]
         }

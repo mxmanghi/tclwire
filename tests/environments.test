@@ -177,7 +177,7 @@ test rivet-1.1 {rivet environment exposes lifecycle metadata} -body {
         [::tclwire::envs::rivet path_namespaces] \
         [::tclwire::envs::rivet application_class] \
         [::tclwire::envs::rivet enabled]
-} -result [list rivet stdchans ::rivet ::tclwire::envs::rivet::Application 0]
+} -result [list rivet stdchans ::rivet ::tclwire::envs::app::Rivet 0]
 
 test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes owned namespaces} -body {
     catch {::tclwire::envs::rivet uninstall}
@@ -188,7 +188,10 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
         set installed [::tclwire::envs::rivet enabled]
         set exists_after_install [list \
             [namespace exists ::Rivet] \
-            [namespace exists ::rivet]]
+            [namespace exists ::rivet] \
+            [expr {[info commands ::Rivet::initialize_request] ne {}}] \
+            [expr {[info commands ::rivet::apache_log_error] ne {}}] \
+            [expr {[info commands ::rivet::inspect] ne {}}]]
         ::tclwire::envs::rivet uninstall
         list \
             $installed \
@@ -201,6 +204,35 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
         catch {namespace delete ::Rivet}
         catch {namespace delete ::rivet}
     }
-} -result {1 {1 1} 0 0 0}
+} -result {1 {1 1 1 1 1} 0 0 0}
+
+test rivet-1.3 {rivet inspect options map to configure keys} -body {
+    set options {
+        ServerInitScript
+        GlobalInitScript
+        ChildInitScript
+        ChildExitScript
+        BeforeScript
+        AfterScript
+        AfterEveryScript
+        AbortScript
+        ErrorScript
+        UploadMaxSize
+        UploadDirectory
+        UploadFilesToVar
+        SeparateVirtualInterps
+        HonorHeadRequests
+    }
+    list \
+        [lmap option $options {
+            ::tclwire::envs::rivet::inspect_key $option
+        }] \
+        [catch {::tclwire::envs::rivet::inspect_key UnknownOption} \
+            message] \
+        $message
+} -result [list \
+    {server_init_script global_init_script child_init_script child_exit_script before_script after_script after_every_script abort_script error_script upload_max_size upload_directory upload_files_to_var separate_virtual_interps honor_head_requests} \
+    1 \
+    {bad inspect option "UnknownOption": must be ServerInitScript, GlobalInitScript, ChildInitScript, ChildExitScript, BeforeScript, AfterScript, AfterEveryScript, AbortScript, ErrorScript, UploadMaxSize, UploadDirectory, UploadFilesToVar, SeparateVirtualInterps, HonorHeadRequests}]
 
 cleanupTests
