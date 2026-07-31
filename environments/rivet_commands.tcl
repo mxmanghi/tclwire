@@ -14,6 +14,9 @@ if {[info commands ::tclwire::app::current] eq {}} {
 }
 
 namespace eval ::tclwire::envs::rivet {
+    variable aborting 0
+    variable abort_code {}
+
     variable inspect_options {
         ServerInitScript
         GlobalInitScript
@@ -51,12 +54,45 @@ namespace eval ::tclwire::envs::rivet {
         return [dict get $options $key]
     }
 
+    proc reset_abort_state {} {
+        variable aborting
+        variable abort_code
+
+        set aborting 0
+        set abort_code {}
+        return
+    }
+
+    proc aborting {} {
+        variable aborting
+        return $aborting
+    }
+
+    proc abort_code {} {
+        variable abort_code
+        return $abort_code
+    }
+
+    proc abort_page {{code {}}} {
+        variable aborting
+        variable abort_code
+
+        if {$code eq "-aborting"} {
+            return $aborting
+        }
+
+        set aborting 1
+        set abort_code $code
+        return -code error -errorcode {RIVET ABORTPAGE}
+    }
+
     proc install_commands {} {
 
         # Init the ::Rivet namespace
 
         namespace eval ::Rivet {}
         proc ::Rivet::initialize_request {} {
+            ::tclwire::envs::rivet::reset_abort_state
             catch { namespace delete ::request }
             namespace eval ::request {}
             set application [::tclwire::app::current]
@@ -166,8 +202,16 @@ namespace eval ::tclwire::envs::rivet {
             return [fileutil::cat $candidate]
         }
 
+        proc ::rivet::abort_page {{code {}}} {
+            tailcall ::tclwire::envs::rivet::abort_page $code
+        }
+
+        proc ::rivet::abort_code {} {
+            tailcall ::tclwire::envs::rivet::abort_code
+        }
+
         namespace eval ::rivet {
-            namespace export apache_log_error inspect url_script
+            namespace export abort_code abort_page apache_log_error inspect url_script
         }
         return
     }

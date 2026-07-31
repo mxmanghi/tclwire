@@ -1070,6 +1070,114 @@ puts [::rivet::inspect BeforeScript]
         value "text/html; charset=utf-8"] \
     "child-init.tcl\n/tmp/rivet-upload\ntrue\n\n"]
 
+test application-configuration-1.4g {
+    rivet abort_page runs AbortScript and resets state on the next request
+} -setup {
+    set docroot [makeDirectory rivet-abort-docroot]
+    set abort_path [file join $docroot abort.tcl]
+    set status_path [file join $docroot status.tcl]
+    ::fileutil::writeFile $abort_path {
+puts "before abort"
+::rivet::abort_page STOP
+puts "after abort"
+}
+    ::fileutil::writeFile $status_path {
+puts [list [::rivet::abort_page -aborting] [::rivet::abort_code]]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set ::tclwire::application_test::rivet_abort_events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet} \
+                configure [dict create \
+                    abort_script {
+                        lappend ::tclwire::application_test::rivet_abort_events \
+                            [list abort \
+                                [::rivet::abort_page -aborting] \
+                                [::rivet::abort_code]]
+                    } \
+                    after_every_script {
+                        lappend ::tclwire::application_test::rivet_abort_events \
+                            [list afterevery \
+                                [::rivet::abort_page -aborting] \
+                                [::rivet::abort_code]]
+                    }]]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 95 \
+            method GET \
+            path /abort.tcl]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 96 \
+            method GET \
+            path /status.tcl]
+    update
+
+    set abort_output {}
+    set status_output {}
+    set abort_types {}
+    set status_types {}
+    foreach item $::tclwire::application_test::events {
+        lassign $item transaction_id event
+        set type [dict get $event type]
+        if {$transaction_id == 95} {
+            lappend abort_types $type
+            if {$type eq "output"} {
+                append abort_output [dict get $event data]
+            }
+        } elseif {$transaction_id == 96} {
+            lappend status_types $type
+            if {$type eq "output"} {
+                append status_output [dict get $event data]
+            }
+        }
+    }
+    list \
+        $abort_output \
+        $status_output \
+        $::tclwire::application_test::rivet_abort_events \
+        $abort_types \
+        $status_types
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    unset -nocomplain ::tclwire::application_test::rivet_abort_events
+    removeDirectory $docroot
+} -result [list \
+    "before abort\n" \
+    "0 {}\n" \
+    {{abort 1 STOP} {afterevery 1 STOP} {afterevery 0 {}}} \
+    {http_header output complete} \
+    {http_header output complete}]
+
 test application-configuration-1.5 {
     constructor failures reach the connection agent as error events
 } -setup {
