@@ -300,11 +300,10 @@ oo::class create ::tclwire::ApplicationDispatcher {
     }
 
     method application_paths {descriptor} {
-        set paths [list $run_directory [dict get $descriptor docroot]]
+        set paths [list $project_root $run_directory [dict get $descriptor docroot]]
         if {[dict exists $descriptor libdir]} {
             lappend paths [dict get $descriptor libdir]
         }
-        lappend paths $project_root
 
         set unique_paths {}
         foreach directory $paths {

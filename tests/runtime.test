@@ -40,6 +40,27 @@ namespace eval ::tclwire::runtime_test {
 
 ::tclwire::runtime_test::cleanup
 
+test runtime-1.0a {runtime startup puts TclWire root first in auto_path} -body {
+    set fake_system [file join [temporaryDirectory] tclwire-fake-system-[pid]]
+    set startup_script [file join [temporaryDirectory] tclwire-startup-[pid].tcl]
+    file mkdir $fake_system
+    ::fileutil::writeFile $startup_script [format {
+set project_root %s
+set fake_system %s
+set auto_path [concat [list $fake_system $project_root] $auto_path]
+set argv0 child
+source [file join $project_root tcl tclwire.tcl]
+puts [list \
+    [lindex $auto_path 0] \
+    [llength [lsearch -all -exact $auto_path $project_root]]]
+} [list $project_root] [list $fake_system]]
+    try {
+        exec [info nameofexecutable] $startup_script
+    } finally {
+        file delete -force $fake_system $startup_script
+    }
+} -result [list $project_root 1]
+
 test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     set config [::tclwire::runtime parse_args {}]
     list \

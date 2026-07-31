@@ -1094,6 +1094,70 @@ puts "from rivet script"
     output \
     "from rivet script\n" {http_header output complete} 1]
 
+test application-configuration-1.4e0 {
+    rivet default application evaluates scripts from their containing directory
+} -setup {
+    set docroot [makeDirectory rivet-cwd-docroot]
+    file mkdir [file join $docroot docs]
+    ::fileutil::writeFile [file join $docroot docs sibling.txt] "sibling"
+    set script_path [file join $docroot docs cwd.tcl]
+    ::fileutil::writeFile $script_path {
+puts [file normalize [pwd]]
+puts [::rivet::read_file sibling.txt -encoding utf-8]
+}
+    set expected_directory [file normalize [file join $docroot docs]]
+    set starting_directory [file normalize [pwd]]
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 107 \
+            method GET \
+            path /docs/cwd.tcl]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    list \
+        [expr {$output eq "$expected_directory\nsibling\n"}] \
+        [expr {[file normalize [pwd]] eq $starting_directory}]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result {1 1}
+
 test application-configuration-1.4ea {
     rivet default application parses requested Rivet templates
 } -setup {
@@ -1487,16 +1551,16 @@ puts [expr {[file normalize $server(SERVER_CONF)] eq \
 } -result "1\n3.3.0tw\n1\n"
 
 test application-configuration-1.4ff {
-    rivet header adapts to TclWire HTTP header commands
+    rivet headers adapts to TclWire HTTP header commands
 } -setup {
     set docroot [makeDirectory rivet-header-docroot]
     set script_path [file join $docroot header.tcl]
     ::fileutil::writeFile $script_path {
-::rivet::header set X-Rivet one
-::rivet::header add X-Rivet two
-puts [::rivet::header get X-Rivet]
-::rivet::header remove X-Rivet
-puts [::rivet::header get X-Rivet]
+::rivet::headers type application/json
+puts [::rivet::headers get Content-Type]
+::rivet::headers set X-Rivet one
+::rivet::headers add X-Rivet two
+puts [::rivet::headers get X-Rivet]
 }
     set worker_id [::thread::id]
     catch {::tclwire::accounting remove_thread $worker_id}
@@ -1550,10 +1614,10 @@ puts [::rivet::header get X-Rivet]
 } -result [list \
     [list \
         [dict create action set name Content-Type value "text/html; charset=utf-8"] \
+        [dict create action set name Content-Type value application/json] \
         [dict create action set name X-Rivet value one] \
-        [dict create action add name X-Rivet value two] \
-        [dict create action remove name X-Rivet]] \
-    "one two\n\n"]
+        [dict create action add name X-Rivet value two]] \
+    "application/json\none two\n"]
 
 test application-configuration-1.4ffe {
     rivet env exposes request environment values
@@ -1710,9 +1774,9 @@ test application-configuration-1.4ffg {
     ::fileutil::writeFile $script_path {
 ::rivet::load_headers
 ::rivet::load_headers ::loaded_headers
-puts $::request::headers(host)
-puts $::request::headers(x-test-header)
-puts $::loaded_headers(content-type)
+puts $::request::headers(Host)
+puts $::request::headers(X-Test-Header)
+puts $::loaded_headers(Content-Type)
 puts [array exists ::request::headers]
 puts [array exists ::loaded_headers]
 }
@@ -2138,20 +2202,20 @@ puts [::rivet::var get posted]
 } -result "from\nmulti posted\nfirst second\n0\nvalue\n"
 
 test application-configuration-1.4fg {
-    rivet include writes static files literally
+    rivet include writes text files in response encoding
 } -setup {
     set docroot [makeDirectory rivet-include-docroot]
     file mkdir [file join $docroot docs]
-    ::fileutil::writeFile -translation binary \
-        [file join $docroot literal.bin] "A\0B"
-    ::fileutil::writeFile -translation binary \
-        [file join $docroot docs asset.bin] "C\0D"
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot literal.txt] "A\u00e8B"
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot docs asset.txt] "C\u00e9D"
     set script_path [file join $docroot docs include.tcl]
     ::fileutil::writeFile $script_path {
 puts -nonewline before:
-::rivet::include literal.bin
+::rivet::include literal.txt
 puts -nonewline :middle:
-::rivet::include -virtual asset.bin
+::rivet::include -virtual asset.txt
 puts -nonewline :after
 }
     set worker_id [::thread::id]
@@ -2198,8 +2262,7 @@ puts -nonewline :after
             lappend output_modes [dict get $event flags body_mode]
         }
     }
-    binary scan $output H* output_hex
-    list $output_modes $output_hex $event_types
+    list $output_modes $output $event_types
 } -cleanup {
     catch {::tclwire::cga::shutdown}
     catch {$dispatcher destroy}
@@ -2208,8 +2271,8 @@ puts -nonewline :after
     catch {::tclwire::io end}
     removeDirectory $docroot
 } -result [list \
-    {text binary text binary text} \
-    6265666f72653a4100423a6d6964646c653a4300443a6166746572 \
+    {text text text text text} \
+    "before:A\u00e8B:middle:C\u00e9D:after" \
     {http_header output flush output flush output flush output flush output complete}]
 
 test application-configuration-1.4g {
@@ -2674,18 +2737,20 @@ test application-dispatcher-1.9a {
     try {
         set configuration [$dispatcher application_configuration default]
         set script [$dispatcher worker_script $configuration app:default]
+        set project_root_index [string first $project_root $script]
         set docroot_index [string first $docroot $script]
         set libdir_index [string first $libdir $script]
         set package_index [string first \
             {package require tclwire::application 0.1} $script]
         list \
-            [expr {$docroot_index >= 0}] \
+            [expr {$project_root_index >= 0}] \
+            [expr {$docroot_index > $project_root_index}] \
             [expr {$libdir_index > $docroot_index}] \
             [expr {$package_index > $libdir_index}]
     } finally {
         $dispatcher destroy
     }
-} -result {1 1 1}
+} -result {1 1 1 1}
 
 test application-dispatcher-1.9b {
     worker scripts notify their pool before removing accounting

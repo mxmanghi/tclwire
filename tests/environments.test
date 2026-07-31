@@ -218,6 +218,70 @@ test rivet-1.1 {rivet environment exposes lifecycle metadata} -body {
             [info class superclasses [info object class $object]]}]
 } -result [list rivet stdchans ::rivet rivet_app.tcl ::tclwire::envs::app::Rivet 0 1 1]
 
+test rivet-1.1a {rivet parser compatibility package parses standalone templates} -body {
+    set path [file join [temporaryDirectory] rivet-parser-[pid].rvt]
+    ::fileutil::writeFile $path {<h1><?= $title ?></h1>}
+    set child [interp create]
+    try {
+        $child eval [list lappend auto_path $project_root]
+        $child eval [list set template_path $path]
+        $child eval {
+            set package_version [package require librivetparser 1.0]
+            set parser_package [package provide rivetparser]
+            set script [::rivet::parserivetdata {<p><?= $title ?></p>}]
+            namespace eval ::standalone {
+                variable output {}
+                variable title TclWire
+                proc puts {args} {
+                    variable output
+                    set nonewline 0
+                    if {[llength $args] > 0 && [lindex $args 0] eq "-nonewline"} {
+                        set nonewline 1
+                        set args [lrange $args 1 end]
+                    }
+                    append output [lindex $args end]
+                    if {!$nonewline} {
+                        append output "\n"
+                    }
+                    return
+                }
+            }
+            namespace eval ::standalone $script
+
+            set file_script [::rivet::parserivet $template_path]
+            namespace eval ::request {
+                variable output {}
+                variable title FileTemplate
+                proc puts {args} {
+                    variable output
+                    set nonewline 0
+                    if {[llength $args] > 0 && [lindex $args 0] eq "-nonewline"} {
+                        set nonewline 1
+                        set args [lrange $args 1 end]
+                    }
+                    append output [lindex $args end]
+                    if {!$nonewline} {
+                        append output "\n"
+                    }
+                    return
+                }
+            }
+            eval $file_script
+
+            list \
+                $package_version \
+                $parser_package \
+                [expr {[info commands ::rivet::parserivetdata] ne {}}] \
+                [expr {[info commands ::rivet::parserivet] ne {}}] \
+                $::standalone::output \
+                $::request::output
+        }
+    } finally {
+        interp delete $child
+        file delete -force $path
+    }
+} -result {1.0 1.0 1 1 <p>TclWire</p> <h1>FileTemplate</h1>}
+
 test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes owned namespaces} -body {
     catch {::tclwire::envs::rivet uninstall}
     catch {namespace delete ::Rivet}
@@ -231,13 +295,27 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
             [expr {[info commands ::Rivet::initialize_request] ne {}}] \
             [expr {[info commands ::rivet::apache_log_error] ne {}}] \
             [expr {[info commands ::rivet::env] ne {}}] \
-            [expr {[info commands ::rivet::header] ne {}}] \
+            [expr {[info commands ::rivet::headers] ne {}}] \
             [expr {[info commands ::rivet::include] ne {}}] \
             [expr {[info commands ::rivet::inspect] ne {}}] \
             [expr {[info commands ::rivet::load_cookies] ne {}}] \
             [expr {[info commands ::rivet::load_env] ne {}}] \
             [expr {[info commands ::rivet::load_headers] ne {}}] \
-            [expr {[info commands ::rivet::load_response] ne {}}]]
+            [expr {[info commands ::rivet::load_response] ne {}}] \
+            [expr {[info commands ::rivet::lremove] ne {}}] \
+            [expr {[info commands ::rivet::lassign_array] ne {}}] \
+            [expr {[info commands ::rivet::http_accept] ne {}}] \
+            [expr {[info commands ::rivet::read_file] ne {}}] \
+            [expr {[info commands ::rivet::wrap] ne {}}] \
+            [expr {[info commands ::rivet::wrapline] ne {}}] \
+            [expr {[info commands ::rivet::unescape_string] ne {}}] \
+            [expr {[info commands ::rivet::escape_string] ne {}}] \
+            [expr {[info commands ::rivet::escape_sgml_chars] ne {}}] \
+            [expr {[info commands ::rivet::escape_shell_command] ne {}}] \
+            [expr {[info commands ::rivet::parray] ne {}}] \
+            [expr {[info commands ::rivet::parray_table] ne {}}] \
+            [expr {[info commands ::rivet::parserivetdata] ne {}}] \
+            [expr {[info commands ::rivet::parserivet] ne {}}]]
         ::tclwire::envs::rivet uninstall
         list \
             $installed \
@@ -250,7 +328,7 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
         catch {namespace delete ::Rivet}
         catch {namespace delete ::rivet}
     }
-} -result {1 {1 1 1 1 1 1 1 1 1 1 1 1} 0 0 0}
+} -result {1 {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1} 0 0 0}
 
 test rivet-1.2a {rivet abort_page records abort state and raises abort errorcode} -body {
     catch {::tclwire::envs::rivet uninstall}
@@ -423,6 +501,81 @@ test rivet-1.2e {rivet cookie set and delete update jar and emit Set-Cookie head
         {session=xyz; expires=Tue, 01-Jan-30 00:00:00 GMT; path=/account; domain=example.test; secure; HttpOnly} \
         {session=; expires=* GMT}]]
 
+test rivet-1.2ea {rivet load arrays populate caller frame for explicit names} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    unset -nocomplain ::local_env ::local_headers ::local_cookies
+    set docroot [makeDirectory rivet-load-frame-docroot]
+    set application {}
+    set request [::tclwire::HttpRequest new [dict create \
+        method POST \
+        target /load.tcl?ok=yes \
+        path /load.tcl \
+        query ok=yes \
+        version 1.1 \
+        scheme http \
+        remote_host 192.0.2.10 \
+        remote_port 54321 \
+        headers [dict create \
+            host example.test \
+            x-test-header value \
+            cookie {session=abc; theme=light}] \
+        body_media raw \
+        body_storage in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 33]]
+    proc ::tclwire::environment_test::load_frame_probe {} {
+        ::rivet::load_env local_env
+        ::rivet::load_headers local_headers
+        ::rivet::load_cookies local_cookies
+        list \
+            [array exists local_env] \
+            $local_env(REQUEST_METHOD) \
+            $local_env(HTTP_HOST) \
+            [array exists local_headers] \
+            $local_headers(X-Test-Header) \
+            [array exists local_cookies] \
+            $local_cookies(session) \
+            [array exists ::local_env] \
+            [array exists ::local_headers] \
+            [array exists ::local_cookies]
+    }
+    try {
+        ::tclwire::envs::rivet install
+        set application [::tclwire::CApplication new \
+            [dict create \
+                docroot $docroot \
+                encoding utf-8 \
+                package tclwire::application \
+                hosts localhost]]
+        ::tclwire::app::begin_application \
+            [dict create \
+                application $application \
+                application_class [info object class $application] \
+                application_descriptor {} \
+                configuration [$application configuration_object] \
+                pool_key environment-test]
+        ::tclwire::app::begin_request \
+            [dict create request $request request_descriptor [$request snapshot]]
+        ::tclwire::environment_test::load_frame_probe
+    } finally {
+        catch {::tclwire::app::end_request}
+        catch {::tclwire::app::end_application}
+        if {$application ne {}} {
+            catch {$application destroy}
+        }
+        catch {$request destroy}
+        catch {rename ::tclwire::environment_test::load_frame_probe {}}
+        unset -nocomplain ::local_env ::local_headers ::local_cookies
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+        removeDirectory $docroot
+    }
+} -result {1 POST example.test 1 value 1 abc 0 0 0}
+
 test rivet-1.2f {rivet parser compiles mixed template content to Tcl} -body {
     set template {<h1>$title</h1>
 <? set title TclWire ?>
@@ -471,6 +624,350 @@ test rivet-1.2g {rivet lempty reports empty lists and invalid list values} -body
         catch {namespace delete ::rivet}
     }
 } -result {1 0 0 1}
+
+test rivet-1.2ga {rivet lremove defaults to first glob match} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::lremove {aa e111 bab aa} a*] \
+            [::rivet::lremove {aa e111 bab aa} e* b*] \
+            [::tclwire::envs::rivet::lremove {aa e111 bab aa} a*]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list {e111 bab aa} {aa bab aa} {e111 bab aa}]
+
+test rivet-1.2gb {rivet lremove -all removes every matching occurrence} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::lremove -all {aa e111 bab aa} aa e111 bab] \
+            [::rivet::lremove -all -regexp {aa e111 bab aa} aa {e\d+}] \
+            [::rivet::lremove -all -glob {aa e111 bab aa} a* b*]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list {} bab e111]
+
+test rivet-1.2gc {rivet lremove supports exact matching and switch terminator} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::lremove -exact {a* aa a*} a*] \
+            [::rivet::lremove -- {-a -b c -a} -a]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list {aa a*} {-b c -a}]
+
+test rivet-1.2gd {rivet lremove reports command errors} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        set bad_switch [catch {::rivet::lremove -bad {a b} a} switch_message]
+        set bad_args [catch {::rivet::lremove -all {a b}} args_message]
+        set bad_binary [catch {::rivet::lremove [list "a\x00b"] *} binary_message]
+        list $bad_switch $switch_message $bad_args $args_message \
+            $bad_binary $binary_message
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list \
+    1 {bad switch "-bad": must be -exact, -glob, -regexp or -all} \
+    1 {wrong # args: should be "::rivet::lremove ?mod? ?-all? list pattern"} \
+    1 {Binary data is not supported in this mode.}]
+
+test rivet-1.2gda {rivet lassign_array assigns list values into array elements} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    unset -nocomplain values
+    try {
+        ::tclwire::envs::rivet install
+        set leftovers [::rivet::lassign_array {one two three four} values \
+            first second]
+        list $leftovers $values(first) $values(second)
+    } finally {
+        unset -nocomplain values
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list {three four} one two]
+
+test rivet-1.2gdb {rivet lassign_array fills missing values with empty strings} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    array set values [list existing prior]
+    try {
+        ::tclwire::envs::rivet install
+        set leftovers [::rivet::lassign_array {one} values first second existing]
+        list $leftovers $values(first) $values(second) $values(existing)
+    } finally {
+        unset -nocomplain values
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list {} one {} {}]
+
+test rivet-1.2gdc {rivet lassign_array reports command errors} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    set scalar value
+    try {
+        ::tclwire::envs::rivet install
+        set bad_args [catch {::rivet::lassign_array {one} values} args_message]
+        set bad_list [catch {::rivet::lassign_array "\{" values first} list_message]
+        set bad_array [catch {::rivet::lassign_array {one} scalar first} array_message]
+        list $bad_args $args_message $bad_list $list_message \
+            $bad_array $array_message
+    } finally {
+        unset -nocomplain scalar
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list \
+    1 {wrong # args: should be "::rivet::lassign_array list arrayName elementName ?elementName..?"} \
+    1 {unmatched open brace in list} \
+    1 {can't set "scalar(first)": variable isn't array}]
+
+test rivet-1.2gdd {rivet http_accept parses weighted header values} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::http_accept {text/plain;q=0.5, text/html, image/png;q=0.8}] \
+            [::tclwire::envs::rivet::http_accept \
+                {da, en-gb;q=0.8, en;q=0.7}]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list \
+    [dict create text/html 1 image/png 0.8 text/plain 0.5] \
+    [dict create da 1 en-gb 0.8 en 0.7]]
+
+test rivet-1.2gde {rivet http_accept supports list default and zeroweight modes} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::http_accept -list {text/plain;q=0.5, text/html, image/png;q=0.8}] \
+            [::rivet::http_accept -default {text/html;q=0.8}] \
+            [::rivet::http_accept -default {text/html;q=0.8, */*;q=0.2}] \
+            [::rivet::http_accept -zeroweight {text/html;q=0, text/plain;q=0.4}] \
+            [::rivet::http_accept -default -zeroweight \
+                {text/html;q=0, text/plain;q=0.4}]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list \
+    {text/html image/png text/plain} \
+    [dict create text/html 0.8 * 0.01] \
+    [dict create text/html 0.8 */* 0.2] \
+    [dict create text/plain 0.4 text/html 0.0] \
+    [dict create text/plain 0.4 * 0.01 text/html 0.0]]
+
+test rivet-1.2gdf {rivet http_accept reports bad switches} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        catch {::rivet::http_accept -bad {text/html}} message
+        set message
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result {Unknown argument '-bad'}
+
+test rivet-1.2gdg {rivet read_file reads files with optional channel options} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    set text_path [file join [temporaryDirectory] rivet-read-file-[pid].txt]
+    set binary_path [file join [temporaryDirectory] rivet-read-file-[pid].bin]
+    set channel [open $text_path w]
+    fconfigure $channel -encoding utf-8
+    puts -nonewline $channel "caf\u00e8"
+    close $channel
+    set channel [open $binary_path w]
+    fconfigure $channel -translation binary
+    puts -nonewline $channel "a\r\nb"
+    close $channel
+    try {
+        ::tclwire::envs::rivet install
+        set bad [catch {::rivet::read_file $text_path -bad value} bad_message]
+        list \
+            [::rivet::read_file $text_path -encoding utf-8] \
+            [string equal [::rivet::read_file $binary_path -translation binary] "a\r\nb"] \
+            [::tclwire::envs::rivet::read_file $text_path -encoding utf-8] \
+            $bad \
+            $bad_message
+    } finally {
+        catch {close $channel}
+        file delete -force $text_path $binary_path
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list "caf\u00e8" 1 "caf\u00e8" 1 \
+    {Bad option "-bad", expected one of -encoding, -eofchar, or -translation}]
+
+test rivet-1.2ge {rivet WWW escape helpers encode strings} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        set bad [catch {::rivet::unescape_string {%zz}} bad_message]
+        list \
+            [::rivet::escape_string {a b&c=/}] \
+            [::rivet::unescape_string {a+b%26c%3d%2f}] \
+            [::rivet::escape_sgml_chars {a&<>'"}] \
+            [::rivet::escape_shell_command {a&b;c$(x)}] \
+            $bad \
+            $bad_message
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list \
+    a+b%26c%3d%2f \
+    {a b&c=/} \
+    {a&amp;&lt;&gt;&#39;&quot;} \
+    {a\&b\;c\$\(x\)} \
+    1 \
+    {::rivet::unescape_string: bad char in hex sequence %zz}]
+
+test rivet-1.2gf {rivet parray writes escaped preformatted array contents} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    namespace eval ::tclwire::environment_test::parray {
+        variable output {}
+        proc capture {text} {
+            variable output
+            append output $text
+            return
+        }
+    }
+    array set values [list beta {<two>} alpha {one&}]
+    try {
+        ::tclwire::envs::rivet install
+        ::rivet::parray values * ::tclwire::environment_test::parray::capture
+        set missing [catch {::rivet::parray scalar} missing_message]
+        list $::tclwire::environment_test::parray::output \
+            $missing $missing_message
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+        catch {namespace delete ::tclwire::environment_test::parray}
+    }
+} -result [list \
+    "<pre>\n<b>values</b>\nvalues(alpha) = one&amp;\nvalues(beta)  = &lt;two&gt;\n</pre>" \
+    1 \
+    {"scalar" isn't an array}]
+
+test rivet-1.2gg {rivet parray_table writes escaped HTML table} -body {
+    set ::tclwire::environment_test::events {}
+    set receiver [::tclwire::environment_test::OutputReceiver new]
+    array set values [list beta {<two>} alpha {one&}]
+    try {
+        ::tclwire::envs::stdchans install
+        ::tclwire::envs::rivet install
+        ::tclwire::io begin [::thread::id] $receiver 25
+        ::rivet::parray_table values * [list class debug id values]
+        ::tclwire::io flush
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set output_event \
+            [lindex [lindex $::tclwire::environment_test::events 0] 1]
+        dict get $output_event data
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::envs::rivet uninstall}
+        catch {::tclwire::envs::stdchans uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+        catch {$receiver destroy}
+    }
+} -result "<table class=\"debug\" id=\"values\"><thead><tr><th colspan=\"2\">values</th></tr></thead>\n<tbody>\n<tr><td>alpha</td><td>one&amp;</td></tr>\n<tr><td>beta</td><td>&lt;two&gt;</td></tr>\n</tbody></table>\n"
+
+test rivet-1.2gh {rivet wrapline wraps a single line on spaces} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::wrapline {alpha beta gamma} 10] \
+            [::rivet::wrapline {alpha beta gamma} 10 -html] \
+            [::tclwire::envs::rivet::wrapline {supercalifragilistic short} 10] \
+            [::rivet::wrapline {a  b} 3]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list "alpha beta\ngamma" {alpha beta<br>gamma} \
+    "supercalifragilistic\nshort" "a \nb"]
+
+test rivet-1.2gi {rivet wrap wraps each input line} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    set string "alpha beta gamma\ndelta epsilon"
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::wrap $string 10] \
+            [::rivet::wrap $string 10 -html] \
+            [::tclwire::envs::rivet::wrap $string 10]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list "alpha beta\ngamma\ndelta\nepsilon" \
+    {alpha beta<br>gamma<br>delta<br>epsilon} \
+    "alpha beta\ngamma\ndelta\nepsilon"]
 
 test rivet-1.2h {rivet xml builds nested and self-closing markup} -body {
     catch {::tclwire::envs::rivet uninstall}
@@ -556,5 +1053,119 @@ test rivet-1.3 {rivet inspect options map to configure keys} -body {
     false \
     1 \
     {bad inspect option "UnknownOption": must be ServerInitScript, GlobalInitScript, ChildInitScript, ChildExitScript, BeforeScript, AfterScript, AfterEveryScript, AbortScript, ErrorScript, UploadMaxSize, UploadDirectory, UploadFilesToVar, SeparateVirtualInterps, HonorHeadRequests, ImportRivetNS}]
+
+test rivet-1.3a {rivet inspect -all returns supported configuration values} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    set docroot [makeDirectory rivet-inspect-all-docroot]
+    set application {}
+    try {
+        ::tclwire::envs::rivet install
+        set application [::tclwire::CApplication new \
+            [dict create \
+                docroot $docroot \
+                encoding utf-8 \
+                package tclwire::application \
+                hosts localhost \
+                configure [dict create \
+                    before_script before.tcl \
+                    upload_directory /tmp/rivet-upload \
+                    honor_head_requests true]]]
+        ::tclwire::app::begin_application \
+            [dict create \
+                application $application \
+                application_class [info object class $application] \
+                application_descriptor {} \
+                configuration [$application configuration_object] \
+                pool_key environment-test]
+
+        set all [::rivet::inspect -all]
+        list \
+            [dict get $all BeforeScript] \
+            [dict get $all UploadDirectory] \
+            [dict get $all HonorHeadRequests] \
+            [dict get $all ChildInitScript] \
+            [dict get $all ImportRivetNS] \
+            [lsort [dict keys $all]]
+    } finally {
+        catch {::tclwire::app::end_application}
+        if {$application ne {}} {
+            catch {$application destroy}
+        }
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+        removeDirectory $docroot
+    }
+} -result [list \
+    before.tcl \
+    /tmp/rivet-upload \
+    true \
+    undefined \
+    false \
+    [lsort {
+        ServerInitScript
+        GlobalInitScript
+        ChildInitScript
+        ChildExitScript
+        BeforeScript
+        AfterScript
+        AfterEveryScript
+        AbortScript
+        ErrorScript
+        UploadMaxSize
+        UploadDirectory
+        UploadFilesToVar
+        SeparateVirtualInterps
+        HonorHeadRequests
+        ImportRivetNS
+    }]]
+
+test rivet-1.3b {rivet inspect without arguments returns scoped configuration} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    set docroot [makeDirectory rivet-inspect-scoped-docroot]
+    set application {}
+    try {
+        ::tclwire::envs::rivet install
+        set application [::tclwire::CApplication new \
+            [dict create \
+                docroot $docroot \
+                encoding utf-8 \
+                package tclwire::application \
+                hosts localhost \
+                configure [dict create \
+                    after_script after.tcl \
+                    upload_max_size 4096]]]
+        ::tclwire::app::begin_application \
+            [dict create \
+                application $application \
+                application_class [info object class $application] \
+                application_descriptor {} \
+                configuration [$application configuration_object] \
+                pool_key environment-test]
+
+        set scoped [::rivet::inspect]
+        set server_config [dict get $scoped server]
+        list \
+            [lsort [dict keys $scoped]] \
+            [dict get $scoped user] \
+            [dict get $scoped dir] \
+            [dict get $server_config AfterScript] \
+            [dict get $server_config UploadMaxSize] \
+            [dict get $server_config BeforeScript]
+    } finally {
+        catch {::tclwire::app::end_application}
+        if {$application ne {}} {
+            catch {$application destroy}
+        }
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+        removeDirectory $docroot
+    }
+} -result [list {dir server user} {} {} after.tcl 4096 undefined]
 
 cleanupTests

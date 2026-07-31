@@ -7,6 +7,10 @@ package require tclwire::http::application::io 0.1
 package require tclwire::http::query 0.1
 package require fileutil
 
+if {[info commands ::tclwire::envs::rivet::parser::parse_template] eq {}} {
+    source [file join [file dirname [info script]] rivet_parser.tcl]
+}
+
 namespace eval ::tclwire {}
 namespace eval ::tclwire::envs {}
 namespace eval ::tclwire::envs::rivet {}
@@ -19,6 +23,29 @@ namespace eval ::tclwire::envs::rivet {
     variable aborting 0
     variable abort_code {}
     variable rivet_version 3.3.0tw
+    variable response_reasons {
+        100 Continue
+        101 "Switching Protocols"
+        200 OK
+        201 Created
+        202 Accepted
+        204 "No Content"
+        301 "Moved Permanently"
+        302 Found
+        303 "See Other"
+        304 "Not Modified"
+        307 "Temporary Redirect"
+        308 "Permanent Redirect"
+        400 "Bad Request"
+        401 Unauthorized
+        403 Forbidden
+        404 "Not Found"
+        405 "Method Not Allowed"
+        413 "Content Too Large"
+        431 "Request Header Fields Too Large"
+        500 "Internal Server Error"
+        503 "Service Unavailable"
+    }
 
     variable inspect_options {
         ServerInitScript
@@ -59,6 +86,20 @@ namespace eval ::tclwire::envs::rivet {
             return {}
         }
         return [dict get $options $key]
+    }
+
+    proc inspect_all {} {
+        variable inspect_options
+
+        set result [dict create]
+        foreach option $inspect_options {
+            set value [inspect_value $option]
+            if {$value eq {}} {
+                set value undefined
+            }
+            dict set result $option $value
+        }
+        return $result
     }
 
     proc reset_abort_state {} {
@@ -152,17 +193,31 @@ namespace eval ::tclwire::envs::rivet {
     }
 
     proc load_env {{array_name ::request::env}} {
-        upvar #0 $array_name target
+        upvar 1 $array_name target
         unset -nocomplain target
         array set target [request_environment]
         return
     }
 
+    proc header_array_name {name} {
+        set parts {}
+        foreach part [split $name -] {
+            if {$part eq {}} {
+                lappend parts $part
+                continue
+            }
+            lappend parts [string toupper [string index $part 0]][string tolower [string range $part 1 end]]
+        }
+        return [join $parts -]
+    }
+
     proc load_headers {{array_name ::request::headers}} {
         set request [::tclwire::app::request]
-        upvar #0 $array_name target
+        upvar 1 $array_name target
         unset -nocomplain target
-        array set target [$request headers]
+        dict for {name value} [$request headers] {
+            set target([header_array_name $name]) $value
+        }
         return
     }
 
@@ -404,6 +459,7 @@ namespace eval ::tclwire::envs::rivet {
     }
 
     proc include {args} {
+        set application [::tclwire::app::current]
         switch -exact -- [llength $args] {
             1 {
                 set path [filesystem_include_path [lindex $args 0]]
@@ -424,9 +480,64 @@ namespace eval ::tclwire::envs::rivet {
         }
 
         ::tclwire::io flush
-        ::tclwire::io out [::fileutil::cat -translation binary $path] binary
+        ::tclwire::io out [::fileutil::cat -encoding [$application encoding] $path]
         ::tclwire::io flush
         return
+    }
+
+    proc response_reason {status} {
+        variable response_reasons
+
+        if {[dict exists $response_reasons $status]} {
+            return [dict get $response_reasons $status]
+        }
+        return {}
+    }
+
+    proc headers {operation args} {
+        switch -exact -- $operation {
+            get -
+            set -
+            add {
+                tailcall ::tclwire::http::io header $operation {*}$args
+            }
+            type {
+                if {[llength $args] != 1} {
+                    error {wrong # args: should be "::rivet::headers type content-type"}
+                }
+                tailcall ::tclwire::http::io header set Content-Type [lindex $args 0]
+            }
+            redirect {
+                if {[llength $args] != 1} {
+                    error {wrong # args: should be "::rivet::headers redirect uri"}
+                }
+                set uri [lindex $args 0]
+                ::tclwire::io response 302 [response_reason 302] \
+                    [list "Location: $uri"] text
+                return $uri
+            }
+            numeric {
+                if {[llength $args] != 1} {
+                    error {wrong # args: should be "::rivet::headers numeric response-code"}
+                }
+                set status [lindex $args 0]
+                if {![string is integer -strict $status] ||
+                        $status < 100 || $status > 999} {
+                    error "invalid HTTP response status: $status"
+                }
+                ::tclwire::io response $status [response_reason $status] {} text
+                return $status
+            }
+            sent {
+                if {[llength $args] != 0} {
+                    error {wrong # args: should be "::rivet::headers sent"}
+                }
+                return [expr {![::tclwire::io::accepting_output]}]
+            }
+            default {
+                error "bad headers operation \"$operation\": must be get, set, redirect, add, type, numeric, or sent"
+            }
+        }
     }
 
     proc abort_page {{code {}}} {
@@ -537,65 +648,12 @@ namespace eval ::tclwire::envs::rivet {
     }
 
     proc parse_template {template} {
-        set script {}
-        set offset 0
-        set length [string length $template]
-
-        while {$offset < $length} {
-            set start [string first "<?" $template $offset]
-            if {$start < 0} {
-                append_literal script [string range $template $offset end]
-                break
-            }
-
-            append_literal script [string range $template $offset $start-1]
-            set code_start [expr {$start + 2}]
-            set echo 0
-            if {[string index $template $code_start] eq "="} {
-                set echo 1
-                incr code_start
-            }
-
-            set end [string first "?>" $template $code_start]
-            if {$end < 0} {
-                error "unterminated Rivet template Tcl block"
-            }
-
-            set code [string range $template $code_start $end-1]
-            if {$echo} {
-                append script [list puts -nonewline] " " $code "\n"
-            } else {
-                append script $code "\n"
-            }
-            set offset [expr {$end + 2}]
-        }
-
-        return $script
-    }
-
-    proc append_literal {script_variable literal} {
-        upvar 1 $script_variable script
-        if {$literal eq {}} {
-            return
-        }
-        append script [list puts -nonewline $literal] "\n"
-        return
+        tailcall ::tclwire::envs::rivet::parser::parse_template $template
     }
 
     proc read_template_file {path {encoding {}}} {
-        if {$encoding eq {}} {
-            return [fileutil::cat $path]
-        }
-        if {$encoding ni [encoding names]} {
-            error "unknown encoding \"$encoding\""
-        }
-        set channel [open $path r]
-        try {
-            chan configure $channel -encoding $encoding -translation binary
-            return [read $channel]
-        } finally {
-            close $channel
-        }
+        tailcall ::tclwire::envs::rivet::parser::read_template_file \
+            $path $encoding
     }
 
     proc file_script {application path} {
@@ -690,6 +748,330 @@ namespace eval ::tclwire::envs::rivet {
             return 0
         }
         return [expr {$len == 0}]
+    }
+
+    proc lremove {args} {
+        if {[llength $args] < 2} {
+            error {wrong # args: should be "::rivet::lremove ?mode? ?-all? list ?pattern?.. ?pattern?.."}
+        }
+
+        set list_index 0
+        set all 0
+        set mode glob
+        foreach argument $args {
+            if {![string match -* $argument]} {
+                break
+            }
+
+            switch -exact -- $argument {
+                -exact -
+                -glob -
+                -regexp {
+                    set mode [string range $argument 1 end]
+                    incr list_index
+                }
+                -all {
+                    set all 1
+                    incr list_index
+                }
+                -- {
+                    incr list_index
+                    break
+                }
+                default {
+                    error "bad switch \"$argument\": must be -exact, -glob, -regexp or -all"
+                }
+            }
+        }
+
+        if {$list_index >= [llength $args] - 1} {
+            error {wrong # args: should be "::rivet::lremove ?mod? ?-all? list pattern"}
+        }
+
+        set source_list [lindex $args $list_index]
+        llength $source_list
+        set patterns [lrange $args $list_index+1 end]
+        set result {}
+        set removed 0
+
+        foreach value $source_list {
+            if {$removed && !$all} {
+                lappend result $value
+                continue
+            }
+
+            set matched 0
+            foreach pattern $patterns {
+                if {$mode ne "exact" && [string first \x00 $pattern] >= 0} {
+                    error {Binary data is not supported in this mode.}
+                }
+
+                switch -exact -- $mode {
+                    exact {
+                        set matched [expr {$value eq $pattern}]
+                    }
+                    glob {
+                        if {[string first \x00 $value] >= 0} {
+                            error {Binary data is not supported in this mode.}
+                        }
+                        set matched [string match $pattern $value]
+                    }
+                    regexp {
+                        if {[string first \x00 $value] >= 0} {
+                            error {Binary data is not supported in this mode.}
+                        }
+                        set matched [regexp -- $pattern $value]
+                    }
+                }
+
+                if {$matched} {
+                    if {!$all} {
+                        set removed 1
+                    }
+                    break
+                }
+            }
+
+            if {!$matched} {
+                lappend result $value
+            }
+        }
+
+        return $result
+    }
+
+    proc lassign_array {args} {
+        if {[llength $args] < 3} {
+            error {wrong # args: should be "::rivet::lassign_array list arrayName elementName ?elementName..?"}
+        }
+
+        set list [lindex $args 0]
+        set arrayName [lindex $args 1]
+        set elementNames [lrange $args 2 end]
+        llength $list
+        set list_index 0
+        set list_length [llength $list]
+        foreach elementName $elementNames {
+            if {$list_index < $list_length} {
+                set value [lindex $list $list_index]
+            } else {
+                set value {}
+            }
+            uplevel 1 [list set ${arrayName}($elementName) $value]
+            incr list_index
+        }
+
+        if {$list_index < $list_length} {
+            return [lrange $list $list_index end]
+        }
+        return
+    }
+
+    proc http_accept {args} {
+        set lqValues {}
+        set lItems {}
+
+        while {[llength $args] > 1} {
+            set args [lassign $args argCur]
+            switch -exact -- $argCur {
+                -zeroweight { set fZeroWeight 1 }
+                -list { set oList 1 }
+                -default { set fDefault 1 }
+                -- {}
+                default { return -code error "Unknown argument '$argCur'" }
+            }
+        }
+
+        foreach itemCur [split [lindex $args 0] ,] {
+            set qCur 1
+            if {[regexp {^(.*); *q=([^;]*)$} $itemCur match itemCur qString]} {
+                if {1 == [scan $qString %f qVal] && $qVal >= 0 && $qVal <= 1} {
+                    set qCur $qVal
+                }
+            }
+            set itemCur [string trim $itemCur]
+            if {$itemCur in {"*" "*/*" "*-*"}} {
+                unset -nocomplain fDefault
+            }
+            if {[info exists fZeroWeight] || $qCur > 0} {
+                lappend lqValues $qCur
+                lappend lItems $itemCur
+            }
+        }
+
+        set dOut {}
+        if {[info exists oList]} {
+            set sorted_keys {}
+            foreach indexCur [lsort -real -decreasing -indices $lqValues] {
+                lappend sorted_keys [lindex $lItems $indexCur]
+            }
+            return $sorted_keys
+        } else {
+            foreach indexCur [lsort -real -decreasing -indices $lqValues] {
+                set qCur [lindex $lqValues $indexCur]
+                if {$qCur == 0 && [info exists fDefault]} {
+                    dict set dOut * 0.01
+                    unset fDefault
+                }
+                set item_key [lindex $lItems $indexCur]
+                dict set dOut $item_key $qCur
+            }
+
+            if {[info exists fDefault]} {
+                dict set dOut * 0.01
+            }
+            return $dOut
+        }
+    }
+
+    proc read_file {file args} {
+        tailcall ::fileutil::cat {*}$args $file
+    }
+
+    proc string_before_nul {string} {
+        set nul [string first \x00 $string]
+        if {$nul >= 0} {
+            return [string range $string 0 $nul-1]
+        }
+        return $string
+    }
+
+    proc unescape_string {string} {
+        set string [string_before_nul $string]
+        set result {}
+        set length [string length $string]
+        for {set index 0} {$index < $length} {incr index} {
+            set char [string index $string $index]
+            if {$char eq "+"} {
+                append result " "
+            } elseif {$char eq "%"} {
+                incr index
+                set first [string index $string $index]
+                incr index
+                set second [string index $string $index]
+                if {![regexp {^[0-9A-Fa-f]{2}$} $first$second]} {
+                    error "::rivet::unescape_string: bad char in hex sequence %$first$second"
+                }
+                append result [binary format c [scan $first$second %x]]
+            } else {
+                append result $char
+            }
+        }
+        return $result
+    }
+
+    proc escape_string {string} {
+        set string [string_before_nul $string]
+        set result {}
+        binary scan [encoding convertto utf-8 $string] cu* bytes
+        foreach byte $bytes {
+            set char [format %c $byte]
+            if {($byte >= 0x30 && $byte <= 0x39) ||
+                    ($byte >= 0x41 && $byte <= 0x5a) ||
+                    ($byte >= 0x61 && $byte <= 0x7a)} {
+                append result $char
+            } elseif {$byte == 0x20} {
+                append result +
+            } else {
+                append result %[format %02x $byte]
+            }
+        }
+        return $result
+    }
+
+    proc escape_sgml_chars {string} {
+        set string [string_before_nul $string]
+        return [string map [list \
+            &  &amp\; \
+            <  &lt\; \
+            >  &gt\; \
+            '  &#39\; \
+            \" &quot\;] $string]
+    }
+
+    proc escape_shell_command {string} {
+        set string [string_before_nul $string]
+        set result {}
+        foreach char [split $string {}] {
+            if {$char in {& {;} ` ' | * ? - ~ < > ^ ( ) {[} {]} \{ \} {$} \\}} {
+                append result \\
+            }
+            append result $char
+        }
+        return $result
+    }
+
+    proc parray {arrayName {pattern *} {outputcmd "puts stdout"}} {
+        upvar 1 $arrayName array
+        if {![array exists array]} {
+            return -code error "\"$arrayName\" isn't an array"
+        }
+        set maxl 0
+        foreach name [lsort [array names array $pattern]] {
+            if {[string length $name] > $maxl} {
+                set maxl [string length $name]
+            }
+        }
+        set html_text [list "<b>$arrayName</b>"]
+        set maxl [expr {$maxl + [string length $arrayName] + 2}]
+        foreach name [lsort [array names array $pattern]] {
+            set nameString [format "%s(%s)" $arrayName [escape_sgml_chars $name]]
+            lappend html_text [format "%-*s = %s" \
+                $maxl $nameString [escape_sgml_chars $array($name)]]
+        }
+        uplevel 1 [list {*}$outputcmd \
+            [join [list <pre> [join $html_text "\n"] </pre>] "\n"]]
+        return
+    }
+
+    proc parray_table {arrayName {pattern "*"} {htmlAttributes ""}} {
+        upvar 1 $arrayName array
+        if {![array exists array]} {
+            return -code error "\"$arrayName\" isn't an array"
+        }
+        puts -nonewline stdout "<table"
+        foreach {attr attrval} $htmlAttributes {
+            puts -nonewline " $attr=\"$attrval\""
+        }
+
+        puts "><thead><tr><th colspan=\"2\">$arrayName</th></tr></thead>"
+        puts stdout "<tbody>"
+        foreach name [lsort [array names array $pattern]] {
+            puts stdout [format "<tr><td>%s</td><td>%s</td></tr>" \
+                [escape_sgml_chars $name] [escape_sgml_chars $array($name)]]
+        }
+        puts stdout "</tbody></table>"
+        return
+    }
+
+    proc wrap {string maxlen {html ""}} {
+        set splitstring {}
+        foreach line [split $string "\n"] {
+            lappend splitstring [wrapline $line $maxlen $html]
+        }
+        if {$html == "-html"} {
+            return [join $splitstring "<br>"]
+        } else {
+            return [join $splitstring "\n"]
+        }
+    }
+
+    proc wrapline {line maxlen {html ""}} {
+        set string [split $line " "]
+        set newline [list [lindex $string 0]]
+        foreach word [lrange $string 1 end] {
+            if {[string length $newline]+[string length $word] > $maxlen} {
+                lappend lines [join $newline " "]
+                set newline {}
+            }
+            lappend newline $word
+        }
+        lappend lines [join $newline " "]
+        if {$html == "-html"} {
+            return [join $lines <br>]
+        } else {
+            return [join $lines "\n"]
+        }
     }
 
     proc html {string args} {
@@ -867,6 +1249,7 @@ namespace eval ::tclwire::envs::rivet {
         # Init the ::Rivet namespace
 
         namespace eval ::rivet {}
+        ::tclwire::envs::rivet::parser::install_commands
 
         proc ::rivet::apache_log_error {args} {
             switch -exact -- [llength $args] {
@@ -893,9 +1276,18 @@ namespace eval ::tclwire::envs::rivet {
         proc ::rivet::inspect {args} {
             switch -exact -- [llength $args] {
                 1 {
-                    return [::tclwire::envs::rivet::inspect_value [lindex $args 0]]
+                    set option [lindex $args 0]
+                    if {$option eq "-all"} {
+                        return [::tclwire::envs::rivet::inspect_all]
+                    }
+                    return [::tclwire::envs::rivet::inspect_value $option]
                 }
-                0 -
+                0 {
+                    return [dict create \
+                        user   {} \
+                        server [::tclwire::envs::rivet::inspect_all] \
+                        dir    {}]
+                }
                 2 {
                     error "::rivet::inspect form is not implemented yet"
                 }
@@ -907,6 +1299,10 @@ namespace eval ::tclwire::envs::rivet {
 
         proc ::rivet::header {args} {
             tailcall ::tclwire::http::io header {*}$args
+        }
+
+        proc ::rivet::headers {operation args} {
+            tailcall ::tclwire::envs::rivet::headers $operation {*}$args
         }
 
         proc ::rivet::env {args} {
@@ -978,6 +1374,55 @@ namespace eval ::tclwire::envs::rivet {
             tailcall ::tclwire::envs::rivet::lempty $list
         }
 
+        proc ::rivet::lremove {args} {
+            tailcall ::tclwire::envs::rivet::lremove {*}$args
+        }
+
+        proc ::rivet::lassign_array {args} {
+            tailcall ::tclwire::envs::rivet::lassign_array {*}$args
+        }
+
+        proc ::rivet::http_accept {args} {
+            tailcall ::tclwire::envs::rivet::http_accept {*}$args
+        }
+
+        proc ::rivet::read_file {file args} {
+            tailcall ::tclwire::envs::rivet::read_file $file {*}$args
+        }
+
+        proc ::rivet::unescape_string {string} {
+            tailcall ::tclwire::envs::rivet::unescape_string $string
+        }
+
+        proc ::rivet::escape_string {string} {
+            tailcall ::tclwire::envs::rivet::escape_string $string
+        }
+
+        proc ::rivet::escape_sgml_chars {string} {
+            tailcall ::tclwire::envs::rivet::escape_sgml_chars $string
+        }
+
+        proc ::rivet::escape_shell_command {string} {
+            tailcall ::tclwire::envs::rivet::escape_shell_command $string
+        }
+
+        proc ::rivet::parray {arrayName {pattern *} {outputcmd "puts stdout"}} {
+            tailcall ::tclwire::envs::rivet::parray $arrayName $pattern $outputcmd
+        }
+
+        proc ::rivet::parray_table {arrayName {pattern "*"} {htmlAttributes ""}} {
+            tailcall ::tclwire::envs::rivet::parray_table \
+                $arrayName $pattern $htmlAttributes
+        }
+
+        proc ::rivet::wrap {string maxlen {html ""}} {
+            tailcall ::tclwire::envs::rivet::wrap $string $maxlen $html
+        }
+
+        proc ::rivet::wrapline {line maxlen {html ""}} {
+            tailcall ::tclwire::envs::rivet::wrapline $line $maxlen $html
+        }
+
         proc ::rivet::html {string args} {
             tailcall ::tclwire::envs::rivet::html $string {*}$args
         }
@@ -1011,9 +1456,13 @@ namespace eval ::tclwire::envs::rivet {
         }
 
         namespace eval ::rivet {
-            namespace export abort_code abort_page apache_log_error env header include \
+            namespace export abort_code abort_page apache_log_error env headers include \
                              inspect load_cookies load_env load_headers load_response \
-                             parse html lempty xml clock_to_rfc850_gmt cookie \
+                             parse html lempty lremove lassign_array http_accept read_file \
+                             unescape_string escape_string escape_sgml_chars \
+                             escape_shell_command parray \
+                             parray_table wrap wrapline xml \
+                             clock_to_rfc850_gmt cookie \
                              inspect url_script var var_qs var_post
         }
         return

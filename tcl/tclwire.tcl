@@ -10,9 +10,8 @@
 # `package require tclwire::runtime` or execute `tcl/tclwire.tcl`.
 
 set ::tclwire_runtime_root [file dirname [file dirname [file normalize [info script]]]]
-if {$::tclwire_runtime_root ni $::auto_path} {
-    lappend ::auto_path $::tclwire_runtime_root
-}
+set ::auto_path [linsert [lsearch -all -inline -not -exact \
+    $::auto_path $::tclwire_runtime_root] 0 $::tclwire_runtime_root]
 
 package require tclwire::support 0.1
 package require tclwire::constants 0.1

@@ -42,6 +42,9 @@ oo::class create ::tclwire::envs::app::Rivet {
 
     method handle_request {request} {
         set script {}
+        set script_path {}
+        set previous_directory {}
+        set changed_directory 0
         ::try {
             ::Rivet::initialize_request
         } on error {err} {
@@ -49,6 +52,15 @@ oo::class create ::tclwire::envs::app::Rivet {
         }
 
         ::try {
+            set script_path [my rivet_script_path $request]
+            if {$script_path eq {}} {
+                next $request
+                return
+            }
+            set previous_directory [pwd]
+            cd [file dirname $script_path]
+            set changed_directory 1
+
             set script [::rivet::url_script]
             if {$script eq {}} {
                 next $request
@@ -72,7 +84,13 @@ oo::class create ::tclwire::envs::app::Rivet {
         } on error {err opts} {
             ::Rivet::finish_request $script $err $opts
         } finally {
-            ::Rivet::finish_request $script "" "" AfterEveryScript
+            ::try {
+                ::Rivet::finish_request $script "" "" AfterEveryScript
+            } finally {
+                if {$changed_directory} {
+                    cd $previous_directory
+                }
+            }
         }
 
         return
