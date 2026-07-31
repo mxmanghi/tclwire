@@ -3,15 +3,45 @@
 # TclWire standard-channel application environment.
 
 package require tclwire::application::io 0.1
+package require tclwire::environment 0.1
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::envs {}
 
+oo::class create ::tclwire::envs::StdchansEnvironment {
+    superclass ::tclwire::ApplicationEnvironment
+
+    method name {} {
+        return stdchans
+    }
+
+    method path_namespaces {} {
+        return {::tclwire::envs::stdchans}
+    }
+
+    method do_install {} {
+        ::tclwire::envs::stdchans::install_channel_wrappers
+        return
+    }
+
+    method do_uninstall {} {
+        ::tclwire::envs::stdchans::uninstall_channel_wrappers
+        return
+    }
+}
+
 namespace eval ::tclwire::envs::stdchans {
-    variable installed 0
+    variable environment_object [::tclwire::envs::StdchansEnvironment new]
+    variable native_puts_command ::tclwire::envs::stdchans::__native_puts
+    variable native_flush_command ::tclwire::envs::stdchans::__native_flush
+
+    proc object {} {
+        variable environment_object
+        return $environment_object
+    }
 
     proc name {} {
-        return stdchans
+        tailcall [object] name
     }
 
     proc requires {} {
@@ -19,37 +49,84 @@ namespace eval ::tclwire::envs::stdchans {
     }
 
     proc path_namespaces {} {
-        return [list [namespace current]]
+        tailcall [object] path_namespaces
     }
 
     proc enabled {} {
-        variable installed
-        return $installed
+        tailcall [object] enabled
     }
 
     proc install {} {
-        variable installed
-
-        if {$installed} {
-            return
-        }
-        set installed 1
-        return
+        tailcall [object] install
     }
 
     proc uninstall {} {
-        variable installed
-
-        if {!$installed} {
-            return
-        }
-        set installed 0
-        return
+        tailcall [object] uninstall
     }
 
     proc transaction_active {} {
         set context [::tclwire::io context]
         return [dict get $context active]
+    }
+
+    proc install_channel_wrappers {} {
+        variable native_puts_command
+        variable native_flush_command
+
+        if {[info commands $native_puts_command] eq {}} {
+            rename ::puts $native_puts_command
+            proc ::puts {args} {
+                tailcall ::tclwire::envs::stdchans::puts {*}$args
+            }
+        }
+        if {[info commands $native_flush_command] eq {}} {
+            rename ::flush $native_flush_command
+            proc ::flush {args} {
+                tailcall ::tclwire::envs::stdchans::flush {*}$args
+            }
+        }
+        return
+    }
+
+    proc uninstall_channel_wrappers {} {
+        variable native_puts_command
+        variable native_flush_command
+
+        if {[info commands $native_puts_command] ne {}} {
+            rename ::puts {}
+            rename $native_puts_command ::puts
+        }
+        if {[info commands $native_flush_command] ne {}} {
+            rename ::flush {}
+            rename $native_flush_command ::flush
+        }
+        return
+    }
+
+    proc native_puts {args} {
+        variable native_puts_command
+        if {[info commands $native_puts_command] ne {}} {
+            if {[catch {uplevel 1 [list $native_puts_command {*}$args]} \
+                    message options]} {
+                return -options $options \
+                    [string map [list $native_puts_command ::puts] $message]
+            }
+            return
+        }
+        tailcall ::puts {*}$args
+    }
+
+    proc native_flush {args} {
+        variable native_flush_command
+        if {[info commands $native_flush_command] ne {}} {
+            if {[catch {uplevel 1 [list $native_flush_command {*}$args]} \
+                    message options]} {
+                return -options $options \
+                    [string map [list $native_flush_command ::flush] $message]
+            }
+            return
+        }
+        tailcall ::flush {*}$args
     }
 
     proc puts {args} {
@@ -67,7 +144,7 @@ namespace eval ::tclwire::envs::stdchans {
             set channel [lindex $args 0]
             set data [lindex $args 1]
         } else {
-            tailcall ::puts {*}$original_args
+            tailcall native_puts {*}$original_args
         }
 
         if {$channel eq "stdout" && [transaction_active]} {
@@ -79,7 +156,7 @@ namespace eval ::tclwire::envs::stdchans {
             return
         }
 
-        tailcall ::puts {*}$original_args
+        tailcall native_puts {*}$original_args
     }
 
     proc flush {args} {
@@ -90,10 +167,11 @@ namespace eval ::tclwire::envs::stdchans {
             return
         }
 
-        tailcall ::flush {*}$args
+        tailcall native_flush {*}$args
     }
 
-    namespace export name requires path_namespaces enabled install uninstall puts flush
+    namespace export object name requires path_namespaces \
+                     enabled install uninstall puts flush
     namespace ensemble create
 }
 

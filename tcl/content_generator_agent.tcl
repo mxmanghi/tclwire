@@ -3,6 +3,7 @@
 # Reusable Content Generator Agent worker entrypoint.
 
 package require Thread
+package require TclOO
 package require tclwire::accounting 1.2
 package require tclwire::application_configuration 0.1
 package require tclwire::application::io 0.1
@@ -345,10 +346,7 @@ namespace eval ::tclwire::cga {
     }
 
     proc name {environment command} {
-        if {[info commands ${command}::name] ne {}} {
-            return [${command}::name]
-        }
-        return [namespace tail $command]
+        return [[object $command] name]
     }
 
     proc normalize {environment} {
@@ -373,12 +371,26 @@ namespace eval ::tclwire::cga {
         if {![namespace exists $command]} {
             error "application environment '$environment' is not a namespace"
         }
-        foreach method {install uninstall} {
-            if {[info commands ${command}::$method] eq {}} {
-                error "application environment '$environment' does not implement $method"
-            }
-        }
+        object $command
         return
+    }
+
+    proc object_available {command} {
+        if {[info commands ${command}::object] eq {}} {
+            return 0
+        }
+        return 1
+    }
+
+    proc object {command} {
+        if {![object_available $command]} {
+            error "application environment '$command' does not expose object"
+        }
+        set environment_object [${command}::object]
+        if {![info object isa object $environment_object]} {
+            error "application environment object is not a TclOO object: $environment_object"
+        }
+        return $environment_object
     }
 
     proc load {environment} {
@@ -387,11 +399,14 @@ namespace eval ::tclwire::cga {
             error "application environment name must not be empty"
         }
         set command [command $environment]
-        if {![namespace exists $command]} {
+        if {![string match ::* $environment] &&
+                (![namespace exists $command] ||
+                 ![object_available $command])} {
+            package require tclwire::$environment
+        } elseif {![namespace exists $command]} {
             if {[string match ::* $environment]} {
                 error "application environment is not available: $environment"
             }
-            package require tclwire::$environment
         }
         if {![namespace exists $command]} {
             error "application environment is not available: $environment"
@@ -455,17 +470,15 @@ namespace eval ::tclwire::cga {
 
         try {
             set required_environments {}
-            if {[info commands ${command}::requires] ne {}} {
-                set required_environments [${command}::requires]
-            }
+            set environment_object [object $command]
+            set required_environments [$environment_object requires]
             foreach required $required_environments {
                 install_one $required
             }
 
-            ${command}::install
-            if {[info commands ${command}::path_namespaces] ne {}} {
-                set namespaces [${command}::path_namespaces]
-            } else {
+            $environment_object install
+            set namespaces [$environment_object path_namespaces]
+            if {$namespaces eq {}} {
                 set namespaces [::list $command]
             }
             append_path $namespaces
@@ -516,7 +529,8 @@ namespace eval ::tclwire::cga {
             }
         }
         foreach environment [lreverse $installed] {
-            catch {${environment}::uninstall}
+            set environment_object [object $environment]
+            catch {$environment_object uninstall}
         }
         set installed {}
         set installed_names {}

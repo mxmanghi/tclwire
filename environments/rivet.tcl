@@ -2,61 +2,99 @@
 #
 # TclWire Apache Rivet compatibility application environment.
 
+package require tclwire::environment 0.1
+
 source [file join [file dirname [info script]] rivet_app.tcl]
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::envs {}
 
-namespace eval ::tclwire::envs::rivet {
-    variable installed 0
+oo::class create ::tclwire::envs::RivetEnvironment {
+    superclass ::tclwire::ApplicationEnvironment
+    variable application_file_path
 
-    proc name {} {
+    constructor {path} {
+        next
+        set application_file_path $path
+    }
+
+    method name {} {
         return rivet
     }
 
-    proc requires {} {
+    method requires {} {
         return {stdchans}
     }
 
-    proc path_namespaces {} {
+    method path_namespaces {} {
         return {::rivet}
     }
 
-    proc application_class {} {
+    method application_class {} {
         return ::tclwire::envs::app::Rivet
     }
 
+    method application_file {} {
+        variable application_file_path
+        return $application_file_path
+    }
+
+    method do_install {} {
+        namespace eval ::Rivet {}
+        ::tclwire::envs::rivet::install_commands
+        return
+    }
+
+    method do_uninstall {} {
+        catch {namespace delete ::rivet}
+        catch {namespace delete ::Rivet}
+        return
+    }
+}
+
+namespace eval ::tclwire::envs::rivet {
+    variable environment_object [::tclwire::envs::RivetEnvironment new \
+        [file normalize [file join [file dirname [info script]] rivet_app.tcl]]]
+
+    proc object {} {
+        variable environment_object
+        return $environment_object
+    }
+
+    proc name {} {
+        tailcall [object] name
+    }
+
+    proc requires {} {
+        tailcall [object] requires
+    }
+
+    proc path_namespaces {} {
+        tailcall [object] path_namespaces
+    }
+
+    proc application_class {} {
+        tailcall [object] application_class
+    }
+
+    proc application_file {} {
+        tailcall [object] application_file
+    }
+
     proc enabled {} {
-        variable installed
-        return $installed
+        tailcall [object] enabled
     }
 
     proc install {} {
-        variable installed
-
-        if {$installed} {
-            return
-        }
-        namespace eval ::Rivet {}
-        ::tclwire::envs::rivet::install_commands
-        set installed 1
-        return
+        tailcall [object] install
     }
 
     proc uninstall {} {
-        variable installed
-
-        if {!$installed} {
-            return
-        }
-        catch {namespace delete ::rivet}
-        catch {namespace delete ::Rivet}
-        set installed 0
-        return
+        tailcall [object] uninstall
     }
 
-    namespace export name requires \
-                     path_namespaces application_class \
+    namespace export object name requires \
+                     path_namespaces application_class application_file \
                      enabled install uninstall
     namespace ensemble create
 }

@@ -836,7 +836,7 @@ aliases = "one two"
         [dict create message {configured implicitly} aliases {one two}]]]
 
 test runtime-1.12b {
-    environment-provided application class does not inherit default loader
+    environment-provided application class uses environment reload file
 } -body {
     set config_file [::tclwire::runtime_test::make_config [format {
 [tclwire]
@@ -859,12 +859,12 @@ docroot = "rivet"
     set descriptor [dict get $config applications rivet]
     list \
         [dict get $descriptor class] \
-        [dict exists $descriptor file] \
+        [file tail [dict get $descriptor file]] \
         [dict exists $descriptor package] \
         [dict get $descriptor reload_on_request]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
-} -result [list ::tclwire::envs::app::Rivet 0 0 0]
+} -result [list ::tclwire::envs::app::Rivet rivet_app.tcl 0 1]
 
 test runtime-1.13 {CLI values supersede TOML configuration} -body {
     set config_file [::tclwire::runtime_test::make_config {

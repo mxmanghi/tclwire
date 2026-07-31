@@ -11,6 +11,13 @@ namespace eval ::tclwire {}
 namespace eval ::tclwire::envs {}
 namespace eval ::tclwire::envs::app {}
 
+if {[info commands ::tclwire::envs::app::Rivet] ne {}} {
+    if {![info object isa class ::tclwire::envs::app::Rivet]} {
+        error "application command is not a TclOO class: ::tclwire::envs::app::Rivet"
+    }
+    ::tclwire::envs::app::Rivet destroy
+}
+
 oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
 
@@ -19,7 +26,8 @@ oo::class create ::tclwire::envs::app::Rivet {
         if {[catch {set candidate [my url_file_candidate $path]}]} {
             return {}
         }
-        if {$candidate eq {} || [file extension $candidate] ne ".tcl"} {
+        if {$candidate eq {} ||
+                [string tolower [file extension $candidate]] ni {".rvt" ".tcl"}} {
             return {}
         }
         return $candidate
@@ -55,7 +63,6 @@ oo::class create ::tclwire::envs::app::Rivet {
                 eval $before_script
             }
 
-            ::rivet::apache_log_error crit "script: $script"
             set ::Rivet::script $script
             namespace eval ::request $script
         } trap {RIVET ABORTPAGE} {err opts} {

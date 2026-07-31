@@ -1,6 +1,29 @@
 # configuration_tree.tcl --
 #
 # Structured ASCII rendering helpers for runtime configuration dictionaries.
+#
+# `::tclwire::configuration tree` renders Tcl dictionaries; it does not
+# introspect TclOO objects by itself.  Application code therefore has to pass
+# a dictionary snapshot or serialized envelope.  In a request handler, including
+# a Rivet script, the current worker's application configuration object is:
+#
+#   ::tclwire::app::configuration
+#
+# To show the current application descriptor values:
+#
+#   package require tclwire::configuration_tree 0.1
+#   puts "<pre>"
+#   puts [::tclwire::configuration tree \
+#       [[::tclwire::app::configuration] snapshot]]
+#   puts "</pre>"
+#
+# To include the envelope metadata as well as the values:
+#
+#   puts [::tclwire::configuration tree \
+#       [[::tclwire::app::configuration] serialize]]
+#
+# Passing `[::tclwire::app::configuration]` directly will not render the
+# application configuration; that value is an object command, not a dictionary.
 
 namespace eval ::tclwire {}
 

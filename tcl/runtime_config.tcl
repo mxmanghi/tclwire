@@ -737,8 +737,17 @@ namespace eval ::tclwire::runtime {
                         if {!$explicit_file && [dict exists $descriptor file]} {
                             dict unset descriptor file
                         }
-                        if {!$explicit_file} {
-                            dict set descriptor reload_on_request 0
+                        if {!$explicit_file &&
+                                [dict exists $descriptor reload_on_request] &&
+                                [dict get $descriptor reload_on_request]} {
+                            set environment_file \
+                                [::tclwire::environment application_file \
+                                    $application_id $descriptor]
+                            if {$environment_file ne {}} {
+                                dict set descriptor file $environment_file
+                            } else {
+                                dict set descriptor reload_on_request 0
+                            }
                         }
                     }
                 }
@@ -1007,8 +1016,17 @@ namespace eval ::tclwire::runtime {
                 if {!$explicit_file && [dict exists $descriptor file]} {
                     dict unset descriptor file
                 }
-                if {!$explicit_file} {
-                    dict set descriptor reload_on_request 0
+                if {!$explicit_file &&
+                        [dict exists $descriptor reload_on_request] &&
+                        [dict get $descriptor reload_on_request]} {
+                    set environment_file \
+                        [::tclwire::environment application_file \
+                            $application_id $descriptor]
+                    if {$environment_file ne {}} {
+                        dict set descriptor file $environment_file
+                    } else {
+                        dict set descriptor reload_on_request 0
+                    }
                 }
                 dict unset descriptor class_from_environment
             }

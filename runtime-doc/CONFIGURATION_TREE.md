@@ -53,6 +53,44 @@ contract simple while still allowing `format`, filtering, or aggregation:
 
 The command returns the same tree text whether or not a sink is used.
 
+## Application And Rivet Use
+
+Inside a running application, the current application configuration is exposed
+as an object command:
+
+```tcl
+::tclwire::app::configuration
+```
+
+The tree renderer expects a dictionary, so pass either `snapshot` or
+`serialize`, not the object command itself. `snapshot` renders only the
+application descriptor values; `serialize` also includes the envelope metadata
+and application id.
+
+For a Rivet script such as `/tmp/index.tcl`:
+
+```tcl
+package require tclwire::configuration_tree 0.1
+
+puts "<pre>"
+puts [::tclwire::configuration tree \
+    [[::tclwire::app::configuration] serialize]]
+puts "</pre>"
+```
+
+The same call can be written with a line sink:
+
+```tcl
+puts "<pre>"
+::tclwire::configuration tree \
+    [[::tclwire::app::configuration] serialize] \
+    puts
+puts "</pre>"
+```
+
+In a Rivet environment, `puts` writes to the HTTP response body because
+`stdchans` is installed as a Rivet dependency.
+
 ### `::tclwire::configuration emit_lines lines sink`
 
 Emits an existing list of lines to a sink command form using the same `%s`

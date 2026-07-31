@@ -31,6 +31,15 @@ namespace eval ::tclwire::http::cookie {
         return
     }
 
+    proc validate_domain {domain} {
+        if {$domain eq {} ||
+                [regexp {[\x00-\x20\x7f;]} $domain] ||
+                [string first ";" $domain] >= 0} {
+            error "invalid HTTP cookie domain"
+        }
+        return
+    }
+
     proc validate_expiration {expiration} {
         if {[string is entier -strict $expiration]} {
             set seconds $expiration
@@ -103,6 +112,17 @@ oo::class create ::tclwire::CookieJar {
                     ::tclwire::http::cookie::validate_expiration $option_value
                     lappend options $option $option_value
                 }
+                -domain {
+                    ::tclwire::http::cookie::validate_domain $option_value
+                    lappend options $option $option_value
+                }
+                -secure -
+                -HttpOnly {
+                    if {![string is boolean -strict $option_value]} {
+                        error "invalid HTTP cookie option value: $option"
+                    }
+                    lappend options $option [expr {!!$option_value}]
+                }
                 default {
                     error "unknown HTTP cookie option: $option"
                 }
@@ -116,6 +136,12 @@ oo::class create ::tclwire::CookieJar {
     method validate {value} {
         ::tclwire::http::cookie::validate_value $value
         return $value
+    }
+
+    method unset {name} {
+        ::tclwire::http::cookie::validate_name $name
+        dict unset cookies $name
+        return
     }
 
     method serialize {} {

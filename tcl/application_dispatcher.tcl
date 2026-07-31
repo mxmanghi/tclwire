@@ -16,15 +16,28 @@ oo::class create ::tclwire::ApplicationDispatcher {
     variable default_application project_root run_directory owned_pools
 
     constructor {application_config} {
+        # The dispatcher receives the already-loaded application runtime
+        # dictionary.  Make sure it is a dictionary before any descriptor
+        # inheritance or path resolution starts.
+
         if {[catch {dict size $application_config}]} {
             error "application configuration must be a dictionary"
         }
+
+        # Cache the top-level runtime state used while normalizing each
+        # application descriptor and later while dispatching requests.
+
         set applications        [dict get $application_config applications]
         set application_configurations [dict create]
         set default_application [dict get $application_config default_application]
         set project_root        [::tclwire::support project_root]
         set run_directory       [file normalize [pwd]]
         set owned_pools         {}
+
+        # Global docroot and encoding are fallbacks.  They are copied into an
+        # application descriptor only when that descriptor does not name its
+        # own value.
+
         set default_docroot {}
         if {[dict exists $application_config docroot]} {
             set default_docroot [dict get $application_config docroot]
@@ -37,12 +50,20 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {![dict exists $applications $default_application]} {
             error "default application is not registered: $default_application"
         }
-        set default_descriptor [::tclwire::normalize_application_descriptor_classes \
-                                                [dict get $applications $default_application]]
 
+        # Normalize class names in the default descriptor once because every
+        # non-default application inherits from this loaded descriptor.
+
+        set default_descriptor [::tclwire::normalize_application_descriptor_classes \
+                                        [dict get $applications $default_application]]
         dict for {application_id original_descriptor} $applications {
 
-            set descriptor [::tclwire::normalize_application_descriptor_classes $original_descriptor]
+            # Work on a normalized copy and remember which fields were present
+            # in the original descriptor.  After inheritance these booleans tell
+            # us whether a value was explicitly configured here or merely
+            # inherited from the default application.
+            set descriptor  \
+                [::tclwire::normalize_application_descriptor_classes $original_descriptor]
             set had_hosts           [dict exists $original_descriptor hosts]
             set explicit_class      [dict exists $original_descriptor class]
             set explicit_package    [dict exists $original_descriptor package]
@@ -52,29 +73,73 @@ oo::class create ::tclwire::ApplicationDispatcher {
             set explicit_chore_class [dict exists $original_descriptor chore_class]
 
             set environment_class_applied 0
+
+            # In this context 'loader' means the descriptor fields that tell the
+            # worker how the application class gets made available before it is instantiated.
+            # Specifically:
+            #
+            #   - package: load the application implementation with package require ...
+            #   - file: load/source a Tcl file containing the application implementation
+            #   - reload_on_request: if enabled, re-source the file on each request so code
+            #     changes are picked up
+            #
+            # So 'inherited loader' means: a non-default application inherited package,
+            # file, or reload behavior from the default application descriptor.
+            # That matters because a virtual host may inherit most settings from the default
+            # app but select a different class through an environment. If it keeps the
+            # default app’s file, reload-on-request could re-source the wrong implementation
+            # file for the new class. The constructor therefore removes inherited loader
+            # fields when the final class no longer matches the inherited default class,
+            # unless the descriptor explicitly supplied its own package or file.
+
             set suppress_inherited_loader 0
+
             if {$application_id ne $default_application} {
+                # Non-default applications inherit the default application as a
+                # template.  Pool policy is a shallow option dictionary, so host
+                # descriptors override only the policy keys they name.
                 if {[dict exists $default_descriptor pool_policy] &&
                     [dict exists $descriptor pool_policy]} {
 
                     set dpp [dict get $default_descriptor pool_policy]
                     set pp  [dict get $descriptor pool_policy]
-                    dict set descriptor pool_policy [dict merge $dpp $pp]
 
+                    dict set descriptor pool_policy [dict merge $dpp $pp]
                 }
-                set descriptor [my merge_nested_dict_field \
-                    $default_descriptor $descriptor configure]
+
+                # `configure` is nested by TclOO class name.  A plain
+                # `dict merge` would replace the whole inherited per-class
+                # option block when a host overrides one option.  This helper
+                # merges one level deeper so inherited class configuration
+                # survives and only the named options are overlaid.
+                set descriptor [my merge_nested_dict_field $default_descriptor $descriptor configure]
+
+                # Apply the main descriptor inheritance after special nested
+                # fields have been merged.
                 set descriptor [dict merge $default_descriptor $descriptor]
+
+                # Chores are operational side tasks, not application behavior
+                # that should silently spread to every virtual host.  Drop
+                # inherited chore fields unless this descriptor explicitly
+                # opted into them.
                 if {!$explicit_chore && [dict exists $descriptor chore]} {
                     dict unset descriptor chore
                 }
-                if {!$explicit_chore_class &&
-                        [dict exists $descriptor chore_class]} {
+                if {!$explicit_chore_class && [dict exists $descriptor chore_class]} {
                     dict unset descriptor chore_class
                 }
+
+                # A virtual host descriptor without an explicit host list is
+                # addressed by its application id.
                 if {!$had_hosts} {
                     dict set descriptor hosts [list $application_id]
                 }
+
+                # If an environment-specific class replaces the inherited
+                # default class, then the default application's package/file
+                # loader no longer matches the selected class.  Mark inherited
+                # loader fields for removal unless this descriptor explicitly
+                # supplied its own package or file.
                 if {[dict exists $original_descriptor environment] &&
                         $explicit_class &&
                         !$explicit_package &&
@@ -86,6 +151,11 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
             }
             if {!$explicit_class} {
+                # Descriptors may delegate the application class choice to the
+                # selected environment.  When that happens, inherited loader
+                # fields are suppressed for the same reason as above: they were
+                # attached to the inherited class, not necessarily to the
+                # environment-selected class.
                 set environment_class [::tclwire::environment application_class $application_id $descriptor]
                 if {$environment_class ne {}} {
                     dict set descriptor class $environment_class
@@ -94,26 +164,46 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
             }
             if {$suppress_inherited_loader} {
+                # Remove inherited package/file loader settings that came from
+                # the default descriptor.  A descriptor's explicit package or
+                # file is preserved because that is an intentional loader for
+                # the final selected class.
                 if {!$explicit_package && [dict exists $descriptor package]} {
                     dict unset descriptor package
                 }
                 if {!$explicit_file && [dict exists $descriptor file]} {
                     dict unset descriptor file
                 }
-                if {!$explicit_file} {
-                    dict set descriptor reload_on_request 0
+                # `reload_on_request` requires a concrete source file.  If the
+                # class came from the environment and no explicit file was
+                # configured, ask the environment for a matching file; otherwise
+                # disable reloads so the inherited file is not reloaded for the
+                # wrong class.
+                if {!$explicit_file &&  [dict exists $descriptor reload_on_request] &&
+                                        [dict get $descriptor reload_on_request]} {
+                    set environment_file [::tclwire::environment application_file \
+                                                        $application_id $descriptor]
+                    if {$environment_file ne {}} {
+                        dict set descriptor file $environment_file
+                    } else {
+                        dict set descriptor reload_on_request 0
+                    }
                 }
             }
+
+            # Resolve required descriptor defaults and fail early when no
+            # per-application or global value exists.
             if {![dict exists $descriptor docroot]} {
                 if {$default_docroot eq {}} {
                     error "application '$application_id' is missing docroot"
                 }
                 dict set descriptor docroot $default_docroot
             }
-            dict set descriptor docroot \
-                [file normalize [dict get $descriptor docroot]]
-            if {![dict exists $descriptor libdir] &&
-                    [dict exists $application_config libdir]} {
+            dict set descriptor docroot [file normalize [dict get $descriptor docroot]]
+
+            # Inherit the global library directory, then normalize it.  An
+            # empty libdir is treated as absent.
+            if {![dict exists $descriptor libdir] && [dict exists $application_config libdir]} {
                 dict set descriptor libdir [dict get $application_config libdir]
             }
             if {[dict exists $descriptor libdir]} {
@@ -124,28 +214,32 @@ oo::class create ::tclwire::ApplicationDispatcher {
                         [file normalize [dict get $descriptor libdir]]
                 }
             }
+
+            # Encoding is required by the request path; use the global default
+            # only when the application omitted it.
             if {![dict exists $descriptor encoding]} {
                 if {$default_encoding eq {}} {
                     error "application '$application_id' is missing encoding"
                 }
                 dict set descriptor encoding $default_encoding
             }
-            dict set descriptor application_paths \
-                [my application_paths $descriptor]
+
+            # Build the ordered search path used to resolve relative
+            # application source files and chore files.
+            dict set descriptor application_paths [my application_paths $descriptor]
             if {[dict exists $descriptor file] &&
                     [dict get $descriptor file] ne {}} {
-                dict set descriptor file [my resolve_application_file \
-                    $application_id $descriptor file]
+                dict set descriptor file [my resolve_application_file $application_id $descriptor file]
             }
             if {[dict exists $descriptor chore] &&
                     [dict get $descriptor chore] ne {}} {
-                dict set descriptor chore [my resolve_application_file \
-                    $application_id $descriptor chore]
+                dict set descriptor chore [my resolve_application_file $application_id $descriptor chore]
             }
-            set configuration [::tclwire::ApplicationConfiguration new \
-                $application_id $descriptor]
-            dict set application_configurations \
-                $application_id $configuration
+
+            # Wrap the normalized descriptor in the per-application helper and
+            # store snapshots for fast host dispatch.
+            set configuration [::tclwire::ApplicationConfiguration new $application_id $descriptor]
+            dict set application_configurations $application_id $configuration
             dict set applications $application_id [$configuration snapshot]
         }
     }

@@ -27,12 +27,16 @@ proc ::tclwire::route_application_output {agent transaction_id event} {
 }
 
 test stdchans-1.1 {stdchans environment exposes lifecycle metadata} -body {
+    set object [::tclwire::envs::stdchans object]
     list \
         [::tclwire::envs::stdchans name] \
         [::tclwire::envs::stdchans requires] \
         [::tclwire::envs::stdchans path_namespaces] \
-        [::tclwire::envs::stdchans enabled]
-} -result [list stdchans {} ::tclwire::envs::stdchans 0]
+        [::tclwire::envs::stdchans enabled] \
+        [info object isa object $object] \
+        [expr {"::tclwire::ApplicationEnvironment" in \
+            [info class superclasses [info object class $object]]}]
+} -result [list stdchans {} ::tclwire::envs::stdchans 0 1 1]
 
 test stdchans-1.2 {stdchans captures app-namespace stdout during active output transaction} -body {
     set ::tclwire::environment_test::events {}
@@ -98,6 +102,36 @@ test stdchans-1.3 {stdchans delegates non-stdout puts to native channels} -body 
         file delete -force $path
     }
 } -result "alpha\nbeta"
+
+test stdchans-1.3aa {stdchans captures explicitly qualified global stdout} -body {
+    set ::tclwire::environment_test::events {}
+    set receiver [::tclwire::environment_test::OutputReceiver new]
+    try {
+        ::tclwire::envs::stdchans install
+        ::tclwire::io begin [::thread::id] $receiver 23
+        ::puts stdout alpha
+        ::puts -nonewline stdout beta
+        set buffered [::tclwire::io buffer]
+        ::flush stdout
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set output_event \
+            [lindex [lindex $::tclwire::environment_test::events 0] 1]
+        list \
+            $buffered \
+            [dict get $output_event type] \
+            [dict get $output_event data] \
+            [lmap item $::tclwire::environment_test::events {
+                dict get [lindex $item 1] type
+            }]
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::envs::stdchans uninstall}
+        $receiver destroy
+    }
+} -result [list "alpha\nbeta" output "alpha\nbeta" {output flush complete}]
 
 test stdchans-1.3a {stdchans delegates malformed puts calls to native command} -body {
     try {
@@ -171,13 +205,18 @@ test stdchans-1.5 {stdchans keeps app stdout virtualized after response completi
 } -result [list {} {output complete} "alpha\n"]
 
 test rivet-1.1 {rivet environment exposes lifecycle metadata} -body {
+    set object [::tclwire::envs::rivet object]
     list \
         [::tclwire::envs::rivet name] \
         [::tclwire::envs::rivet requires] \
         [::tclwire::envs::rivet path_namespaces] \
+        [file tail [::tclwire::envs::rivet application_file]] \
         [::tclwire::envs::rivet application_class] \
-        [::tclwire::envs::rivet enabled]
-} -result [list rivet stdchans ::rivet ::tclwire::envs::app::Rivet 0]
+        [::tclwire::envs::rivet enabled] \
+        [info object isa object $object] \
+        [expr {"::tclwire::ApplicationEnvironment" in \
+            [info class superclasses [info object class $object]]}]
+} -result [list rivet stdchans ::rivet rivet_app.tcl ::tclwire::envs::app::Rivet 0 1 1]
 
 test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes owned namespaces} -body {
     catch {::tclwire::envs::rivet uninstall}
@@ -280,6 +319,212 @@ test rivet-1.2b {rivet request initialization resets abort_page state} -body {
     }
 } -result [list {1 prior} {0 {}} 1]
 
+test rivet-1.2c {rivet clock_to_rfc850_gmt formats legacy GMT cookie time} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        ::rivet::clock_to_rfc850_gmt 1893456000
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result {Tue, 01-Jan-30 00:00:00 GMT}
+
+test rivet-1.2d {rivet cookie reads and unsets request cookie jar entries} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /profile \
+        path /profile \
+        query {} \
+        version 1.1 \
+        headers [dict create host example.test cookie {session=abc; theme=light}] \
+        body_media raw \
+        body_storage in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 31]]
+    try {
+        ::tclwire::envs::rivet install
+        ::tclwire::app::begin_request \
+            [dict create request $request request_descriptor [$request snapshot]]
+        set before [list [::rivet::cookie get session] \
+            [::rivet::cookie get missing]]
+        ::rivet::cookie unset session
+        set after [list [::rivet::cookie get session] \
+            [[$request cookie_jar] serialize]]
+        list $before $after
+    } finally {
+        catch {::tclwire::app::end_request}
+        catch {$request destroy}
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list {abc {}} [list {} [list [list theme light]]]]
+
+test rivet-1.2e {rivet cookie set and delete update jar and emit Set-Cookie headers} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    set ::tclwire::environment_test::events {}
+    set receiver [::tclwire::environment_test::OutputReceiver new]
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /profile \
+        path /profile \
+        query {} \
+        version 1.1 \
+        headers [dict create host example.test cookie {session=abc}] \
+        body_media raw \
+        body_storage in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 32]]
+    try {
+        ::tclwire::envs::rivet install
+        ::tclwire::app::begin_request \
+            [dict create request $request request_descriptor [$request snapshot]]
+        ::tclwire::io begin [::thread::id] $receiver 32
+        set first [::rivet::cookie set session xyz \
+            -expires {Tue, 01-Jan-30 00:00:00 GMT} \
+            -path /account \
+            -domain example.test \
+            -secure 1 \
+            -HttpOnly 1]
+        set value_after_set [::rivet::cookie get session]
+        set second [::rivet::cookie delete session]
+        set value_after_delete [::rivet::cookie get session]
+        set cookies [::tclwire::http::io header get Set-Cookie]
+        ::tclwire::io end
+        update
+
+        list $first $value_after_set $second $value_after_delete $cookies
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::app::end_request}
+        catch {$request destroy}
+        catch {$receiver destroy}
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -match glob -result [list \
+    {session=xyz; expires=Tue, 01-Jan-30 00:00:00 GMT; path=/account; domain=example.test; secure; HttpOnly} \
+    xyz \
+    {session=; expires=* GMT} \
+    {} \
+    [list \
+        {session=xyz; expires=Tue, 01-Jan-30 00:00:00 GMT; path=/account; domain=example.test; secure; HttpOnly} \
+        {session=; expires=* GMT}]]
+
+test rivet-1.2f {rivet parser compiles mixed template content to Tcl} -body {
+    set template {<h1>$title</h1>
+<? set title TclWire ?>
+<p><?= $title ?></p>
+<? puts "<footer>$title</footer>" ?>}
+    set script [::tclwire::envs::rivet::parse_template $template]
+    set output {}
+    namespace eval ::tclwire::environment_test::parser {}
+    proc ::tclwire::environment_test::parser::puts {args} {
+        variable output
+        set nonewline 0
+        if {[llength $args] > 0 && [lindex $args 0] eq "-nonewline"} {
+            set nonewline 1
+            set args [lrange $args 1 end]
+        }
+        append output [lindex $args end]
+        if {!$nonewline} {
+            append output "\n"
+        }
+        return
+    }
+    try {
+        namespace eval ::tclwire::environment_test::parser \
+            [list variable output {}]
+        namespace eval ::tclwire::environment_test::parser $script
+        set ::tclwire::environment_test::parser::output
+    } finally {
+        catch {namespace delete ::tclwire::environment_test::parser}
+    }
+} -result "<h1>\$title</h1>\n\n<p>TclWire</p>\n<footer>TclWire</footer>\n"
+
+test rivet-1.2g {rivet lempty reports empty lists and invalid list values} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::lempty {}] \
+            [::rivet::lempty {a b}] \
+            [::rivet::lempty "\{"] \
+            [::tclwire::envs::rivet::lempty {}]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result {1 0 0 1}
+
+test rivet-1.2h {rivet xml builds nested and self-closing markup} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        list \
+            [::rivet::xml Test b i] \
+            [::rivet::xml Test [list div class box id testbox] b i] \
+            [::rivet::xml [list a attr1 val1 attr2 val2]] \
+            [::rivet::xml "" [list a attr1 val1] [list b attr2 val2]]
+    } finally {
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list \
+    {<b><i>Test</i></b>} \
+    {<div class="box" id="testbox"><b><i>Test</i></b></div>} \
+    {<a attr1="val1" attr2="val2"/>} \
+    {<a attr1="val1"><b attr2="val2"></b></a>}]
+
+test rivet-1.2i {rivet html writes tagged output} -body {
+    set ::tclwire::environment_test::events {}
+    set receiver [::tclwire::environment_test::OutputReceiver new]
+    try {
+        ::tclwire::envs::stdchans install
+        ::tclwire::envs::rivet install
+        ::tclwire::io begin [::thread::id] $receiver 24
+        ::rivet::html Test b i
+        ::tclwire::io flush
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set output_event \
+            [lindex [lindex $::tclwire::environment_test::events 0] 1]
+        list \
+            [dict get $output_event type] \
+            [dict get $output_event data] \
+            [lmap item $::tclwire::environment_test::events {
+                dict get [lindex $item 1] type
+            }]
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::envs::rivet uninstall}
+        catch {::tclwire::envs::stdchans uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+        $receiver destroy
+    }
+} -result [list output "<b><i>Test</i></b>\n" {output flush complete}]
+
 test rivet-1.3 {rivet inspect options map to configure keys} -body {
     set options {
         ServerInitScript
@@ -296,17 +541,20 @@ test rivet-1.3 {rivet inspect options map to configure keys} -body {
         UploadFilesToVar
         SeparateVirtualInterps
         HonorHeadRequests
+        ImportRivetNS
     }
     list \
         [lmap option $options {
             ::tclwire::envs::rivet::inspect_key $option
         }] \
+        [::tclwire::envs::rivet::inspect_value ImportRivetNS] \
         [catch {::tclwire::envs::rivet::inspect_key UnknownOption} \
             message] \
         $message
 } -result [list \
-    {server_init_script global_init_script child_init_script child_exit_script before_script after_script after_every_script abort_script error_script upload_max_size upload_directory upload_files_to_var separate_virtual_interps honor_head_requests} \
+    {server_init_script global_init_script child_init_script child_exit_script before_script after_script after_every_script abort_script error_script upload_max_size upload_directory upload_files_to_var separate_virtual_interps honor_head_requests import_rivet_ns} \
+    false \
     1 \
-    {bad inspect option "UnknownOption": must be ServerInitScript, GlobalInitScript, ChildInitScript, ChildExitScript, BeforeScript, AfterScript, AfterEveryScript, AbortScript, ErrorScript, UploadMaxSize, UploadDirectory, UploadFilesToVar, SeparateVirtualInterps, HonorHeadRequests}]
+    {bad inspect option "UnknownOption": must be ServerInitScript, GlobalInitScript, ChildInitScript, ChildExitScript, BeforeScript, AfterScript, AfterEveryScript, AbortScript, ErrorScript, UploadMaxSize, UploadDirectory, UploadFilesToVar, SeparateVirtualInterps, HonorHeadRequests, ImportRivetNS}]
 
 cleanupTests

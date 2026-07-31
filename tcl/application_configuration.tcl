@@ -147,8 +147,8 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   retain_uploaded_files 0 \
                                   pool_policy [dict create minimum_workers 0 maximum_workers 20]]
 
-        set values [::tclwire::normalize_application_descriptor_classes \
-            [dict merge $defaults $descriptor]]
+        set values \
+            [::tclwire::normalize_application_descriptor_classes [dict merge $defaults $descriptor]]
 
         foreach property {class hosts docroot encoding application_paths} {
             if {![dict exists $descriptor $property]} {
@@ -156,8 +156,8 @@ oo::class create ::tclwire::ApplicationConfiguration {
             }
         }
         if {[dict get $values package] eq {} &&
-                [dict get $values file] eq {} &&
-                [dict get $values environment] eq {}} {
+            [dict get $values file] eq {} &&
+            [dict get $values environment] eq {}} {
             error "application '$id' must define package, file, or environment"
         }
         if {[dict get $values file] ne {} && ![file isfile [dict get $values file]]} {
@@ -172,9 +172,8 @@ oo::class create ::tclwire::ApplicationConfiguration {
             error "application '$id' hosts, application_paths, and environment must be lists"
         }
         if {[catch {
-            set pool_policy [dict merge \
-                [dict get $defaults pool_policy] \
-                [dict get $values pool_policy]]
+            set pool_policy [dict merge [dict get $defaults pool_policy] \
+                                        [dict get $values pool_policy]]
         }]} {
             error "application '$id' pool_policy must be a dictionary"
         }
@@ -193,7 +192,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
             }
         }
         if {[dict get $pool_policy maximum_workers] <
-                [dict get $pool_policy minimum_workers]} {
+            [dict get $pool_policy minimum_workers]} {
             error "application '$id' maximum_workers must not be less than minimum_workers"
         }
         dict set values pool_policy $pool_policy
@@ -244,11 +243,10 @@ oo::class create ::tclwire::ApplicationConfiguration {
     }
 
     method serialize {} {
-        return [dict create \
-            type tclwire.application_configuration \
-            version 1 \
-            application_id $application_id \
-            values $values]
+        return [dict create type        tclwire.application_configuration \
+                            version     1 \
+                            application_id $application_id \
+                            values      $values]
     }
 
     self method deserialize {serialized} {
@@ -267,9 +265,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
         if {[dict get $serialized version] != 1} {
             error "unsupported application configuration version: [dict get $serialized version]"
         }
-        return [my new \
-            [dict get $serialized application_id] \
-            [dict get $serialized values]]
+        return [my new [dict get $serialized application_id] [dict get $serialized values]]
     }
 
     foreach property {
