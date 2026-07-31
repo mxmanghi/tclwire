@@ -271,6 +271,10 @@ then from global runtime defaults.
   to the resolved application class. Child tables keyed by TclOO class name
   target that class explicitly.
 
+  `::tclwire::CApplication` supports `directory_index`, a space-separated list
+  of plain file names searched when a URL maps to a directory. The default is
+  `index.html`.
+
 `minimum_workers`
 : Minimum number of content-generator workers for the application pool.
   Defaults to `0`.

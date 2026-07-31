@@ -3,6 +3,7 @@
 # Apache Rivet compatibility commands installed into ::rivet.
 
 package require tclwire::content_generator_agent 0.1
+package require tclwire::http::application::io 0.1
 package require fileutil
 
 namespace eval ::tclwire {}
@@ -71,6 +72,113 @@ namespace eval ::tclwire::envs::rivet {
     proc abort_code {} {
         variable abort_code
         return $abort_code
+    }
+
+    proc request_environment {} {
+        set application [::tclwire::app::current]
+        set request     [::tclwire::app::request]
+        set descriptor  [::tclwire::app::request_descriptor]
+
+        set request_uri [$request path]
+        if {[dict exists $descriptor target]} {
+            set request_uri [dict get $descriptor target]
+        }
+        set server_protocol HTTP/1.1
+        if {[dict exists $descriptor version]} {
+            set server_protocol HTTP/[dict get $descriptor version]
+        }
+
+        set environment [dict create \
+            DOCUMENT_ROOT   [$application document_root] \
+            REQUEST_METHOD  [$request method] \
+            REQUEST_URI     $request_uri \
+            SCRIPT_NAME     [$request path] \
+            SERVER_PROTOCOL $server_protocol \
+            QUERY_STRING    [$request query] \
+            REMOTE_ADDR     [$request remote_host] \
+            REMOTE_PORT     [$request remote_port]]
+
+        if {[$request scheme] eq "https"} {
+            dict set environment HTTPS on
+        } else {
+            dict set environment HTTPS off
+        }
+
+        set local_path {}
+        catch {set local_path [$application local_path [$request path]]}
+        if {$local_path ne {}} {
+            dict set environment SCRIPT_FILENAME $local_path
+        }
+
+        dict for {name value} [$request headers] {
+            set variable [string toupper [string map {- _} $name]]
+            switch -exact -- $variable {
+                CONTENT_TYPE -
+                CONTENT_LENGTH {
+                    dict set environment $variable $value
+                }
+                default {
+                    dict set environment HTTP_$variable $value
+                }
+            }
+        }
+        return $environment
+    }
+
+    proc env {name} {
+        set environment [request_environment]
+        if {[dict exists $environment $name]} {
+            return [dict get $environment $name]
+        }
+        return {}
+    }
+
+    proc virtual_include_path {path} {
+        set application [::tclwire::app::current]
+        set request     [::tclwire::app::request]
+
+        if {![string match "/*" $path]} {
+            set request_directory [file dirname [$request path]]
+            if {$request_directory eq "."} {
+                set request_directory /
+            }
+            set path [string trimright $request_directory /]/$path
+        }
+        return [$application local_path $path]
+    }
+
+    proc filesystem_include_path {path} {
+        set application [::tclwire::app::current]
+        if {[file pathtype $path] eq "absolute"} {
+            return [file normalize $path]
+        }
+        return [file normalize [file join [$application document_root] $path]]
+    }
+
+    proc include {args} {
+        switch -exact -- [llength $args] {
+            1 {
+                set path [filesystem_include_path [lindex $args 0]]
+            }
+            2 {
+                if {[lindex $args 0] ne "-virtual"} {
+                    error {wrong # args: should be "::rivet::include ?-virtual? filename"}
+                }
+                set path [virtual_include_path [lindex $args 1]]
+            }
+            default {
+                error {wrong # args: should be "::rivet::include ?-virtual? filename"}
+            }
+        }
+
+        if {$path eq {} || ![file isfile $path] || ![file readable $path]} {
+            error "could not read included file"
+        }
+
+        ::tclwire::io flush
+        ::tclwire::io out [::fileutil::cat -translation binary $path] binary
+        ::tclwire::io flush
+        return
     }
 
     proc abort_page {{code {}}} {
@@ -188,6 +296,21 @@ namespace eval ::tclwire::envs::rivet {
             }
         }
 
+        proc ::rivet::header {args} {
+            tailcall ::tclwire::http::io header {*}$args
+        }
+
+        proc ::rivet::env {args} {
+            if {[llength $args] != 1} {
+                error {wrong # args: should be "::rivet::env environment_variable_name"}
+            }
+            tailcall ::tclwire::envs::rivet::env [lindex $args 0]
+        }
+
+        proc ::rivet::include {args} {
+            tailcall ::tclwire::envs::rivet::include {*}$args
+        }
+
         proc ::rivet::url_script {} {
             set application [::tclwire::app::current]
             set request     [::tclwire::app::request]
@@ -211,7 +334,8 @@ namespace eval ::tclwire::envs::rivet {
         }
 
         namespace eval ::rivet {
-            namespace export abort_code abort_page apache_log_error inspect url_script
+            namespace export abort_code abort_page apache_log_error env header include \
+                inspect url_script
         }
         return
     }

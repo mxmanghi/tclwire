@@ -1114,13 +1114,238 @@ puts [::rivet::inspect BeforeScript]
     catch {::tclwire::io end}
     removeDirectory $docroot
 } -result [list \
-    [dict create \
-        child_init_script child-init.tcl \
-        upload_directory /tmp/rivet-upload \
-        honor_head_requests true] \
-    [dict create action set name Content-Type \
-        value "text/html; charset=utf-8"] \
-    "child-init.tcl\n/tmp/rivet-upload\ntrue\n\n"]
+	[dict create \
+	    child_init_script child-init.tcl \
+	    upload_directory /tmp/rivet-upload \
+	    honor_head_requests true] \
+	[dict create \
+	    action set \
+	    name   Content-Type \
+	    value  "text/html; charset=utf-8"] \
+	"child-init.tcl\n/tmp/rivet-upload\ntrue\n\n"]
+
+test application-configuration-1.4ff {
+    rivet header adapts to TclWire HTTP header commands
+} -setup {
+    set docroot [makeDirectory rivet-header-docroot]
+    set script_path [file join $docroot header.tcl]
+    ::fileutil::writeFile $script_path {
+::rivet::header set X-Rivet one
+::rivet::header add X-Rivet two
+puts [::rivet::header get X-Rivet]
+::rivet::header remove X-Rivet
+puts [::rivet::header get X-Rivet]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 97 \
+            method GET \
+            path /header.tcl]
+    update
+
+    set header_flags {}
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        switch -exact -- [dict get $event type] {
+            http_header { lappend header_flags [dict get $event flags] }
+            output { append output [dict get $event data] }
+        }
+    }
+    list $header_flags $output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result [list \
+    [list \
+        [dict create action set name Content-Type value "text/html; charset=utf-8"] \
+        [dict create action set name X-Rivet value one] \
+        [dict create action add name X-Rivet value two] \
+        [dict create action remove name X-Rivet]] \
+    "one two\n\n"]
+
+test application-configuration-1.4ffe {
+    rivet env exposes request environment values
+} -setup {
+    set docroot [makeDirectory rivet-env-docroot]
+    file mkdir [file join $docroot docs]
+    set script_path [file join $docroot docs env.tcl]
+    ::fileutil::writeFile $script_path {
+puts [::rivet::env REQUEST_METHOD]
+puts [::rivet::env REQUEST_URI]
+puts [::rivet::env SCRIPT_NAME]
+puts [::rivet::env QUERY_STRING]
+puts [::rivet::env HTTP_HOST]
+puts [::rivet::env HTTP_X_TEST_HEADER]
+puts [::rivet::env CONTENT_TYPE]
+puts [::rivet::env REMOTE_ADDR]
+puts [::rivet::env REMOTE_PORT]
+puts [expr {[::rivet::env DOCUMENT_ROOT] ne ""}]
+puts [expr {[::rivet::env SCRIPT_FILENAME] ne ""}]
+puts [::rivet::env MISSING_VALUE]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 99 \
+            method POST \
+            target /docs/env.tcl?one=two \
+            path /docs/env.tcl \
+            query one=two \
+            version 1.0 \
+            protocol https \
+            remote_host 192.0.2.10 \
+            remote_port 54321 \
+            headers [dict create \
+                host rivet.example.test \
+                x-test-header value \
+                content-type text/plain]]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result "POST\n/docs/env.tcl?one=two\n/docs/env.tcl\none=two\nrivet.example.test\nvalue\ntext/plain\n192.0.2.10\n54321\n1\n1\n\n"
+
+test application-configuration-1.4fg {
+    rivet include writes static files literally
+} -setup {
+    set docroot [makeDirectory rivet-include-docroot]
+    file mkdir [file join $docroot docs]
+    ::fileutil::writeFile -translation binary \
+        [file join $docroot literal.bin] "A\0B"
+    ::fileutil::writeFile -translation binary \
+        [file join $docroot docs asset.bin] "C\0D"
+    set script_path [file join $docroot docs include.tcl]
+    ::fileutil::writeFile $script_path {
+puts -nonewline before:
+::rivet::include literal.bin
+puts -nonewline :middle:
+::rivet::include -virtual asset.bin
+puts -nonewline :after
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 98 \
+            method GET \
+            path /docs/include.tcl]
+    update
+
+    set output {}
+    set output_modes {}
+    set event_types {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        set type [dict get $event type]
+        lappend event_types $type
+        if {$type eq "output"} {
+            append output [dict get $event data]
+            lappend output_modes [dict get $event flags body_mode]
+        }
+    }
+    binary scan $output H* output_hex
+    list $output_modes $output_hex $event_types
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result [list \
+    {text binary text binary text} \
+    6265666f72653a4100423a6d6964646c653a4300443a6166746572 \
+    {http_header output flush output flush output flush output flush output complete}]
 
 test application-configuration-1.4g {
     rivet abort_page runs AbortScript and resets state on the next request
@@ -1888,6 +2113,77 @@ test application-1.3 {CApplication maps URL paths beneath its document root} -bo
     [file join [temporaryDirectory] tclwire-application-[pid] assets hello.txt] \
     {} \
     {}]
+
+test application-1.3a {CApplication defaults directory indexes to index.html} -body {
+    set docroot [file join [temporaryDirectory] tclwire-application-index-[pid]]
+    file mkdir $docroot
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot index.html] default-index
+    set application [::tclwire::CApplication new [dict create \
+        class ::tclwire::CApplication \
+        package tclwire::application \
+        hosts localhost \
+        docroot $docroot \
+        encoding utf-8]]
+    try {
+        list \
+            [$application directory_index] \
+            [$application local_path /]
+    } finally {
+        $application destroy
+        file delete -force $docroot
+    }
+} -result [list \
+    index.html \
+    [file join [temporaryDirectory] tclwire-application-index-[pid] index.html]]
+
+test application-1.3b {CApplication searches configured directory index names} -body {
+    set docroot [file join [temporaryDirectory] tclwire-application-index-[pid]]
+    file mkdir [file join $docroot docs]
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot home.html] home
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot docs welcome.html] welcome
+    set application [::tclwire::CApplication new [dict create \
+        class ::tclwire::CApplication \
+        package tclwire::application \
+        hosts localhost \
+        docroot $docroot \
+        encoding utf-8 \
+        configure [dict create \
+            ::tclwire::CApplication [dict create \
+                directory_index {welcome.html home.html index.html}]]]]
+    try {
+        list \
+            [$application directory_index] \
+            [$application local_path /] \
+            [$application local_path /docs/]
+    } finally {
+        $application destroy
+        file delete -force $docroot
+    }
+} -result [list \
+    {welcome.html home.html index.html} \
+    [file join [temporaryDirectory] tclwire-application-index-[pid] home.html] \
+    [file join [temporaryDirectory] tclwire-application-index-[pid] docs welcome.html]]
+
+test application-1.3c {CApplication rejects unsafe directory index entries} -body {
+    set docroot [file join [temporaryDirectory] tclwire-application-index-[pid]]
+    file mkdir $docroot
+    catch {
+        ::tclwire::CApplication new [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot $docroot \
+            encoding utf-8 \
+            configure [dict create \
+                ::tclwire::CApplication [dict create \
+                    directory_index {index.html ../secret.html}]]]
+    } message
+    file delete -force $docroot
+    set message
+} -result {CApplication directory_index entries must be file names}
 
 test application-io-1.1 {output commands send ordered transaction events} -body {
     set ::tclwire::application_test::events {}

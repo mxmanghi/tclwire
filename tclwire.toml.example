@@ -140,6 +140,10 @@ maximum_workers = 20
 # the target explicit. Bare class names are qualified under ::tclwire::app.
 # Constructors decide how those values map to object state.
 #
+# ::tclwire::CApplication uses directory_index as the ordered list of default
+# page file names for directory URLs. The built-in default is "index.html".
+# directory_index = "index.html home.html"
+#
 [http.hello]
 hosts = "<my-hello-app>"
 class = "Hello"

@@ -37,30 +37,29 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {![dict exists $applications $default_application]} {
             error "default application is not registered: $default_application"
         }
-        set default_descriptor \
-            [::tclwire::normalize_application_descriptor_classes \
-                [dict get $applications $default_application]]
+        set default_descriptor [::tclwire::normalize_application_descriptor_classes \
+                                                [dict get $applications $default_application]]
+
         dict for {application_id original_descriptor} $applications {
-            set descriptor \
-                [::tclwire::normalize_application_descriptor_classes \
-                    $original_descriptor]
-            set had_hosts [dict exists $original_descriptor hosts]
-            set explicit_class [dict exists $original_descriptor class]
-            set explicit_package [dict exists $original_descriptor package]
-            set explicit_file [dict exists $original_descriptor file]
-            set explicit_reload_on_request \
-                [dict exists $original_descriptor reload_on_request]
-            set explicit_chore [dict exists $original_descriptor chore]
+
+            set descriptor [::tclwire::normalize_application_descriptor_classes $original_descriptor]
+            set had_hosts           [dict exists $original_descriptor hosts]
+            set explicit_class      [dict exists $original_descriptor class]
+            set explicit_package    [dict exists $original_descriptor package]
+            set explicit_file       [dict exists $original_descriptor file]
+            set explicit_reload_on_request [dict exists $original_descriptor reload_on_request]
+            set explicit_chore      [dict exists $original_descriptor chore]
             set explicit_chore_class [dict exists $original_descriptor chore_class]
+
             set environment_class_applied 0
             set suppress_inherited_loader 0
             if {$application_id ne $default_application} {
                 if {[dict exists $default_descriptor pool_policy] &&
                     [dict exists $descriptor pool_policy]} {
 
-                    dict set descriptor pool_policy [dict merge \
-                        [dict get $default_descriptor pool_policy] \
-                        [dict get $descriptor pool_policy]]
+                    set dpp [dict get $default_descriptor pool_policy]
+                    set pp  [dict get $descriptor pool_policy]
+                    dict set descriptor pool_policy [dict merge $dpp $pp]
 
                 }
                 set descriptor [my merge_nested_dict_field \
@@ -87,9 +86,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
             }
             if {!$explicit_class} {
-                set environment_class \
-                    [::tclwire::environment application_class \
-                        $application_id $descriptor]
+                set environment_class [::tclwire::environment application_class $application_id $descriptor]
                 if {$environment_class ne {}} {
                     dict set descriptor class $environment_class
                     set environment_class_applied 1

@@ -30,7 +30,7 @@ package require fileutil
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::CApplication {
-    variable configuration_object document_root content_encoding
+    variable configuration_object document_root content_encoding directory_index
 
     constructor {application_descriptor} {
         if {[catch {dict size $application_descriptor}]} {
@@ -59,6 +59,7 @@ oo::class create ::tclwire::CApplication {
             [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
         set document_root    [file normalize [dict get $application_descriptor docroot]]
         set content_encoding [dict get $application_descriptor encoding]
+        set directory_index  [my configured_directory_index]
     }
 
     method configuration_object {} {
@@ -77,6 +78,48 @@ oo::class create ::tclwire::CApplication {
 
     method encoding {} {
         return $content_encoding
+    }
+
+    method directory_index {} {
+        return $directory_index
+    }
+
+    method configured_directory_index {} {
+        set options [dict create \
+            directory_index [list index.html]]
+        foreach class_name [list ::tclwire::CApplication [info object class [self]]] {
+            set class_options [$configuration_object class_configuration $class_name]
+            if {$class_options ne {}} {
+                set options [dict merge $options $class_options]
+            }
+        }
+
+        set names [dict get $options directory_index]
+        if {[catch {llength $names}]} {
+            error "CApplication directory_index must be a list"
+        }
+        if {[llength $names] == 0} {
+            error "CApplication directory_index must not be empty"
+        }
+        foreach name $names {
+            if {$name eq {} || $name in {. ..} ||
+                    [file tail $name] ne $name ||
+                    [string first "\\" $name] >= 0} {
+                error "CApplication directory_index entries must be file names"
+            }
+        }
+        return $names
+    }
+
+    method directory_index_candidate {directory {existing_only 0}} {
+        foreach name [my directory_index] {
+            set candidate [file normalize [file join $directory $name]]
+            if {!$existing_only ||
+                    ([file isfile $candidate] && [file readable $candidate])} {
+                return $candidate
+            }
+        }
+        return {}
     }
 
     method decode_path {path} {
@@ -106,6 +149,9 @@ oo::class create ::tclwire::CApplication {
 
     method local_path {url_path} {
         set candidate [my url_file_candidate $url_path]
+        if {[file isdirectory $candidate]} {
+            return [my directory_index_candidate $candidate 1]
+        }
         if {![file isfile $candidate] || ![file readable $candidate]} {
             return {}
         }
@@ -129,7 +175,7 @@ oo::class create ::tclwire::CApplication {
             lappend segments $segment
         }
         if {[llength $segments] == 0} {
-            set segments [list index.html]
+            return [my document_root]
         }
 
         set candidate [file normalize [file join [my document_root] {*}$segments]]
@@ -137,9 +183,6 @@ oo::class create ::tclwire::CApplication {
         if {($candidate ne $root) && \
             ![string match "${root}[file separator]*" $candidate]} {
             return {}
-        }
-        if {[file isdirectory $candidate]} {
-            set candidate [file join $candidate index.html]
         }
         return [file normalize $candidate]
     }
@@ -334,7 +377,8 @@ oo::class create ::tclwire::CApplication {
         return
     }
 
-    unexport decode_path file_resource log_file_resolution read_file \
+    unexport configured_directory_index decode_path directory_index_candidate \
+        file_resource log_file_resolution read_file \
         read_file_range resource_headers send_error \
         serve_complete_file serve_content_ranges serve_file_metadata \
         serve_file_ranges serve_single_range serve_unsatisfiable_range \
