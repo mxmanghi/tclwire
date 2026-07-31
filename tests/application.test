@@ -1272,6 +1272,357 @@ puts [::rivet::env MISSING_VALUE]
     removeDirectory $docroot
 } -result "POST\n/docs/env.tcl?one=two\n/docs/env.tcl\none=two\nrivet.example.test\nvalue\ntext/plain\n192.0.2.10\n54321\n1\n1\n\n"
 
+test application-configuration-1.4fff {
+    rivet load_env populates request environment arrays
+} -setup {
+    set docroot [makeDirectory rivet-load-env-docroot]
+    set script_path [file join $docroot load_env.tcl]
+    ::fileutil::writeFile $script_path {
+::rivet::load_env
+::rivet::load_env ::loaded_env
+puts $::request::env(REQUEST_METHOD)
+puts $::request::env(HTTP_HOST)
+puts $::loaded_env(QUERY_STRING)
+puts [array exists ::request::env]
+puts [array exists ::loaded_env]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 100 \
+            method GET \
+            target /load_env.tcl?loaded=yes \
+            path /load_env.tcl \
+            query loaded=yes \
+            version 1.1 \
+            headers [dict create host rivet.example.test]]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    unset -nocomplain ::loaded_env
+    removeDirectory $docroot
+} -result "GET\nrivet.example.test\nloaded=yes\n1\n1\n"
+
+test application-configuration-1.4ffg {
+    rivet load_headers populates request header arrays
+} -setup {
+    set docroot [makeDirectory rivet-load-headers-docroot]
+    set script_path [file join $docroot load_headers.tcl]
+    ::fileutil::writeFile $script_path {
+::rivet::load_headers
+::rivet::load_headers ::loaded_headers
+puts $::request::headers(host)
+puts $::request::headers(x-test-header)
+puts $::loaded_headers(content-type)
+puts [array exists ::request::headers]
+puts [array exists ::loaded_headers]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 101 \
+            method GET \
+            path /load_headers.tcl \
+            version 1.1 \
+            headers [dict create \
+                host rivet.example.test \
+                x-test-header value \
+                content-type text/plain]]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    unset -nocomplain ::loaded_headers
+    removeDirectory $docroot
+} -result "rivet.example.test\nvalue\ntext/plain\n1\n1\n"
+
+test application-configuration-1.4ffh {
+    rivet load_cookies populates caller cookie arrays
+} -setup {
+    set docroot [makeDirectory rivet-load-cookies-docroot]
+    set script_path [file join $docroot load_cookies.tcl]
+    ::fileutil::writeFile $script_path {
+::rivet::load_cookies
+::rivet::load_cookies loaded_cookies
+puts $cookies(session)
+puts $cookies(theme)
+puts $loaded_cookies(token)
+puts [array exists cookies]
+puts [array exists loaded_cookies]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 102 \
+            method GET \
+            path /load_cookies.tcl \
+            version 1.1 \
+            headers [dict create \
+                host rivet.example.test \
+                cookie {session=abc; theme=light; token=a=b}]]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result "abc\nlight\na=b\n1\n1\n"
+
+test application-configuration-1.4ffi {
+    rivet load_response populates caller response arrays
+} -setup {
+    set docroot [makeDirectory rivet-load-response-docroot]
+    set script_path [file join $docroot load_response.tcl]
+    ::fileutil::writeFile $script_path {
+::rivet::load_response
+puts $response(single)
+puts $response(multi)
+puts [info exists response(__multi)]
+puts $response(posted)
+puts $response(extra)
+::rivet::load_response custom_response
+::rivet::load_response custom_response
+puts $custom_response(multi)
+puts [info exists custom_response(__multi)]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 103 \
+            method POST \
+            target /load_response.tcl?single=one&multi=a&multi=b \
+            path /load_response.tcl \
+            query single=one&multi=a&multi=b \
+            version 1.1 \
+            headers [dict create \
+                host rivet.example.test \
+                content-type {multipart/form-data; boundary=AaB03x}] \
+            multipart_parts [list \
+                [dict create name multi body c] \
+                [dict create name posted body value] \
+                [dict create name extra body space] \
+                [dict create name upload filename ignored.txt body ignored]]]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result "one\na b c\n1\nvalue\nspace\na b c a b c\n1\n"
+
+test application-configuration-1.4ffj {
+    rivet load_response reads urlencoded request bodies
+} -setup {
+    set docroot [makeDirectory rivet-load-response-urlencoded-docroot]
+    set script_path [file join $docroot load_response_urlencoded.tcl]
+    ::fileutil::writeFile $script_path {
+::rivet::load_response form
+puts $form(q)
+puts $form(posted)
+puts $form(space)
+puts $form(multi)
+puts [info exists form(__multi)]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 104 \
+            method POST \
+            target /load_response_urlencoded.tcl?q=yes&multi=query \
+            path /load_response_urlencoded.tcl \
+            query q=yes&multi=query \
+            version 1.1 \
+            headers [dict create \
+                host rivet.example.test \
+                content-type application/x-www-form-urlencoded] \
+            body_storage in_memory \
+            body posted=value&space=hello+world&multi=body]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result "yes\nvalue\nhello world\nquery body\n1\n"
+
 test application-configuration-1.4fg {
     rivet include writes static files literally
 } -setup {

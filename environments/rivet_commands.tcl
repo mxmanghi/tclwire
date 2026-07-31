@@ -4,6 +4,7 @@
 
 package require tclwire::content_generator_agent 0.1
 package require tclwire::http::application::io 0.1
+package require tclwire::http::query 0.1
 package require fileutil
 
 namespace eval ::tclwire {}
@@ -131,6 +132,99 @@ namespace eval ::tclwire::envs::rivet {
             return [dict get $environment $name]
         }
         return {}
+    }
+
+    proc load_env {{array_name ::request::env}} {
+        upvar #0 $array_name target
+        unset -nocomplain target
+        array set target [request_environment]
+        return
+    }
+
+    proc load_headers {{array_name ::request::headers}} {
+        set request [::tclwire::app::request]
+        upvar #0 $array_name target
+        unset -nocomplain target
+        array set target [$request headers]
+        return
+    }
+
+    proc cookie_pairs {} {
+        set request [::tclwire::app::request]
+        set cookies {}
+        foreach field [split [$request header cookie] ";"] {
+            set field [string trim $field]
+            if {$field eq {}} {
+                continue
+            }
+
+            set separator [string first = $field]
+            if {$separator < 1} {
+                continue
+            }
+
+            set name [string trim [string range $field 0 $separator-1]]
+            set value [string trim [string range $field $separator+1 end]]
+            if {[catch {
+                ::tclwire::http::cookie::validate_name $name
+                ::tclwire::http::cookie::validate_value $value
+            }]} {
+                continue
+            }
+            lappend cookies $name $value
+        }
+        return $cookies
+    }
+
+    proc urlencoded_pairs {urlencoded_data} {
+        set pairs {}
+        foreach field [split $urlencoded_data &] {
+            if {$field eq {}} {
+                continue
+            }
+
+            set separator [string first = $field]
+            if {$separator < 0} {
+                set name $field
+                set value {}
+            } else {
+                set name [string range $field 0 $separator-1]
+                set value [string range $field $separator+1 end]
+            }
+
+            lappend pairs \
+                [::tclwire::http::query decode_component $name] \
+                [::tclwire::http::query decode_component $value]
+        }
+        return $pairs
+    }
+
+    proc multipart_form_pairs {parts} {
+        set pairs {}
+        foreach part $parts {
+            if {[dict exists $part name] && ![dict exists $part filename]} {
+                lappend pairs [dict get $part name] [dict get $part body]
+            }
+        }
+        return $pairs
+    }
+
+    proc response_pairs {} {
+        set request    [::tclwire::app::request]
+        set descriptor [::tclwire::app::request_descriptor]
+        set pairs [urlencoded_pairs [$request query]]
+
+        if {[dict exists $descriptor multipart_parts]} {
+            lappend pairs {*}[multipart_form_pairs \
+                [dict get $descriptor multipart_parts]]
+            return $pairs
+        }
+
+        if {[$request media_type] eq "application/x-www-form-urlencoded" &&
+                [$request body_storage] eq "in_memory"} {
+            lappend pairs {*}[urlencoded_pairs [$request body]]
+        }
+        return $pairs
     }
 
     proc virtual_include_path {path} {
@@ -311,6 +405,44 @@ namespace eval ::tclwire::envs::rivet {
             tailcall ::tclwire::envs::rivet::include {*}$args
         }
 
+        proc ::rivet::load_env {args} {
+            if {[llength $args] > 1} {
+                error {wrong # args: should be "::rivet::load_env ?arrayName?"}
+            }
+            tailcall ::tclwire::envs::rivet::load_env {*}$args
+        }
+
+        proc ::rivet::load_headers {args} {
+            if {[llength $args] > 1} {
+                error {wrong # args: should be "::rivet::load_headers ?arrayName?"}
+            }
+            tailcall ::tclwire::envs::rivet::load_headers {*}$args
+        }
+
+        proc ::rivet::load_cookies {{arrayName cookies}} {
+            upvar 1 $arrayName cookies
+            foreach {key value} [::tclwire::envs::rivet::cookie_pairs] {
+                set cookies($key) [list $value]
+            }
+            return
+        }
+
+        proc ::rivet::load_response {{arrayName response}} {
+            upvar 1 $arrayName response
+
+            foreach {var elem} [::tclwire::envs::rivet::response_pairs] {
+                if {[info exists response(__$var)]} {
+                    lappend response($var) $elem
+                } elseif {[info exists response($var)]} {
+                    set response($var) [list $response($var) $elem]
+                    set response(__$var) ""
+                } else {
+                    set response($var) $elem
+                }
+            }
+            return
+        }
+
         proc ::rivet::url_script {} {
             set application [::tclwire::app::current]
             set request     [::tclwire::app::request]
@@ -335,7 +467,7 @@ namespace eval ::tclwire::envs::rivet {
 
         namespace eval ::rivet {
             namespace export abort_code abort_page apache_log_error env header include \
-                inspect url_script
+                inspect load_cookies load_env load_headers load_response url_script
         }
         return
     }

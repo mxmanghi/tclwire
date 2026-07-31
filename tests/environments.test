@@ -194,7 +194,11 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
             [expr {[info commands ::rivet::env] ne {}}] \
             [expr {[info commands ::rivet::header] ne {}}] \
             [expr {[info commands ::rivet::include] ne {}}] \
-            [expr {[info commands ::rivet::inspect] ne {}}]]
+            [expr {[info commands ::rivet::inspect] ne {}}] \
+            [expr {[info commands ::rivet::load_cookies] ne {}}] \
+            [expr {[info commands ::rivet::load_env] ne {}}] \
+            [expr {[info commands ::rivet::load_headers] ne {}}] \
+            [expr {[info commands ::rivet::load_response] ne {}}]]
         ::tclwire::envs::rivet uninstall
         list \
             $installed \
@@ -207,7 +211,7 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
         catch {namespace delete ::Rivet}
         catch {namespace delete ::rivet}
     }
-} -result {1 {1 1 1 1 1 1 1 1} 0 0 0}
+} -result {1 {1 1 1 1 1 1 1 1 1 1 1 1} 0 0 0}
 
 test rivet-1.2a {rivet abort_page records abort state and raises abort errorcode} -body {
     catch {::tclwire::envs::rivet uninstall}
