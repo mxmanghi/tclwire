@@ -7,9 +7,130 @@ package require tclwire::http::message 0.1
 package require tclwire::http::multipart 0.1
 
 namespace eval ::tclwire {}
+namespace eval ::tclwire::http::cookie {
+    proc validate_name {name} {
+        if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $name]} {
+            error "invalid HTTP cookie name"
+        }
+        return
+    }
+
+    proc validate_value {value} {
+        if {![regexp {^[\x21-\x7e]*$} $value] ||
+                [regexp {[";,\\]} $value]} {
+            error "invalid HTTP cookie value"
+        }
+        return
+    }
+
+    proc validate_path {path} {
+        if {![string match /* $path] ||
+                [regexp {[\x00-\x20\x7f;]} $path]} {
+            error "invalid HTTP cookie path"
+        }
+        return
+    }
+
+    proc validate_expiration {expiration} {
+        if {[string is entier -strict $expiration]} {
+            set seconds $expiration
+        } elseif {[catch {clock scan $expiration} seconds]} {
+            error "invalid HTTP cookie expiration"
+        }
+        if {[catch {
+            clock format $seconds -gmt 1 -locale C \
+                -format {%a, %d %b %Y %H:%M:%S GMT}
+        }]} {
+            error "invalid HTTP cookie expiration"
+        }
+        return
+    }
+
+    proc parse_header {value} {
+        set cookies {}
+        foreach field [split $value ";"] {
+            set field [string trim $field]
+            if {$field eq {}} {
+                continue
+            }
+            set separator [string first = $field]
+            if {$separator < 1} {
+                error "invalid HTTP Cookie header"
+            }
+            set name [string trim [string range $field 0 $separator-1]]
+            set cookie_value [string trim [string range $field $separator+1 end]]
+            validate_name $name
+            validate_value $cookie_value
+            lappend cookies [list $name $cookie_value]
+        }
+        return $cookies
+    }
+}
+
+oo::class create ::tclwire::CookieJar {
+    variable cookies
+
+    constructor {{initial_cookies {}}} {
+        set cookies [dict create]
+        foreach cookie $initial_cookies {
+            my set {*}$cookie
+        }
+    }
+
+    method get {name {default_value {}}} {
+        ::tclwire::http::cookie::validate_name $name
+        if {[dict exists $cookies $name]} {
+            return [dict get $cookies $name value]
+        }
+        return $default_value
+    }
+
+    method set {name value args} {
+        ::tclwire::http::cookie::validate_name $name
+        my validate $value
+
+        set options {}
+        if {[llength $args] % 2 != 0} {
+            error {wrong # args: should be "CookieJar set name value ?-path uriPath? ?-expires expiration?"}
+        }
+        foreach {option option_value} $args {
+            switch -exact -- $option {
+                -path {
+                    ::tclwire::http::cookie::validate_path $option_value
+                    lappend options $option $option_value
+                }
+                -expires {
+                    ::tclwire::http::cookie::validate_expiration $option_value
+                    lappend options $option $option_value
+                }
+                default {
+                    error "unknown HTTP cookie option: $option"
+                }
+            }
+        }
+
+        dict set cookies $name [dict create value $value options $options]
+        return $value
+    }
+
+    method validate {value} {
+        ::tclwire::http::cookie::validate_value $value
+        return $value
+    }
+
+    method serialize {} {
+        set serialized {}
+        dict for {name spec} $cookies {
+            lappend serialized [list $name [dict get $spec value] \
+                {*}[dict get $spec options]]
+        }
+        return $serialized
+    }
+}
 
 oo::class create ::tclwire::HttpRequest {
     variable descriptor
+    variable cookie_jar
     variable multipart_parts_cache
     variable multipart_parts_cached
 
@@ -18,8 +139,17 @@ oo::class create ::tclwire::HttpRequest {
             error "HTTP request descriptor must be a dictionary"
         }
         set descriptor $request_descriptor
+        set cookie_jar {}
         set multipart_parts_cache {}
         set multipart_parts_cached 0
+    }
+
+    destructor {
+        variable cookie_jar
+
+        if {$cookie_jar ne {}} {
+            $cookie_jar destroy
+        }
     }
 
     method required {field} {
@@ -85,6 +215,16 @@ oo::class create ::tclwire::HttpRequest {
             return [dict get $headers $name]
         }
         return $default_value
+    }
+
+    method cookie_jar {} {
+        variable cookie_jar
+
+        if {$cookie_jar eq {}} {
+            set cookie_jar [::tclwire::CookieJar new \
+                [::tclwire::http::cookie::parse_header [my header cookie]]]
+        }
+        return $cookie_jar
     }
 
     method scheme {} {
