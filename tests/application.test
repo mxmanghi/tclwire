@@ -134,6 +134,58 @@ test http-request-1.1a {HTTP request exposes origin and absolute URL helpers} -b
     }
 } -result {https example.test:9443 https://example.test:9443 https://example.test:9443/upload/form?mode=edit https://example.test:9443/submit https://example.test:9443/upload/next}
 
+test http-request-1.1b {HTTP request exposes an associated cookie jar} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /profile \
+        path /profile \
+        query {} \
+        version 1.1 \
+        headers [dict create host example.test cookie {session=abc; theme=light}] \
+        body_media raw \
+        body_storage in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 3]]
+    try {
+        set jar [$request cookie_jar]
+        list \
+            [info object isa typeof $jar ::tclwire::CookieJar] \
+            [expr {$jar eq [$request cookie_jar]}] \
+            [$jar get session] \
+            [$jar get missing default] \
+            [$jar serialize]
+    } finally {
+        $request destroy
+    }
+} -result [list 1 1 abc default [list [list session abc] [list theme light]]]
+
+test http-request-1.1c {cookie jar set validates and serializes io cookie arguments} -body {
+    set jar [::tclwire::CookieJar new]
+    try {
+        $jar set session abc -path / -expires 0
+        $jar set theme light
+        list \
+            [$jar get session] \
+            [$jar validate safe-value] \
+            [$jar serialize]
+    } finally {
+        $jar destroy
+    }
+} -result [list abc safe-value [list \
+    [list session abc -path / -expires 0] \
+    [list theme light]]]
+
+test http-request-1.1d {cookie jar rejects invalid cookie values} -body {
+    set jar [::tclwire::CookieJar new]
+    try {
+        catch {$jar set session "bad;value"} message
+        set message
+    } finally {
+        $jar destroy
+    }
+} -result {invalid HTTP cookie value}
+
 test application-tools-1.1 {request-scoped URL helpers expose the current origin} -body {
     ::tclwire::tools::begin [dict create \
         method POST \

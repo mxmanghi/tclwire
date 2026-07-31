@@ -19,12 +19,14 @@ oo::class create ::tclwire::HttpProtocolSession {
     variable header_size
     variable transfer_stream
     variable max_body_bytes
+    variable secure
 
     constructor {args} {
         array set options {
             -bodythreshold 1048576
             -spooldirectory /tmp
             -maxbodybytes 16777216
+            -secure 0
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
@@ -40,9 +42,13 @@ oo::class create ::tclwire::HttpProtocolSession {
              $options(-maxbodybytes) < 1} {
             error "-maxbodybytes must be a positive integer"
         }
+        if {![string is boolean -strict $options(-secure)]} {
+            error "-secure must be a boolean"
+        }
         set body_threshold  $options(-bodythreshold)
         set spool_directory $options(-spooldirectory)
         set max_body_bytes  $options(-maxbodybytes)
+        set secure          [expr {!!$options(-secure)}]
         my reset
     }
 
@@ -836,6 +842,8 @@ oo::class create ::tclwire::HttpProtocolSession {
             lappend response_headers \
                 "Content-Length: [string length $body_bytes]"
         }
+        set response_headers [concat $response_headers \
+            [my default_security_headers $headers]]
         set response_headers [concat $response_headers $headers]
         set response [encoding convertto ascii \
             "[join $response_headers "\r\n"]\r\n\r\n"]
@@ -859,10 +867,33 @@ oo::class create ::tclwire::HttpProtocolSession {
         }
     }
 
+    method has_response_header {headers name} {
+        foreach header $headers {
+            if {[regexp {^([^:]+):} $header -> header_name] &&
+                    [string equal -nocase [string trim $header_name] $name]} {
+                return 1
+            }
+        }
+        return 0
+    }
+
+    method default_security_headers {headers} {
+        set defaults {}
+        if {![my has_response_header $headers X-Content-Type-Options]} {
+            lappend defaults "X-Content-Type-Options: nosniff"
+        }
+        if {$secure && ![my has_response_header $headers Strict-Transport-Security]} {
+            lappend defaults "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+        }
+        return $defaults
+    }
+
     method build_chunked_response_head { status reason content_encoding headers body_mode } {
         set response_headers [list  "HTTP/1.1 $status $reason"  \
                                     "Connection: close"         \
                                     "Transfer-Encoding: chunked"]
+        set response_headers [concat $response_headers \
+            [my default_security_headers $headers]]
         foreach header $headers {
             if {[regexp -nocase {^(Content-Length|Transfer-Encoding):} $header]} {
                 continue
@@ -886,9 +917,10 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     export request_body_framing
-    unexport decode_transfer_codings feed_result install_request_info \
-        parse_chunked_body parse_trailers request_headers request_info_snapshot \
-        request_method transfer_codings
+    unexport decode_transfer_codings default_security_headers feed_result \
+        has_response_header install_request_info parse_chunked_body \
+        parse_trailers request_headers request_info_snapshot request_method \
+        transfer_codings
 }
 
 package provide tclwire::http::protocol 0.1

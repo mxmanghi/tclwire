@@ -217,6 +217,7 @@ The request object exposes:
 | `version` | HTTP version, such as `1.1`. |
 | `headers` | Dictionary keyed by lowercase header names. |
 | `header name ?default?` | Case-insensitive header lookup. |
+| `cookie_jar` | Request-associated `::tclwire::CookieJar` object initialized from the `Cookie` header. |
 | `content_type ?default?` | Raw `Content-Type` header value. |
 | `content_type_info` | Parsed media type and parameters dictionary. |
 | `media_type ?default?` | Lowercase media type from `Content-Type`. |
@@ -241,6 +242,25 @@ The request object exposes:
 | `application_id` | Selected application registration name. |
 
 There are no request mutation methods and no channel accessor.
+
+The cookie jar supports:
+
+```tcl
+set jar [$request cookie_jar]
+$jar get $name ?$default?
+$jar set $name $value ?-path $uri_path? ?-expires $expiration?
+$jar validate $value
+$jar serialize
+```
+
+`serialize` returns a list of argument lists. Each item can be expanded into
+`::tclwire::http::io cookie`:
+
+```tcl
+foreach cookie [$jar serialize] {
+    ::tclwire::http::io cookie {*}$cookie
+}
+```
 
 ## Request Parsing and Body Handling
 
