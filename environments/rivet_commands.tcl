@@ -95,7 +95,8 @@ namespace eval ::tclwire::envs::rivet {
         foreach option $inspect_options {
             set value [inspect_value $option]
             if {$value eq {}} {
-                set value undefined
+                dict set result $option ""
+                continue
             }
             dict set result $option $value
         }
@@ -1332,7 +1333,9 @@ namespace eval ::tclwire::envs::rivet {
                 0 {
                     return [dict create \
                         user   {} \
-                        server [::tclwire::envs::rivet::inspect_all] \
+                        server [concat {*}[lmap {k v} [::tclwire::envs::rivet::inspect_all] {
+                            if {$v ne ""} { list $k $v } else { continue }
+                        }]]\
                         dir    {}]
                 }
                 2 {
