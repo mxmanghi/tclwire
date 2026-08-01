@@ -21,18 +21,6 @@ if {[info commands ::tclwire::envs::app::Rivet] ne {}} {
 oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
 
-    method rivet_script_path {request} {
-        set path [$request path]
-        if {[catch {set candidate [my url_file_candidate $path]}]} {
-            return {}
-        }
-        if {$candidate eq {} ||
-                [string tolower [file extension $candidate]] ni {".rvt" ".tcl"}} {
-            return {}
-        }
-        return $candidate
-    }
-
     method content_type {path} {
         if {[string tolower [file extension $path]] in {".tcl" ".rvt"}} {
             return "text/html; charset=[my encoding]"
@@ -52,11 +40,32 @@ oo::class create ::tclwire::envs::app::Rivet {
         }
 
         ::try {
-            set script_path [my rivet_script_path $request]
+            if {[catch {set resolution [my resolve_request_path $request]}]} {
+                my log_file_resolution $request 400 {} error
+                my send_error 400 [$request url_path]
+                return
+            }
+            if {$resolution eq {}} {
+                next $request
+                return
+            }
+
+            set script_path [$request local_path]
             if {$script_path eq {}} {
                 next $request
                 return
             }
+
+            set file_extension [file extension $script_path]
+            if {$file_extension eq ".rvt"} {
+                set ns "::request"
+            } elseif {$file_extension eq ".tcl"} {
+                set ns "::"
+            } else {
+                next $request
+                return
+            }
+
             set previous_directory [pwd]
             cd [file dirname $script_path]
             set changed_directory 1
@@ -67,7 +76,7 @@ oo::class create ::tclwire::envs::app::Rivet {
                 return
             }
 
-            ::tclwire::http::io header set Content-Type [my content_type [$request path]]
+            ::tclwire::http::io header set Content-Type [my content_type $script_path]
 
             set before_script [::rivet::inspect BeforeScript]
             if {$before_script ne ""} {
@@ -76,7 +85,7 @@ oo::class create ::tclwire::envs::app::Rivet {
             }
 
             set ::Rivet::script $script
-            namespace eval ::request $script
+            namespace eval $ns $script
         } trap {RIVET ABORTPAGE} {err opts} {
             ::Rivet::finish_request $script $err $opts AbortScript
         } trap {RIVET THREAD_EXIT} {err opts} {
@@ -90,6 +99,7 @@ oo::class create ::tclwire::envs::app::Rivet {
                 if {$changed_directory} {
                     cd $previous_directory
                 }
+                ::Rivet::cleanup_request
             }
         }
 

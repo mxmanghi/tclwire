@@ -122,6 +122,22 @@ oo::class create ::tclwire::CApplication {
         return {}
     }
 
+    method directory_index_resolution {url_path directory} {
+        foreach name [my directory_index] {
+            set local_path [file normalize [file join $directory $name]]
+            if {![file isfile $local_path] || ![file readable $local_path]} {
+                continue
+            }
+            set selected_url_path $url_path
+            if {![string match */ $selected_url_path]} {
+                append selected_url_path /
+            }
+            append selected_url_path $name
+            return [dict create path $selected_url_path local_path $local_path]
+        }
+        return {}
+    }
+
     method decode_path {path} {
         if {[string first "\x00" $path] >= 0} {
             error "URL path contains a null byte"
@@ -148,14 +164,35 @@ oo::class create ::tclwire::CApplication {
     }
 
     method local_path {url_path} {
+        set resolution [my resolve_path $url_path]
+        if {$resolution eq {}} {
+            return {}
+        }
+        return [dict get $resolution local_path]
+    }
+
+    method resolve_path {url_path} {
         set candidate [my url_file_candidate $url_path]
+        if {$candidate eq {}} {
+            return {}
+        }
         if {[file isdirectory $candidate]} {
-            return [my directory_index_candidate $candidate 1]
+            return [my directory_index_resolution $url_path $candidate]
         }
         if {![file isfile $candidate] || ![file readable $candidate]} {
             return {}
         }
-        return $candidate
+        return [dict create path $url_path local_path $candidate]
+    }
+
+    method resolve_request_path {request} {
+        set resolution [my resolve_path [$request url_path]]
+        if {$resolution eq {}} {
+            return {}
+        }
+        $request path [dict get $resolution path]
+        $request local_path [dict get $resolution local_path]
+        return $resolution
     }
 
     method url_file_candidate {url_path} {
@@ -344,19 +381,20 @@ oo::class create ::tclwire::CApplication {
     }
 
     method handle_request {request} {
-        set path [$request path]
-        if {[catch {set local_path [my local_path $path]}]} {
+        set path [$request url_path]
+        if {[catch {set resolution [my resolve_request_path $request]}]} {
             my log_file_resolution $request 400 {} error
             my send_error 400 $path
             return
         }
-        if {$local_path eq {}} {
+        if {$resolution eq {}} {
             set resolved_path {}
             catch {set resolved_path [my url_file_candidate $path]}
             my log_file_resolution $request 404 $resolved_path error
             my send_error 404 $path
             return
         }
+        set local_path [$request local_path]
 
         my log_file_resolution $request 200 $local_path debug
 
@@ -378,6 +416,7 @@ oo::class create ::tclwire::CApplication {
     }
 
     unexport configured_directory_index decode_path directory_index_candidate \
+        directory_index_resolution resolve_path \
         file_resource log_file_resolution read_file \
         read_file_range resource_headers send_error \
         serve_complete_file serve_content_ranges serve_file_metadata \

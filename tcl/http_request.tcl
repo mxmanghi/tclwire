@@ -155,41 +155,42 @@ oo::class create ::tclwire::CookieJar {
 }
 
 oo::class create ::tclwire::HttpRequest {
-    variable descriptor
+    variable request_descriptor
     variable cookie_jar
     variable multipart_parts_cache
     variable multipart_parts_cached
 
-    constructor {request_descriptor} {
-        if {[catch {dict size $request_descriptor}]} {
+    constructor {descriptor} {
+        if {[catch {dict size $descriptor}]} {
             error "HTTP request descriptor must be a dictionary"
         }
-        set descriptor $request_descriptor
+        if {[dict exists $descriptor path] && ![dict exists $descriptor url_path]} {
+            dict set descriptor url_path [dict get $descriptor path]
+        }
+        set request_descriptor $descriptor
         set cookie_jar {}
         set multipart_parts_cache {}
         set multipart_parts_cached 0
     }
 
     destructor {
-        variable cookie_jar
-
         if {$cookie_jar ne {}} {
             $cookie_jar destroy
         }
     }
 
     method required {field} {
-        if {![dict exists $descriptor $field]} {
+        if {![dict exists $request_descriptor $field]} {
             error "HTTP request descriptor is missing $field"
         }
-        return [dict get $descriptor $field]
+        return [dict get $request_descriptor $field]
     }
 
-    method snapshot {} { return $descriptor }
+    method snapshot {} { return $request_descriptor }
 
     method optional {field default_value} {
-        if {[dict exists $descriptor $field]} {
-            return [dict get $descriptor $field]
+        if {[dict exists $request_descriptor $field]} {
+            return [dict get $request_descriptor $field]
         }
         return $default_value
     }
@@ -202,8 +203,53 @@ oo::class create ::tclwire::HttpRequest {
         return [my required target]
     }
 
-    method path {} {
-        return [my required path]
+    method url_path {} {
+        return [my required url_path]
+    }
+
+    method path {args} {
+        switch -exact -- [llength $args] {
+            0 {
+                return [my required path]
+            }
+            1 {
+                set path [lindex $args 0]
+            }
+            default {
+                error {wrong # args: should be "HttpRequest path ?path?"}
+            }
+        }
+        if {![string match "/*" $path]} {
+            error "HTTP request path must be absolute"
+        }
+        dict set request_descriptor path $path
+        return $path
+    }
+
+    method local_path {args} {
+        switch -exact -- [llength $args] {
+            0 {
+                return [my optional local_path {}]
+            }
+            1 {
+                set path [lindex $args 0]
+            }
+            default {
+                error {wrong # args: should be "HttpRequest local_path ?path?"}
+            }
+        }
+
+        if {[llength $args] == 1} {
+            if {$path eq {}} {
+                if {[dict exists $request_descriptor local_path]} {
+                    dict unset request_descriptor local_path
+                }
+                return {}
+            }
+            set path [file normalize $path]
+            dict set request_descriptor local_path $path
+            return $path
+        }
     }
 
     method query {} {
@@ -244,8 +290,6 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method cookie_jar {} {
-        variable cookie_jar
-
         if {$cookie_jar eq {}} {
             set cookie_jar [::tclwire::CookieJar new \
                 [::tclwire::http::cookie::parse_header [my header cookie]]]
@@ -363,12 +407,9 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method multipart_parts {} {
-        variable multipart_parts_cache
-        variable multipart_parts_cached
-
         if {!$multipart_parts_cached} {
-            if {[dict exists $descriptor multipart_parts]} {
-                set multipart_parts_cache [dict get $descriptor multipart_parts]
+            if {[dict exists $request_descriptor multipart_parts]} {
+                set multipart_parts_cache [dict get $request_descriptor multipart_parts]
             } else {
                 set multipart_parts_cache [::tclwire::http::multipart parse \
                     [my content_type] [my body]]

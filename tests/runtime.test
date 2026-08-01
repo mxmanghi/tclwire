@@ -112,6 +112,11 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     10000 \
     0]
 
+test runtime-1.1a {command-line misuse is tagged for usage output} -body {
+    catch {::tclwire::runtime parse_args [list --unknown-option]} message options
+    list $message [dict get $options -errorcode]
+} -result [list {unknown argument: --unknown-option} {TCLWIRE USAGE}]
+
 test runtime-1.2 {legacy service options are normalized without starting services} -body {
     set config [::tclwire::runtime parse_args [list \
         --host 0.0.0.0 \
@@ -695,6 +700,9 @@ test runtime-1.12 {TOML controls global and protocol configuration} -body {
     set config_file [::tclwire::runtime_test::make_config {
 [tclwire]
 host = "0.0.0.0"
+hostname = "server.example.test"
+admin = "admin@example.test"
+server_path = "/main"
 debug = true
 debug_connection = true
 quiet = true
@@ -703,6 +711,7 @@ docroot = "www"
 ftproot = "ftp"
 logfile = "logs/runtime.log"
 logerr = "logs/runtime.err"
+errorlog = "logs/apache.err"
 libdir = "lib"
 certfile = "tls/default.crt"
 keyfile = "tls/default.key"
@@ -809,6 +818,10 @@ port = 8081
     [dict create \
         docroot [file normalize [file join [temporaryDirectory] tclwire-config-[pid] www]] \
         encoding utf-8 \
+        hostname server.example.test \
+        admin admin@example.test \
+        errorlog [file normalize [file join [temporaryDirectory] tclwire-config-[pid] logs apache.err]] \
+        server_path /main \
         class ::example::Application \
         environment stdchans \
         configure [dict create \
@@ -1258,6 +1271,10 @@ maximum_workers = 12
         docroot [file normalize [file join \
             [temporaryDirectory] tclwire-config-[pid] sites one]] \
         encoding iso8859-1 \
+        hostname 127.0.0.1 \
+        admin {} \
+        errorlog [file normalize /tmp/tclwire-err.log] \
+        server_path {} \
         class ::example::Application \
         package example::application \
         hosts one.example.test \
@@ -1266,6 +1283,10 @@ maximum_workers = 12
         docroot [file normalize [file join \
             [temporaryDirectory] tclwire-config-[pid] sites two]] \
         encoding iso8859-1 \
+        hostname 127.0.0.1 \
+        admin {} \
+        errorlog [file normalize /tmp/tclwire-err.log] \
+        server_path {} \
         class ::example::Application \
         package example::application \
         hosts {two.example.test www.two.example.test} \

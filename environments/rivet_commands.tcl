@@ -102,6 +102,28 @@ namespace eval ::tclwire::envs::rivet {
         return $result
     }
 
+    proc inspect_script {} {
+        set application [::tclwire::app::current]
+        set request [::tclwire::app::request]
+        set path [$request local_path]
+        if {$path eq {}} {
+            set path [$application local_path [$request path]]
+        }
+        if {$path eq {}} {
+            return {}
+        }
+        return [file normalize $path]
+    }
+
+    proc inspect_server {} {
+        set configuration [::tclwire::app::configuration]
+        return [dict create \
+            hostname    [$configuration get hostname] \
+            admin       [$configuration get admin] \
+            errorlog    [$configuration get errorlog] \
+            server_path [$configuration get server_path]]
+    }
+
     proc reset_abort_state {} {
         variable aborting
         variable abort_code
@@ -660,6 +682,10 @@ namespace eval ::tclwire::envs::rivet {
         if {[catch {set candidate [$application local_path $path]}]} {
             return {}
         }
+        return [local_file_script $candidate]
+    }
+
+    proc local_file_script {candidate} {
         set extension [string tolower [file extension $candidate]]
         if {$candidate eq {} || $extension ni {".rvt" ".tcl"}} {
             return {}
@@ -1198,6 +1224,11 @@ namespace eval ::tclwire::envs::rivet {
             set application_namespace [info object namespace $application]
             namespace eval ::request \
                 [list namespace path [namespace eval $application_namespace {namespace path}]]
+            set ::Rivet::global_namespace_path [namespace eval :: {namespace path}]
+            if {"::rivet" ni $::Rivet::global_namespace_path} {
+                namespace eval :: \
+                    [list namespace path [linsert $::Rivet::global_namespace_path end ::rivet]]
+            }
 
             proc ::request::global {args} {
                 foreach arg $args {
@@ -1213,6 +1244,16 @@ namespace eval ::tclwire::envs::rivet {
 
         proc ::Rivet::handle_error {} {
             puts "<pre>$::errorInfo<hr/><p>OUTPUT BUFFER:</p>$::Rivet::script</pre>"
+        }
+
+        proc ::Rivet::cleanup_request {} {
+            if {[info exists ::Rivet::global_namespace_path]} {
+                namespace eval :: \
+                    [list namespace path $::Rivet::global_namespace_path]
+                unset ::Rivet::global_namespace_path
+            }
+            unset -nocomplain ::cookies ::response
+            return
         }
 
         proc ::Rivet::finish_request {script errorCode errorOpts {scriptName ""}} {
@@ -1279,6 +1320,12 @@ namespace eval ::tclwire::envs::rivet {
                     set option [lindex $args 0]
                     if {$option eq "-all"} {
                         return [::tclwire::envs::rivet::inspect_all]
+                    }
+                    if {$option eq "script"} {
+                        return [::tclwire::envs::rivet::inspect_script]
+                    }
+                    if {$option eq "server"} {
+                        return [::tclwire::envs::rivet::inspect_server]
                     }
                     return [::tclwire::envs::rivet::inspect_value $option]
                 }
@@ -1435,6 +1482,10 @@ namespace eval ::tclwire::envs::rivet {
             set application [::tclwire::app::current]
             set request     [::tclwire::app::request]
 
+            set local_path [$request local_path]
+            if {$local_path ne {}} {
+                return [::tclwire::envs::rivet::local_file_script $local_path]
+            }
             return [::tclwire::envs::rivet::file_script $application \
                 [$request path]]
         }

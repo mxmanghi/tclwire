@@ -15,6 +15,10 @@
 #           [tclwire] stanza.
 
 namespace eval ::tclwire::runtime {
+    proc usage_error {message} {
+        return -code error -errorcode {TCLWIRE USAGE} $message
+    }
+
     proc usage {{channel stdout}} {
         puts $channel "Usage: tclsh tcl/tclwire.tcl ?options?"
         puts $channel ""
@@ -82,21 +86,21 @@ namespace eval ::tclwire::runtime {
 
     proc require_value {argv index option} {
         if {$index >= [llength $argv]} {
-            error "missing value after $option"
+            usage_error "missing value after $option"
         }
         return [lindex $argv $index]
     }
 
     proc parse_port_value {option value} {
         if {![string is integer -strict $value] || $value < 1 || $value > 65535} {
-            error "invalid value for $option: $value"
+            usage_error "invalid value for $option: $value"
         }
         return $value
     }
 
     proc parse_integer_min {option value minimum} {
         if {![string is integer -strict $value] || $value < $minimum} {
-            error "invalid value for $option: $value"
+            usage_error "invalid value for $option: $value"
         }
         return $value
     }
@@ -106,10 +110,10 @@ namespace eval ::tclwire::runtime {
         set endpoint [lindex $fields 0]
         if {![regexp {^([a-z0-9_+-]+):([0-9]+)$} \
                 $endpoint -> protocol port]} {
-            error "invalid service spec: $spec"
+            usage_error "invalid service spec: $spec"
         }
         if {$protocol ni [implemented_protocols]} {
-            error "unsupported protocol in service spec: $protocol"
+            usage_error "unsupported protocol in service spec: $protocol"
         }
         set service [dict create protocol $protocol \
                                  port     [parse_port_value --service $port]]
@@ -117,7 +121,7 @@ namespace eval ::tclwire::runtime {
         foreach field [lrange $fields 1 end] {
             if {![regexp {^(certfile|keyfile)=(.+)$|^(upload_area)=(.*)$} \
                     $field -> tls_name tls_value upload_name upload_value]} {
-                error "invalid service option: $field"
+                usage_error "invalid service option: $field"
             }
             if {$upload_name ne {}} {
                 set name $upload_name
@@ -133,7 +137,7 @@ namespace eval ::tclwire::runtime {
     proc parse_protocol_list {value} {
         set value [string trim $value]
         if {$value eq {}} {
-            error "invalid value for --startservers: empty list"
+            usage_error "invalid value for --startservers: empty list"
         }
         if {$value eq "all"} {
             return [implemented_protocols]
@@ -143,10 +147,10 @@ namespace eval ::tclwire::runtime {
         foreach protocol [split $value ,] {
             set protocol [string trim $protocol]
             if {$protocol eq {}} {
-                error "invalid value for --startservers: empty protocol"
+                usage_error "invalid value for --startservers: empty protocol"
             }
             if {$protocol ni [implemented_protocols]} {
-                error "unsupported server in --startservers: $protocol"
+                usage_error "unsupported server in --startservers: $protocol"
             }
             if {$protocol ni $protocols} {
                 lappend protocols $protocol
@@ -164,7 +168,7 @@ namespace eval ::tclwire::runtime {
                 return 0
             }
             default {
-                error "invalid boolean for $name: $value"
+                usage_error "invalid boolean for $name: $value"
             }
         }
     }
@@ -261,6 +265,7 @@ namespace eval ::tclwire::runtime {
         return [expr {$field in {
             class package hosts encoding log_level reload_on_request
             retain_uploaded_files configure docroot libdir file environment
+            hostname admin errorlog server_path
             minimum_workers maximum_workers
         }}]
     }
@@ -346,6 +351,9 @@ namespace eval ::tclwire::runtime {
         set keyfile             {}
         set logfile             [file normalize /tmp/tclwire.log]
         set logerr              [file normalize /tmp/tclwire-err.log]
+        set hostname            {}
+        set admin               {}
+        set server_path         {}
         set log_level           info
         set conn_max_wait       1000
         set conn_max_workers    100
@@ -393,6 +401,10 @@ namespace eval ::tclwire::runtime {
                             ftp_user_check $ftp_user_check \
                             logfile      $logfile \
                             logerr       $logerr \
+                            hostname     $hostname \
+                            admin        $admin \
+                            errorlog     $logerr \
+                            server_path  $server_path \
                             log_level    $log_level \
                             conn_max_wait $conn_max_wait \
                             conn_max_workers $conn_max_workers \
@@ -451,7 +463,12 @@ namespace eval ::tclwire::runtime {
             # unrelated TOML keys out while letting file values replace the
             # built-in defaults in one dictionary operation.
             set config [dict merge $config \
-                [dict filter $global key host encoding default_application]]
+                [dict filter $global key \
+                    host encoding default_application hostname admin server_path]]
+            if {[dict exists $global errorlog]} {
+                dict set config errorlog [resolve_config_path $config_dir \
+                    [dict get $global errorlog]]
+            }
             foreach alias {listen_address bind_address} {
                 if {[dict exists $global $alias]} {
                     dict set config host [dict get $global $alias]
@@ -487,6 +504,9 @@ namespace eval ::tclwire::runtime {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
+            if {![dict exists $global errorlog] && [dict exists $paths logerr]} {
+                dict set config errorlog [dict get $paths logerr]
+            }
             foreach {field minimum} {
                 conn_max_wait 0
                 conn_max_workers 1
@@ -634,7 +654,8 @@ namespace eval ::tclwire::runtime {
                 # separately below.
                 set application [dict filter $descriptor key \
                     class package hosts encoding log_level reload_on_request \
-                    retain_uploaded_files chore chore_class environment]
+                    retain_uploaded_files chore chore_class environment \
+                    hostname admin server_path]
                 if {[dict exists $descriptor configure]} {
                     dict set application configure [dict get $descriptor configure]
                 }
@@ -659,7 +680,7 @@ namespace eval ::tclwire::runtime {
                     dict set application hosts [list $application_id]
                 }
                 set application_paths [dict map {field value} \
-                        [dict filter $descriptor key docroot libdir] {
+                        [dict filter $descriptor key docroot libdir errorlog] {
                     resolve_config_path $config_dir $value
                 }]
                 set application [dict merge $application $application_paths]
@@ -778,6 +799,9 @@ namespace eval ::tclwire::runtime {
                 --listen-address -
                 --host {
                     dict set config host [require_value $argv [incr i] $option]
+                    if {[dict get $config hostname] eq {}} {
+                        dict set config hostname [dict get $config host]
+                    }
                 }
                 --startservers {
                     dict set config startservers [parse_protocol_list \
@@ -859,6 +883,7 @@ namespace eval ::tclwire::runtime {
                 --logerr {
                     dict set config logerr [file normalize \
                         [require_value $argv [incr i] $option]]
+                    dict set config errorlog [dict get $config logerr]
                 }
                 --log-level {
                     dict set config log_level [normalize_log_level $option \
@@ -912,7 +937,7 @@ namespace eval ::tclwire::runtime {
                     dict set config debug 1
                 }
                 default {
-                    error "unknown argument: $option"
+                    usage_error "unknown argument: $option"
                 }
             }
         }
@@ -985,7 +1010,12 @@ namespace eval ::tclwire::runtime {
             # fallback for fields omitted by the default itself.
             set inherited [dict merge [dict create \
                 docroot [dict get $config docroot] \
-                encoding [dict get $config encoding]] $default_descriptor]
+                encoding [dict get $config encoding] \
+                hostname [expr {[dict get $config hostname] ne {} ? \
+                    [dict get $config hostname] : [dict get $config host]}] \
+                admin [dict get $config admin] \
+                errorlog [dict get $config errorlog] \
+                server_path [dict get $config server_path]] $default_descriptor]
             if {$application_id eq $default_application} {
                 set descriptor $inherited
             } else {

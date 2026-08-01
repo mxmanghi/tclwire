@@ -46,6 +46,25 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {[dict exists $application_config encoding]} {
             set default_encoding [dict get $application_config encoding]
         }
+        set server_defaults [dict create \
+            hostname    {} \
+            admin       {} \
+            errorlog    {} \
+            server_path {}]
+        if {[dict exists $application_config host]} {
+            dict set server_defaults hostname [dict get $application_config host]
+        }
+        foreach {target source} {
+            hostname hostname
+            admin admin
+            errorlog errorlog
+            errorlog logerr
+            server_path server_path
+        } {
+            if {[dict exists $application_config $source]} {
+                dict set server_defaults $target [dict get $application_config $source]
+            }
+        }
 
         if {![dict exists $applications $default_application]} {
             error "default application is not registered: $default_application"
@@ -222,6 +241,11 @@ oo::class create ::tclwire::ApplicationDispatcher {
                     error "application '$application_id' is missing encoding"
                 }
                 dict set descriptor encoding $default_encoding
+            }
+            dict for {field value} $server_defaults {
+                if {![dict exists $descriptor $field]} {
+                    dict set descriptor $field $value
+                }
             }
 
             # Build the ordered search path used to resolve relative

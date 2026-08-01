@@ -50,8 +50,12 @@ package provide tclwire::runtime 0.1
 
 if {[file normalize [info script]] eq [file normalize $::argv0]} {
     if {[catch {::tclwire::runtime run $::argv} message options]} {
-        puts stderr $message
-        ::tclwire::runtime usage stderr
+        if {[dict get $options -errorcode] eq {TCLWIRE USAGE}} {
+            puts stderr $message
+            ::tclwire::runtime usage stderr
+        } else {
+            puts stderr [dict get $options -errorinfo]
+        }
         exit 1
     }
 }

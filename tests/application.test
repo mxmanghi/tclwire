@@ -134,6 +134,37 @@ test http-request-1.1a {HTTP request exposes origin and absolute URL helpers} -b
     }
 } -result {https example.test:9443 https://example.test:9443 https://example.test:9443/upload/form?mode=edit https://example.test:9443/submit https://example.test:9443/upload/next}
 
+test http-request-1.1aa {HTTP request records URL path and resolved local path} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /?page=1 \
+        path / \
+        query page=1 \
+        version 1.1]]
+    try {
+        set before [$request local_path]
+        set resolved [$request local_path /tmp/tclwire/index.rvt]
+        set selected [$request path /index.rvt]
+        set after [$request local_path]
+        set snapshot [$request snapshot]
+        $request local_path {}
+        list \
+            [$request url_path] \
+            [$request path] \
+            $before \
+            $resolved \
+            $selected \
+            $after \
+            [dict get $snapshot path] \
+            [dict get $snapshot url_path] \
+            [dict get $snapshot local_path] \
+            [$request local_path]
+    } finally {
+        $request destroy
+    }
+} -result [list / /index.rvt {} /tmp/tclwire/index.rvt /index.rvt \
+    /tmp/tclwire/index.rvt /index.rvt / /tmp/tclwire/index.rvt {}]
+
 test http-request-1.1b {HTTP request exposes an associated cookie jar} -body {
     set request [::tclwire::HttpRequest new [dict create \
         method GET \
@@ -1287,6 +1318,65 @@ test application-configuration-1.4eaa {
     removeDirectory $docroot
 } -result "<html><head><title>The very first tclwire/rivet template</title><head><body>\n    <h2>The very first Tclwire/Rivet template</h2><pre>generated</pre>\n</body></html>\n"
 
+test application-configuration-1.4eab {
+    rivet directory index records selected local script
+} -setup {
+    set docroot [makeDirectory rivet-directory-index-docroot]
+    set script_path [file join $docroot index.rvt]
+    ::fileutil::writeFile $script_path {<? puts [[::tclwire::app::request] path] ?><? puts [[::tclwire::app::request] url_path] ?><? puts [file tail [[::tclwire::app::request] local_path]] ?><? puts [::rivet::env REQUEST_URI] ?><? puts [::rivet::env SCRIPT_NAME] ?><? puts [file tail [::rivet::inspect script]] ?>}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet} \
+                configure [dict create \
+                    ::tclwire::envs::app::Rivet [dict create \
+                        directory_index {index.rvt index.html}]]]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 108 \
+            method GET \
+            target / \
+            path /]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result "/index.rvt\n/\nindex.rvt\n/\n/index.rvt\nindex.rvt\n"
+
 test application-configuration-1.4eb {
     rivet parse evaluates strings and template files in caller context
 } -setup {
@@ -1422,6 +1512,10 @@ puts [::rivet::inspect ChildInitScript]
 puts [inspect UploadDirectory]
 puts [::rivet::inspect HonorHeadRequests]
 puts [::rivet::inspect BeforeScript]
+puts [dict get [::rivet::inspect server] hostname]
+puts [dict get [::rivet::inspect server] admin]
+puts [dict get [::rivet::inspect server] errorlog]
+puts [dict get [::rivet::inspect server] server_path]
 }
     set worker_id [::thread::id]
     catch {::tclwire::accounting remove_thread $worker_id}
@@ -1431,6 +1525,10 @@ puts [::rivet::inspect BeforeScript]
     set config [dict create \
         docroot $docroot \
         encoding utf-8 \
+        host 127.0.0.7 \
+        admin webmaster@example.test \
+        logerr /tmp/rivet-error.log \
+        server_path /rivet \
         default_application default \
         applications [dict create \
             default [dict create \
@@ -1440,6 +1538,7 @@ puts [::rivet::inspect BeforeScript]
             rivet-app [dict create \
                 package tclwire::application \
                 hosts rivet.example.test \
+                admin rivet-admin@example.test \
                 environment {rivet} \
                 configure [dict create \
                     child_init_script child-init.tcl \
@@ -1487,7 +1586,7 @@ puts [::rivet::inspect BeforeScript]
 	    action set \
 	    name   Content-Type \
 	    value  "text/html; charset=utf-8"] \
-	"child-init.tcl\n/tmp/rivet-upload\ntrue\n\n"]
+	"child-init.tcl\n/tmp/rivet-upload\ntrue\n\n127.0.0.7\nrivet-admin@example.test\n/tmp/rivet-error.log\n/rivet\n"]
 
 test application-configuration-1.4fa {
     rivet request scripts can read the global server array
@@ -1697,6 +1796,68 @@ puts [::rivet::env MISSING_VALUE]
     catch {::tclwire::io end}
     removeDirectory $docroot
 } -result "POST\n/docs/env.tcl?one=two\n/docs/env.tcl\none=two\nrivet.example.test\nvalue\ntext/plain\n192.0.2.10\n54321\n1\n1\n\n"
+
+test application-configuration-1.4ffea {
+    rivet inspect script returns current script absolute path
+} -setup {
+    set docroot [makeDirectory rivet-inspect-script-docroot]
+    file mkdir [file join $docroot docs]
+    set script_path [file join $docroot docs inspect_script.tcl]
+    ::fileutil::writeFile $script_path {
+puts [::rivet::inspect script]
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 100 \
+            method GET \
+            path /docs/inspect_script.tcl]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set inspected_path [string trim $output]
+    list \
+        [expr {$inspected_path eq $script_path}] \
+        [file pathtype $inspected_path] \
+        [file tail $inspected_path]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result {1 absolute inspect_script.tcl}
 
 test application-configuration-1.4fff {
     rivet load_env populates request environment arrays

@@ -143,6 +143,10 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   environment {} \
                                   configure   {} \
                                   log_level   {} \
+                                  hostname    {} \
+                                  admin       {} \
+                                  errorlog    {} \
+                                  server_path {} \
                                   reload_on_request 0 \
                                   retain_uploaded_files 0 \
                                   pool_policy [dict create minimum_workers 0 maximum_workers 20]]
