@@ -46,19 +46,18 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {[dict exists $application_config encoding]} {
             set default_encoding [dict get $application_config encoding]
         }
-        set server_defaults [dict create \
-            hostname    {} \
-            admin       {} \
-            errorlog    {} \
-            server_path {}]
+        set server_defaults [dict create hostname    {} \
+                                         admin       {} \
+                                         errorlog    {} \
+                                         server_path {}]
         if {[dict exists $application_config host]} {
             dict set server_defaults hostname [dict get $application_config host]
         }
         foreach {target source} {
-            hostname hostname
-            admin admin
-            errorlog errorlog
-            errorlog logerr
+            hostname    hostname
+            admin       admin
+            errorlog    errorlog
+            errorlog    logerr
             server_path server_path
         } {
             if {[dict exists $application_config $source]} {
@@ -456,6 +455,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
             # reconfiguration should replace the pool and retire these threads,
             # not alter the application contract request by request.
             %s
+            ::tclwire::cga::configure_thread_exit_command \
+                [list after 0 [list ::thread::release [::thread::id]]]
 
             proc demand_thread_exit {} {
                 ::thread::release [::thread::id]

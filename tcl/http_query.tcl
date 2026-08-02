@@ -5,6 +5,35 @@
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::http::query {
+    proc encode_component {component} {
+        set encoded {}
+        binary scan [encoding convertto utf-8 $component] cu* bytes
+        foreach byte $bytes {
+            if {($byte >= 0x30 && $byte <= 0x39) ||
+                    ($byte >= 0x41 && $byte <= 0x5a) ||
+                    ($byte >= 0x61 && $byte <= 0x7a) ||
+                    $byte == 0x2d ||
+                    $byte == 0x2e ||
+                    $byte == 0x5f ||
+                    $byte == 0x7e} {
+                append encoded [format %c $byte]
+            } elseif {$byte == 0x20} {
+                append encoded +
+            } else {
+                append encoded %[format %02x $byte]
+            }
+        }
+        return $encoded
+    }
+
+    proc encode {pairs} {
+        set fields {}
+        foreach {name value} $pairs {
+            lappend fields "[encode_component $name]=[encode_component $value]"
+        }
+        return [join $fields &]
+    }
+
     proc decode_component {urlencoded_component} {
         set decoded_bytes [binary format a* {}]
 
@@ -60,7 +89,7 @@ namespace eval ::tclwire::http::query {
         return $parameters
     }
 
-    namespace export decode decode_component
+    namespace export decode decode_component encode encode_component
     namespace ensemble create
 }
 

@@ -183,6 +183,10 @@ namespace eval ::tclwire::cga {
     variable pending_serialized_configuration {}
     variable initialization_error {}
     variable initialization_options {}
+    variable native_exit_command ::tcl::exit_process
+    variable exit_command {}
+    variable thread_exit_command {}
+    variable thread_exit_requested 0
 
     namespace eval context {
         proc begin {context_values} {
@@ -276,6 +280,73 @@ namespace eval ::tclwire::cga {
         return
     }
 
+    proc install_exit_interceptor {} {
+        variable native_exit_command
+
+        if {[info commands $native_exit_command] eq {}} {
+            rename ::exit $native_exit_command
+            proc ::exit {args} {
+                tailcall ::tclwire::cga::exit {*}$args
+            }
+        }
+        return
+    }
+
+    proc uninstall_exit_interceptor {} {
+        variable native_exit_command
+
+        if {[info commands $native_exit_command] ne {}} {
+            rename ::exit {}
+            rename $native_exit_command ::exit
+        }
+        return
+    }
+
+    proc configure_thread_exit_command {command} {
+        variable thread_exit_command
+
+        set previous $thread_exit_command
+        set thread_exit_command $command
+        return $previous
+    }
+
+    proc configure_exit_command {command} {
+        variable exit_command
+
+        if {[catch {llength $command}]} {
+            error "CGA exit command must be a command prefix list"
+        }
+        set previous $exit_command
+        set exit_command $command
+        return $previous
+    }
+
+    proc thread_exit_requested {} {
+        variable thread_exit_requested
+        return $thread_exit_requested
+    }
+
+    proc request_thread_exit {} {
+        variable thread_exit_command
+        variable thread_exit_requested
+
+        set thread_exit_requested 1
+        if {$thread_exit_command ne {}} {
+            uplevel #0 $thread_exit_command
+        }
+        return
+    }
+
+    proc exit {{code 0}} {
+        variable exit_command
+
+        if {$exit_command ne {}} {
+            tailcall {*}$exit_command $code
+        }
+        request_thread_exit
+        return -code error -errorcode {TCLWIRE THREAD_EXIT} $code
+    }
+
     proc initialize {worker_pool_key serialized_configuration} {
         variable initialized
         variable pool_key
@@ -301,6 +372,7 @@ namespace eval ::tclwire::cga {
         # and retire their workers instead of sending a different application
         # configuration with each request.
 
+        install_exit_interceptor
         set configuration [::tclwire::ApplicationConfiguration deserialize $serialized_configuration]
         envs::install [$configuration environment]
 
@@ -597,6 +669,9 @@ namespace eval ::tclwire::cga {
         variable pending_serialized_configuration
         variable initialization_error
         variable initialization_options
+        variable exit_command
+        variable thread_exit_command
+        variable thread_exit_requested
 
         catch {::tclwire::app::end_request}
         if {$application ne {}} {
@@ -617,6 +692,10 @@ namespace eval ::tclwire::cga {
         set pending_serialized_configuration {}
         set initialization_error {}
         set initialization_options {}
+        set exit_command {}
+        set thread_exit_command {}
+        set thread_exit_requested 0
+        uninstall_exit_interceptor
         return
     }
 

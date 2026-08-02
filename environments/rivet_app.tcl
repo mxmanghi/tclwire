@@ -79,7 +79,7 @@ oo::class create ::tclwire::envs::app::Rivet {
             ::tclwire::http::io header set Content-Type [my content_type $script_path]
 
             set before_script [::rivet::inspect BeforeScript]
-            if {$before_script ne ""} {
+            if {[::tclwire::envs::rivet::configured_script $before_script]} {
                 set ::Rivet::script $before_script
                 eval $before_script
             }

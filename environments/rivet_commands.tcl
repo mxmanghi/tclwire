@@ -22,6 +22,7 @@ if {[info commands ::tclwire::app::current] eq {}} {
 namespace eval ::tclwire::envs::rivet {
     variable aborting 0
     variable abort_code {}
+    variable abort_exiting 0
     variable rivet_version 3.3.0tw
     variable response_reasons {
         100 Continue
@@ -78,6 +79,9 @@ namespace eval ::tclwire::envs::rivet {
         if {$option eq "ImportRivetNS"} {
             return false
         }
+        if {$option eq "HonorHeadRequests"} {
+            return true
+        }
         set key [inspect_key $option]
         set application [::tclwire::app::current]
         set configuration [::tclwire::app::configuration]
@@ -125,12 +129,18 @@ namespace eval ::tclwire::envs::rivet {
             server_path [$configuration get server_path]]
     }
 
+    proc configured_script {script} {
+        return [expr {$script ne {} && $script ne "undefined"}]
+    }
+
     proc reset_abort_state {} {
         variable aborting
         variable abort_code
+        variable abort_exiting
 
         set aborting 0
         set abort_code {}
+        set abort_exiting 0
         return
     }
 
@@ -139,9 +149,32 @@ namespace eval ::tclwire::envs::rivet {
         return $aborting
     }
 
-    proc abort_code {} {
+    proc abort_code {{option {}}} {
         variable abort_code
+        variable abort_exiting
+
+        if {$option eq "-exiting"} {
+            return $abort_exiting
+        }
+        if {$option ne {}} {
+            error {wrong # args: should be "::rivet::abort_code ?-exiting?"}
+        }
         return $abort_code
+    }
+
+    proc exit_request {code} {
+        variable aborting
+        variable abort_code
+        variable abort_exiting
+
+        if {[catch {::Rivet::exit_cleanup $code} message options]} {
+            return -options $options $message
+        }
+        set aborting 1
+        set abort_code $code
+        set abort_exiting 1
+        ::tclwire::cga::request_thread_exit
+        return -code error -errorcode {RIVET THREAD_EXIT} $code
     }
 
     proc load_server {{array_name ::server}} {
@@ -170,15 +203,15 @@ namespace eval ::tclwire::envs::rivet {
             set server_protocol HTTP/[dict get $descriptor version]
         }
 
-        set environment [dict create \
-            DOCUMENT_ROOT   [$application document_root] \
-            REQUEST_METHOD  [$request method] \
-            REQUEST_URI     $request_uri \
-            SCRIPT_NAME     [$request path] \
-            SERVER_PROTOCOL $server_protocol \
-            QUERY_STRING    [$request query] \
-            REMOTE_ADDR     [$request remote_host] \
-            REMOTE_PORT     [$request remote_port]]
+        set environment [dict create SERVER_SOFTWARE "Tclwire/Rivet" \
+                                     DOCUMENT_ROOT   [$application document_root] \
+                                     REQUEST_METHOD  [$request method] \
+                                     REQUEST_URI     $request_uri \
+                                     SCRIPT_NAME     [$request path] \
+                                     SERVER_PROTOCOL $server_protocol \
+                                     QUERY_STRING    [$request query] \
+                                     REMOTE_ADDR     [$request remote_host] \
+                                     REMOTE_PORT     [$request remote_port]]
 
         if {[$request scheme] eq "https"} {
             dict set environment HTTPS on
@@ -459,6 +492,156 @@ namespace eval ::tclwire::envs::rivet {
         error {wrong # args: should be "::rivet::var (get varname ?default?|list varname|exists varname|names|number|all ?default_values?)"}
     }
 
+    proc upload_files {} {
+        return [[::tclwire::app::request] uploaded_files]
+    }
+
+    proc upload_names {} {
+        set names {}
+        foreach file [upload_files] {
+            if {[dict exists $file name]} {
+                set name [dict get $file name]
+                if {$name ni $names} {
+                    lappend names $name
+                }
+            }
+        }
+        return $names
+    }
+
+    proc upload_file {name} {
+        set file [[::tclwire::app::request] uploaded_file $name]
+        if {$file eq {}} {
+            error "Unable to find the upload named '$name'"
+        }
+        return $file
+    }
+
+    proc upload_file_data {file} {
+        if {[dict exists $file body_storage] &&
+                [dict get $file body_storage] eq "spooled_file"} {
+            set channel [open [dict get $file body_path] rb]
+            try {
+                return [read $channel]
+            } finally {
+                close $channel
+            }
+        }
+        return [dict get $file body]
+    }
+
+    proc upload_file_size {file} {
+        if {[dict exists $file body_size]} {
+            return [dict get $file body_size]
+        }
+        if {[dict exists $file body_storage] &&
+                [dict get $file body_storage] eq "spooled_file"} {
+            return [file size [dict get $file body_path]]
+        }
+        return [string length [dict get $file body]]
+    }
+
+    proc upload_tempname {file} {
+        foreach key {body_path path} {
+            if {[dict exists $file $key]} {
+                return [dict get $file $key]
+            }
+        }
+        return {}
+    }
+
+    proc upload_channel {file} {
+        if {[dict exists $file body_storage] &&
+                [dict get $file body_storage] eq "spooled_file"} {
+            return [open [dict get $file body_path] rb]
+        }
+
+        set channel [file tempfile path]
+        chan configure $channel -translation binary
+        puts -nonewline $channel [dict get $file body]
+        seek $channel 0
+        catch {file delete $path}
+        return $channel
+    }
+
+    proc upload_save {file filename} {
+        set source [upload_channel $file]
+        try {
+            set target [open $filename wb]
+            try {
+                fcopy $source $target
+            } finally {
+                close $target
+            }
+        } finally {
+            close $source
+        }
+        return $filename
+    }
+
+    proc upload {subcommand args} {
+        switch -exact -- $subcommand {
+            names {
+                if {[llength $args] != 0} {
+                    error {wrong # args: should be "::rivet::upload names"}
+                }
+                return [upload_names]
+            }
+            channel -
+            data -
+            exists -
+            size -
+            type -
+            filename -
+            tempname {
+                if {[llength $args] != 1} {
+                    error "wrong # args: should be \"::rivet::upload $subcommand uploadname\""
+                }
+                set name [lindex $args 0]
+                if {$subcommand eq "exists"} {
+                    return [expr {[[::tclwire::app::request] uploaded_file $name] ne {}}]
+                }
+                set file [upload_file $name]
+            }
+            save {
+                if {[llength $args] != 2} {
+                    error {wrong # args: should be "::rivet::upload save uploadname filename"}
+                }
+                set file [upload_file [lindex $args 0]]
+            }
+            default {
+                error "bad upload subcommand \"$subcommand\": must be channel, save, data, exists, size, type, filename, tempname, or names"
+            }
+        }
+
+        switch -exact -- $subcommand {
+            channel {
+                return [upload_channel $file]
+            }
+            save {
+                return [upload_save $file [lindex $args 1]]
+            }
+            data {
+                return [upload_file_data $file]
+            }
+            size {
+                return [upload_file_size $file]
+            }
+            type {
+                if {[dict exists $file content_type]} {
+                    return [dict get $file content_type]
+                }
+                return {}
+            }
+            filename {
+                return [dict get $file filename]
+            }
+            tempname {
+                return [upload_tempname $file]
+            }
+        }
+    }
+
     proc virtual_include_path {path} {
         set application [::tclwire::app::current]
         set request     [::tclwire::app::request]
@@ -506,6 +689,24 @@ namespace eval ::tclwire::envs::rivet {
         ::tclwire::io out [::fileutil::cat -encoding [$application encoding] $path]
         ::tclwire::io flush
         return
+    }
+
+    proc write_binary {binary_data} {
+        ::tclwire::io flush
+        ::tclwire::io out $binary_data binary
+        ::tclwire::io flush
+        return
+    }
+
+    proc with_binary_output {script} {
+        ::tclwire::io flush
+        set previous_mode [::tclwire::envs::stdchans::set_stdout_body_mode binary]
+        try {
+            uplevel 1 $script
+        } finally {
+            ::tclwire::envs::stdchans::set_stdout_body_mode $previous_mode
+            ::tclwire::io flush
+        }
     }
 
     proc response_reason {status} {
@@ -563,9 +764,64 @@ namespace eval ::tclwire::envs::rivet {
         }
     }
 
+    proc no_body {} {
+        tailcall ::tclwire::http::no_body
+    }
+
+    proc redirect {location {permanent 0}} {
+        if {[string is boolean -strict $permanent]} {
+            set status [expr {$permanent ? 301 : 302}]
+        } elseif {[string is integer -strict $permanent] &&
+                $permanent >= 300 && $permanent <= 399} {
+            set status $permanent
+        } else {
+            error "invalid HTTP redirect status: $permanent"
+        }
+
+        ::tclwire::io discard_buffer
+        if {$status == 302} {
+            headers redirect $location
+        } else {
+            headers numeric $status
+            headers set Location $location
+        }
+        abort_page [dict create error_code redirect location $location]
+    }
+
+    proc makeurl {args} {
+        if {[llength $args] == 0} {
+            return [[::tclwire::app::request] absolute_url]
+        }
+        if {[llength $args] % 2 != 1} {
+            error {wrong # args: should be "::rivet::makeurl ?path? ?name value ...?"}
+        }
+
+        set path [lindex $args 0]
+        set query_pairs [lrange $args 1 end]
+        if {[regexp -nocase {^[a-z][a-z0-9+.-]*://} $path]} {
+            set url $path
+        } else {
+            set url [[::tclwire::app::request] absolute_url $path]
+        }
+
+        if {[llength $query_pairs] > 0} {
+            if {[regexp {[?&]$} $url]} {
+                append url {}
+            } elseif {[string first ? $url] < 0} {
+                append url ?
+            } else {
+                append url &
+            }
+            append url [::tclwire::http::query encode $query_pairs]
+        }
+
+        return $url
+    }
+
     proc abort_page {{code {}}} {
         variable aborting
         variable abort_code
+        variable abort_exiting
 
         if {$code eq "-aborting"} {
             return $aborting
@@ -573,6 +829,7 @@ namespace eval ::tclwire::envs::rivet {
 
         set aborting 1
         set abort_code $code
+        set abort_exiting 0
         return -code error -errorcode {RIVET ABORTPAGE}
     }
 
@@ -775,6 +1032,84 @@ namespace eval ::tclwire::envs::rivet {
             return 0
         }
         return [expr {$len == 0}]
+    }
+
+    proc import_keyvalue_pairs {arrayName argsList} {
+        upvar 1 $arrayName data
+
+        if {[string index $argsList 0] ne "-"} {
+            set data(args) $argsList
+            return
+        }
+
+        set index 0
+        set looking 0
+        set data(args) ""
+
+        foreach arg $argsList {
+            if {$looking} {
+                set data($varName) $arg
+                set looking 0
+            } elseif {[string index $arg 0] eq "-"} {
+                if {$arg eq "--"} {
+                    set data(args) [lrange $argsList [expr {$index + 1}] end]
+                    break
+                }
+
+                if {$arg eq "-args"} {
+                    return -code error "-args is a reserved value."
+                }
+                set varName [string range $arg 1 end]
+                set looking 1
+            } else {
+                set data(args) [lrange $argsList $index end]
+                break
+            }
+            incr index
+        }
+        return
+    }
+
+    proc lmatch {args} {
+        set modes(-exact)  0
+        set modes(-glob)   1
+        set modes(-regexp) 2
+
+        if {[llength $args] == 3} {
+            lassign $args mode list pattern
+        } elseif {[llength $args] == 2} {
+            set mode -glob
+            lassign $args list pattern
+        } else {
+            return -code error \
+                {wrong # args: should be "lmatch ?mode? list pattern"}
+        }
+
+        if {![info exists modes($mode)]} {
+            return -code error \
+                "bad search mode \"$mode\": must be -exact, -glob, or -regexp"
+        }
+        set mode $modes($mode)
+
+        set result {}
+        foreach elem $list {
+            if {$mode == 0} {
+                if {[string compare $elem $pattern] == 0} {
+                    lappend result $elem
+                }
+            }
+            if {$mode == 1} {
+                if {[string match $pattern $elem]} {
+                    lappend result $elem
+                }
+            }
+            if {$mode == 2} {
+                if {[regexp $pattern $elem]} {
+                    lappend result $elem
+                }
+            }
+        }
+        return $result
     }
 
     proc lremove {args} {
@@ -1247,6 +1582,12 @@ namespace eval ::tclwire::envs::rivet {
             puts "<pre>$::errorInfo<hr/><p>OUTPUT BUFFER:</p>$::Rivet::script</pre>"
         }
 
+        if {[info commands ::Rivet::exit_cleanup] eq {}} {
+            proc ::Rivet::exit_cleanup {{code 0}} {
+                return
+            }
+        }
+
         proc ::Rivet::cleanup_request {} {
             if {[info exists ::Rivet::global_namespace_path]} {
                 namespace eval :: \
@@ -1261,7 +1602,7 @@ namespace eval ::tclwire::envs::rivet {
             set ::Rivet::errorCode $errorCode
             set ::Rivet::errorOpts $errorOpts
 
-            if {$scriptName ne ""} {
+            if {[::tclwire::envs::rivet::configured_script $scriptName]} {
                 set scriptBody [::rivet::inspect $scriptName]
                 ::try {
                     uplevel #0 $scriptBody
@@ -1274,7 +1615,7 @@ namespace eval ::tclwire::envs::rivet {
             }
 
             set error_script [::rivet::inspect ErrorScript]
-            if {$error_script eq ""} {
+            if {![::tclwire::envs::rivet::configured_script $error_script]} {
                 set ::errorOutbuf $script ; ## legacy variable
                 set error_script ::Rivet::handle_error
             }
@@ -1315,6 +1656,39 @@ namespace eval ::tclwire::envs::rivet {
             return
         }
 
+        proc ::rivet::apache_table {args} {
+            return {}
+        }
+
+        proc ::rivet::debug {args} {
+            return {}
+        }
+
+        proc ::rivet::catch {script args} {
+            set catch_result [uplevel 1 [list ::catch $script {*}$args]]
+
+            if {$catch_result && [::rivet::abort_code -exiting]} {
+                return -code error -errorcode {RIVET THREAD_EXIT} \
+                    [::rivet::abort_code]
+            }
+            if {$catch_result && [::rivet::abort_page -aborting]} {
+                return -code error -errorcode {RIVET ABORTPAGE} \
+                    [::rivet::abort_code]
+            }
+            return $catch_result
+        }
+
+        proc ::rivet::try {script args} {
+            uplevel 1 [list ::try $script \
+                trap {RIVET THREAD_EXIT} {} {
+                    return -code error -errorcode {RIVET THREAD_EXIT}
+                } \
+                trap {RIVET ABORTPAGE} {} {
+                    return -code error -errorcode {RIVET ABORTPAGE}
+                } \
+                {*}$args]
+        }
+
         proc ::rivet::inspect {args} {
             switch -exact -- [llength $args] {
                 1 {
@@ -1335,7 +1709,7 @@ namespace eval ::tclwire::envs::rivet {
                         user   {} \
                         server [concat {*}[lmap {k v} [::tclwire::envs::rivet::inspect_all] {
                             if {$v ne ""} { list $k $v } else { continue }
-                        }]]\
+                        }]] \
                         dir    {}]
                 }
                 2 {
@@ -1347,12 +1721,23 @@ namespace eval ::tclwire::envs::rivet {
             }
         }
 
-        proc ::rivet::header {args} {
-            tailcall ::tclwire::http::io header {*}$args
-        }
-
         proc ::rivet::headers {operation args} {
             tailcall ::tclwire::envs::rivet::headers $operation {*}$args
+        }
+
+        proc ::rivet::no_body {} {
+            tailcall ::tclwire::envs::rivet::no_body
+        }
+
+        proc ::rivet::redirect {args} {
+            if {[llength $args] < 1 || [llength $args] > 2} {
+                error {wrong # args: should be "::rivet::redirect URL ?permanent?"}
+            }
+            tailcall ::tclwire::envs::rivet::redirect {*}$args
+        }
+
+        proc ::rivet::thread_id {} {
+            tailcall ::thread::id
         }
 
         proc ::rivet::env {args} {
@@ -1362,8 +1747,20 @@ namespace eval ::tclwire::envs::rivet {
             tailcall ::tclwire::envs::rivet::env [lindex $args 0]
         }
 
+        proc ::rivet::exit {{code 0}} {
+            tailcall ::tclwire::envs::rivet::exit_request $code
+        }
+
         proc ::rivet::include {args} {
             tailcall ::tclwire::envs::rivet::include {*}$args
+        }
+
+        proc ::rivet::write_binary {binary_data} {
+            tailcall ::tclwire::envs::rivet::write_binary $binary_data
+        }
+
+        proc ::rivet::with_binary_output {script} {
+            uplevel 1 [list ::tclwire::envs::rivet::with_binary_output $script]
         }
 
         proc ::rivet::parse {args} {
@@ -1420,8 +1817,21 @@ namespace eval ::tclwire::envs::rivet {
             tailcall ::tclwire::envs::rivet::var post {*}$args
         }
 
+        proc ::rivet::upload {subcommand args} {
+            tailcall ::tclwire::envs::rivet::upload $subcommand {*}$args
+        }
+
         proc ::rivet::lempty {list} {
             tailcall ::tclwire::envs::rivet::lempty $list
+        }
+
+        proc ::rivet::import_keyvalue_pairs {arrayName argsList} {
+            uplevel 1 [list ::tclwire::envs::rivet::import_keyvalue_pairs \
+                $arrayName $argsList]
+        }
+
+        proc ::rivet::lmatch {args} {
+            tailcall ::tclwire::envs::rivet::lmatch {*}$args
         }
 
         proc ::rivet::lremove {args} {
@@ -1481,6 +1891,10 @@ namespace eval ::tclwire::envs::rivet {
             tailcall ::tclwire::envs::rivet::xml $textstring {*}$args
         }
 
+        proc ::rivet::makeurl {args} {
+            tailcall ::tclwire::envs::rivet::makeurl {*}$args
+        }
+
         proc ::rivet::url_script {} {
             set application [::tclwire::app::current]
             set request     [::tclwire::app::request]
@@ -1497,8 +1911,8 @@ namespace eval ::tclwire::envs::rivet {
             tailcall ::tclwire::envs::rivet::abort_page $code
         }
 
-        proc ::rivet::abort_code {} {
-            tailcall ::tclwire::envs::rivet::abort_code
+        proc ::rivet::abort_code {args} {
+            tailcall ::tclwire::envs::rivet::abort_code {*}$args
         }
 
         proc ::rivet::clock_to_rfc850_gmt {seconds} {
@@ -1510,14 +1924,17 @@ namespace eval ::tclwire::envs::rivet {
         }
 
         namespace eval ::rivet {
-            namespace export abort_code abort_page apache_log_error env headers include \
+            namespace export abort_code abort_page apache_log_error apache_table \
+                             catch debug env headers include \
                              inspect load_cookies load_env load_headers load_response \
-                             parse html lempty lremove lassign_array http_accept read_file \
+                             parse html import_keyvalue_pairs lempty lmatch \
+                             lremove lassign_array http_accept read_file \
                              unescape_string escape_string escape_sgml_chars \
                              escape_shell_command parray \
                              parray_table wrap wrapline xml \
                              clock_to_rfc850_gmt cookie \
-                             inspect url_script var var_qs var_post
+                             inspect makeurl no_body redirect thread_id try url_script \
+                             upload var var_qs var_post exit
         }
         return
     }

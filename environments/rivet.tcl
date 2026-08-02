@@ -11,11 +11,12 @@ namespace eval ::tclwire::envs {}
 
 oo::class create ::tclwire::envs::RivetEnvironment {
     superclass ::tclwire::ApplicationEnvironment
-    variable application_file_path
+    variable application_file_path previous_exit_command
 
     constructor {path} {
         next
         set application_file_path $path
+        set previous_exit_command {}
     }
 
     method name {} {
@@ -40,12 +41,20 @@ oo::class create ::tclwire::envs::RivetEnvironment {
     }
 
     method do_install {} {
+        variable previous_exit_command
+
         namespace eval ::Rivet {}
         ::tclwire::envs::rivet::install_commands
+        set previous_exit_command [::tclwire::cga::configure_exit_command \
+            [list ::tclwire::envs::rivet::exit_request]]
         return
     }
 
     method do_uninstall {} {
+        variable previous_exit_command
+
+        ::tclwire::cga::configure_exit_command $previous_exit_command
+        set previous_exit_command {}
         catch {namespace delete ::rivet}
         catch {namespace delete ::Rivet}
         return

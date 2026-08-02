@@ -34,6 +34,7 @@ namespace eval ::tclwire::envs::stdchans {
     variable environment_object [::tclwire::envs::StdchansEnvironment new]
     variable native_puts_command ::tclwire::envs::stdchans::__native_puts
     variable native_flush_command ::tclwire::envs::stdchans::__native_flush
+    variable stdout_body_mode text
 
     proc object {} {
         variable environment_object
@@ -129,6 +130,22 @@ namespace eval ::tclwire::envs::stdchans {
         tailcall ::flush {*}$args
     }
 
+    proc stdout_body_mode {} {
+        variable stdout_body_mode
+        return $stdout_body_mode
+    }
+
+    proc set_stdout_body_mode {mode} {
+        variable stdout_body_mode
+
+        if {$mode ni {text binary}} {
+            error "unknown stdout body mode: $mode"
+        }
+        set previous $stdout_body_mode
+        set stdout_body_mode $mode
+        return $previous
+    }
+
     proc puts {args} {
         set original_args $args
         set nonewline 0
@@ -148,10 +165,17 @@ namespace eval ::tclwire::envs::stdchans {
         }
 
         if {$channel eq "stdout" && [transaction_active]} {
-            if {$nonewline} {
-                ::tclwire::io puts -nonewline stdout $data
+            if {[stdout_body_mode] eq "binary"} {
+                if {!$nonewline} {
+                    append data "\n"
+                }
+                ::tclwire::io out $data binary
             } else {
-                ::tclwire::io puts stdout $data
+                if {$nonewline} {
+                    ::tclwire::io puts -nonewline stdout $data
+                } else {
+                    ::tclwire::io puts stdout $data
+                }
             }
             return
         }
@@ -171,7 +195,8 @@ namespace eval ::tclwire::envs::stdchans {
     }
 
     namespace export object name requires path_namespaces \
-                     enabled install uninstall puts flush
+                     enabled install uninstall puts flush \
+                     stdout_body_mode set_stdout_body_mode
     namespace ensemble create
 }
 
