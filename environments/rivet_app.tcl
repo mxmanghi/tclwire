@@ -24,7 +24,7 @@ oo::class create ::tclwire::envs::app::Rivet {
     method initialize {} {
         set script [::rivet::inspect ChildInitScript]
         if {[::tclwire::envs::rivet::configured_script $script]} {
-            eval $script
+            namespace eval :: $script
         }
         return
     }
@@ -32,7 +32,7 @@ oo::class create ::tclwire::envs::app::Rivet {
     method shutdown {} {
         set script [::rivet::inspect ChildExitScript]
         if {[::tclwire::envs::rivet::configured_script $script]} {
-            eval $script
+            namespace eval :: $script
         }
         return
     }
