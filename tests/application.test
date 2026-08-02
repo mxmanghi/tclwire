@@ -1613,7 +1613,7 @@ puts [dict get [::rivet::inspect server] server_path]
                 admin rivet-admin@example.test \
                 environment {rivet} \
                 configure [dict create \
-                    child_init_script child-init.tcl \
+                    child_init_script {# child-init.tcl} \
                     upload_directory /tmp/rivet-upload \
                     honor_head_requests false]]]]
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
@@ -1650,15 +1650,63 @@ puts [dict get [::rivet::inspect server] server_path]
     catch {::tclwire::io end}
     removeDirectory $docroot
 } -result [list \
-	[dict create \
-	    child_init_script child-init.tcl \
-	    upload_directory /tmp/rivet-upload \
-	    honor_head_requests false] \
-	[dict create \
-	    action set \
-	    name   Content-Type \
-	    value  "text/html; charset=utf-8"] \
-	"child-init.tcl\n/tmp/rivet-upload\ntrue\n\n127.0.0.7\nrivet-admin@example.test\n/tmp/rivet-error.log\n/rivet\n"]
+    [dict create \
+        child_init_script {# child-init.tcl} \
+        upload_directory /tmp/rivet-upload \
+        honor_head_requests false] \
+    [dict create \
+        action set \
+        name   Content-Type \
+        value  "text/html; charset=utf-8"] \
+    "# child-init.tcl\n/tmp/rivet-upload\ntrue\n\n127.0.0.7\nrivet-admin@example.test\n/tmp/rivet-error.log\n/rivet\n"]
+
+test application-configuration-1.4faa {
+    rivet child lifecycle scripts run at CGA initialize and shutdown
+} -setup {
+    set docroot [makeDirectory rivet-child-lifecycle-docroot]
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set ::tclwire::application_test::rivet_child_events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet} \
+                configure [dict create \
+                    child_init_script {
+                        lappend ::tclwire::application_test::rivet_child_events \
+                            [list init [::rivet::inspect HonorHeadRequests]]
+                    } \
+                    child_exit_script {
+                        lappend ::tclwire::application_test::rivet_child_events \
+                            [list exit [::tclwire::app::application_active]]
+                    }]]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    set after_initialize $::tclwire::application_test::rivet_child_events
+    ::tclwire::cga::shutdown
+    list $after_initialize $::tclwire::application_test::rivet_child_events
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    unset -nocomplain ::tclwire::application_test::rivet_child_events
+    removeDirectory $docroot
+} -result [list \
+    [list [list init true]] \
+    [list [list init true] [list exit 1]]]
 
 test application-configuration-1.4fa {
     rivet request scripts can read the global server array

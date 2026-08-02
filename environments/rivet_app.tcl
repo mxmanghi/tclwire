@@ -21,6 +21,22 @@ if {[info commands ::tclwire::envs::app::Rivet] ne {}} {
 oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
 
+    method initialize {} {
+        set script [::rivet::inspect ChildInitScript]
+        if {[::tclwire::envs::rivet::configured_script $script]} {
+            eval $script
+        }
+        return
+    }
+
+    method shutdown {} {
+        set script [::rivet::inspect ChildExitScript]
+        if {[::tclwire::envs::rivet::configured_script $script]} {
+            eval $script
+        }
+        return
+    }
+
     method content_type {path} {
         if {[string tolower [file extension $path]] in {".tcl" ".rvt"}} {
             return "text/html; charset=[my encoding]"
