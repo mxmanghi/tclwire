@@ -1097,7 +1097,7 @@ test http-connection-1.8a {debug logging includes resolved static file path} -bo
     list \
         [string match "HTTP/1.1 200 OK*" $response] \
         [string match \
-            "*static_file level=debug method=GET path=/ status=200 resolved_path=$file_path*" \
+            "*static_file level=debug method=GET path=/index.html status=200 resolved_path=$file_path*" \
             $log]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
@@ -1439,10 +1439,11 @@ test http-connection-1.13a {
     file mkdir $package_docroot
     file mkdir $package_libdir
     ::fileutil::writeFile [file join $package_docroot package_application.tcl] {
-package require TclOO
+package require tclwire::application 0.1
 
 oo::class create ::example::PackageApplication {
-    constructor {descriptor} {}
+    superclass ::tclwire::CApplication
+
     method handle_request {request} {
         ::tclwire::io response 200 OK \
             [list "Content-Type: text/plain; charset=utf-8"] text utf-8

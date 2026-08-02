@@ -793,6 +793,8 @@ test application-configuration-1.4b {
     CGA applies environment namespace path to request-time application objects
 } -setup {
     oo::class create ::tclwire::application_test::StdchansApplication {
+        superclass ::tclwire::CApplication
+
         method handle_request {request} {
             puts stdout alpha
             puts -nonewline stdout beta
@@ -844,6 +846,8 @@ test application-configuration-1.4ba {
     CGA splits stable application context from request context
 } -setup {
     oo::class create ::tclwire::application_test::ContextApplication {
+        superclass ::tclwire::CApplication
+
         method handle_request {request} {
             set application_context [::tclwire::app::application_snapshot]
             set request_context [::tclwire::app::request_snapshot]
@@ -3049,7 +3053,7 @@ puts "after exit"
     {http_header output complete}]
 
 test application-configuration-1.5 {
-    constructor failures reach the connection agent as error events
+    constructor failures abort content generator initialization
 } -setup {
     oo::class create ::tclwire::application_test::FailingConstructor {
         constructor {descriptor} {
@@ -3070,22 +3074,10 @@ test application-configuration-1.5 {
             encoding utf-8 \
             application_paths [list [temporaryDirectory]]]]
 } -body {
-    ::tclwire::cga::initialize app:failing [$configuration serialize]
-    ::tclwire::cga::execute \
-        [dict create \
-            application_id failing \
-            connection_thread_id [::thread::id] \
-            connection_agent_id $receiver \
-            transaction_id 91 \
-            method GET \
-            path /]
-    update
-    lassign [lindex $::tclwire::application_test::events 0] \
-        transaction_id event
-    list \
-        $transaction_id \
-        [dict get $event type] \
-        [dict get $event data]
+    catch {
+        ::tclwire::cga::initialize app:failing [$configuration serialize]
+    } message
+    set message
 } -cleanup {
     catch {::tclwire::cga::shutdown}
     catch {$configuration destroy}
@@ -3093,8 +3085,111 @@ test application-configuration-1.5 {
     catch {::tclwire::accounting remove_thread $worker_id}
     catch {::tclwire::application_test::FailingConstructor destroy}
     catch {::tclwire::io end}
-} -match glob -result {91 error {constructor failed}} -errorOutput \
-{application level=error *constructor failed*}
+} -result {constructor failed}
+
+test application-configuration-1.6 {
+    application lifecycle hooks run for the worker lifetime
+} -setup {
+    oo::class create ::tclwire::application_test::LifecycleApplication {
+        superclass ::tclwire::CApplication
+
+        method initialize {} {
+            lappend ::tclwire::application_test::events \
+                [list initialize]
+        }
+
+        method handle_request {request} {
+            lappend ::tclwire::application_test::events \
+                [list handle_request [$request path] [::tclwire::tools::makeurl]]
+            ::tclwire::io response 204 "No Content" {}
+        }
+
+        method shutdown {} {
+            lappend ::tclwire::application_test::events \
+                [list shutdown]
+        }
+    }
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set configuration [::tclwire::ApplicationConfiguration new lifecycle \
+        [dict create \
+            class ::tclwire::application_test::LifecycleApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]]]]
+} -body {
+    ::tclwire::cga::initialize app:lifecycle [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id lifecycle \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 92 \
+            method GET \
+            protocol http \
+            headers [dict create host localhost:8990] \
+            path /lifecycle]
+    ::tclwire::cga::shutdown
+    update
+    set lifecycle_events {}
+    foreach event $::tclwire::application_test::events {
+        if {[lindex $event 0] in {initialize handle_request shutdown}} {
+            lappend lifecycle_events $event
+        } elseif {[lindex $event 0] == 92 &&
+                [dict get [lindex $event 1] type] eq "response"} {
+            set response_event [lindex $event 1]
+        }
+    }
+    list $lifecycle_events [dict get $response_event type]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::application_test::LifecycleApplication destroy}
+    catch {::tclwire::io end}
+} -result [list \
+    [list \
+        [list initialize] \
+        [list handle_request /lifecycle http://localhost:8990/lifecycle] \
+        [list shutdown]] \
+    response]
+
+test application-configuration-1.7 {
+    content generator signals are delegated to the application object
+} -setup {
+    oo::class create ::tclwire::application_test::SignalApplication {
+        superclass ::tclwire::CApplication
+
+        method signal {args} {
+            lappend ::tclwire::application_test::events [list signal {*}$args]
+            return [llength $args]
+        }
+    }
+    set ::tclwire::application_test::events {}
+    set configuration [::tclwire::ApplicationConfiguration new signal \
+        [dict create \
+            class ::tclwire::application_test::SignalApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]]]]
+} -body {
+    ::tclwire::cga::initialize app:signal [$configuration serialize]
+    list \
+        [::tclwire::cga::signal reload because config-changed] \
+        $::tclwire::application_test::events
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$configuration destroy}
+    catch {::tclwire::application_test::SignalApplication destroy}
+} -result [list 3 [list [list signal reload because config-changed]]]
 
 test application-dispatcher-1.1 {missing Host selects the default application} -body {
     set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
@@ -3434,6 +3529,27 @@ test application-dispatcher-1.9b {
     }
 } -result {1 1 1}
 
+test application-dispatcher-1.9bb {
+    worker scripts initialize applications before waiting and shutdown after
+} -body {
+    set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+    try {
+        set configuration [$dispatcher application_configuration default]
+        set script [$dispatcher worker_script $configuration app:default]
+        set initialize_index [string first {::tclwire::cga::initialize} $script]
+        set signal_index [string first {proc application_signal} $script]
+        set wait_index [string first {::thread::wait} $script]
+        set shutdown_index [string first {::tclwire::cga::shutdown} $script]
+        list \
+            [expr {$initialize_index >= 0}] \
+            [expr {$initialize_index < $signal_index}] \
+            [expr {$signal_index < $wait_index}] \
+            [expr {$wait_index < $shutdown_index}]
+    } finally {
+        $dispatcher destroy
+    }
+} -result {1 1 1 1}
+
 test application-dispatcher-1.9ba {
     application worker scripts require a pool key
 } -body {
@@ -3643,6 +3759,22 @@ test application-1.1 {CApplication receives its effective document root} -body {
     [file normalize ./application-root] \
     ./application-root \
     iso8859-1]
+
+test application-1.1a {CApplication provides no-op lifecycle and signal hooks} -body {
+    set descriptor [dict create \
+        class ::tclwire::CApplication \
+        package tclwire::application \
+        hosts localhost \
+        docroot ./application-root \
+        encoding utf-8]
+    set application [::tclwire::CApplication new $descriptor]
+    try {
+        list [$application initialize] [$application shutdown] \
+            [$application signal reload]
+    } finally {
+        $application destroy
+    }
+} -result {{} {} {}}
 
 test application-1.2 {CApplication reads content using its configured encoding} -body {
     set docroot [file join [temporaryDirectory] tclwire-application-[pid]]
