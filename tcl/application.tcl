@@ -47,10 +47,10 @@ oo::class create ::tclwire::CApplication {
             set application_id [dict get $application_descriptor application_id]
         }
         set complete_descriptor $application_descriptor
-        foreach {property value} [list  class       [info object class [self]] \
-                                        hosts       {} \
-                                        application_paths [list [dict get $application_descriptor docroot]] \
-                                        package     tclwire::application] {
+        foreach {property value} [list class       [info object class [self]] \
+                                       hosts       {} \
+                                       application_paths [list [dict get $application_descriptor docroot]] \
+                                       package     tclwire::application] {
             if {![dict exists $complete_descriptor $property]} {
                 dict set complete_descriptor $property $value
             }
@@ -77,6 +77,18 @@ oo::class create ::tclwire::CApplication {
 
     method encoding {} {
         return $content_encoding
+    }
+
+    method initialize {} {
+        return
+    }
+
+    method shutdown {} {
+        return
+    }
+
+    method signal {args} {
+        return
     }
 
     method decode_path {path} {

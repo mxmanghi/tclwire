@@ -41,8 +41,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 [dict get $applications $default_application]]
         dict for {application_id original_descriptor} $applications {
             set descriptor \
-                [::tclwire::normalize_application_descriptor_classes \
-                    $original_descriptor]
+                [::tclwire::normalize_application_descriptor_classes $original_descriptor]
             set had_hosts [dict exists $original_descriptor hosts]
             set explicit_chore [dict exists $original_descriptor chore]
             set explicit_chore_class [dict exists $original_descriptor chore_class]
@@ -260,12 +259,12 @@ oo::class create ::tclwire::ApplicationDispatcher {
 
         set loader {}
         if {[dict exists $application_descriptor file] &&
-                [dict get $application_descriptor file] ne {}} {
-            set loader [list namespace eval ::tclwire::app \
-                [list source [dict get $application_descriptor file]]]
+            [dict get $application_descriptor file] ne {}} {
+            set loader \
+                [list namespace eval ::tclwire::app [list source [dict get $application_descriptor file]]]
         } else {
-            set loader [list package require \
-                [dict get $application_descriptor package] 0.1]
+            set loader \
+                [list package require [dict get $application_descriptor package] 0.1]
         }
         set exit_pool_notification [format {
             catch {::tclwire::tpba notify_workload_transition %s thread-exit}
@@ -273,8 +272,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
                                                         pool_key %s \
                                                         worker_id [::thread::id]]}
         } [list $pool_key] [list $pool_key]]
-        set install_cga_configuration [list \
-            ::tclwire::cga::install_configuration_envelope \
+        set initialize_cga [list \
+            ::tclwire::cga::initialize \
             $pool_key [$application_configuration serialize]]
         return [format {
             set application_paths %s
@@ -297,22 +296,26 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
             }
             %s
-            # This command runs in the new CGA worker interpreter.  It installs
-            # the application configuration envelope once in that worker.  The
-            # worker is tied to this application pool; future runtime
-            # reconfiguration should replace the pool and retire these threads,
-            # not alter the application contract request by request.
+            # This command runs in the new CGA worker interpreter.  It creates
+            # and initializes the application object once for this application
+            # pool member; future runtime reconfiguration should replace the
+            # pool and retire these threads, not alter the application contract
+            # request by request.
             %s
 
             proc demand_thread_exit {} {
                 ::thread::release [::thread::id]
             }
 
+            proc application_signal {args} {
+                ::tclwire::cga::signal {*}$args
+            }
+
             ::thread::wait
             ::tclwire::cga::shutdown
             %s
             ::tclwire::accounting remove_thread [::thread::id]
-        } [list $application_paths] $loader $install_cga_configuration \
+        } [list $application_paths] $loader $initialize_cga \
             $exit_pool_notification]
     }
 

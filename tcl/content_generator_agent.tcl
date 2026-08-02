@@ -18,36 +18,15 @@ namespace eval ::tclwire::cga {
     variable pool_key {}
     variable application_class {}
     variable application_descriptor {}
+    variable application {}
     variable configuration {}
-    variable pending_pool_key {}
-    variable pending_serialized_configuration {}
-    variable initialization_error {}
-    variable initialization_options {}
-
-    proc install_configuration_envelope {worker_pool_key serialized_configuration} {
-        variable pending_pool_key
-        variable pending_serialized_configuration
-        variable initialization_error
-        variable initialization_options
-
-        # Keep worker creation lightweight.  Some thread implementations do
-        # not return from thread::create until the startup script reaches
-        # thread::wait.  The worker script therefore installs the immutable
-        # configuration envelope here and schedules object construction on the
-        # worker event loop.  execute still receives only request data.
-        set pending_pool_key $worker_pool_key
-        set pending_serialized_configuration $serialized_configuration
-        set initialization_error {}
-        set initialization_options {}
-        after 0 ::tclwire::cga::initialize_pending
-        return
-    }
 
     proc initialize {worker_pool_key serialized_configuration} {
         variable initialized
         variable pool_key
         variable application_class
         variable application_descriptor
+        variable application
         variable configuration
 
         set worker_pool_key [string trim $worker_pool_key]
@@ -70,50 +49,38 @@ namespace eval ::tclwire::cga {
         set application_class [$configuration class]
         set application_descriptor [$configuration snapshot]
         dict set application_descriptor application_id [$configuration id]
+        if {[info commands $application_class] eq {} ||
+           ![info object isa class $application_class]} {
+            error "application command is not a TclOO class: $application_class"
+        }
+
+        try {
+            set application [$application_class new $application_descriptor]
+            $application initialize
+        } on error {message options} {
+            if {$application ne {}} {
+                catch {$application destroy}
+            }
+            if {$configuration ne {}} {
+                catch {$configuration destroy}
+            }
+            set pool_key {}
+            set application_class {}
+            set application_descriptor {}
+            set application {}
+            set configuration {}
+            return -options $options $message
+        }
         set initialized 1
-        return
-    }
-
-    proc initialize_pending {} {
-        variable initialized
-        variable pending_pool_key
-        variable pending_serialized_configuration
-        variable initialization_error
-        variable initialization_options
-
-        if {$initialized || $pending_pool_key eq {}} {
-            return
-        }
-        set worker_pool_key $pending_pool_key
-        set serialized_configuration $pending_serialized_configuration
-        set pending_pool_key {}
-        set pending_serialized_configuration {}
-
-        if {[catch {
-            initialize $worker_pool_key $serialized_configuration
-        } message options]} {
-            set initialization_error $message
-            set initialization_options $options
-        }
         return
     }
 
     proc ensure_initialized {} {
         variable initialized
         variable configuration
-        variable pending_pool_key
-        variable initialization_error
-        variable initialization_options
 
-        if {!$initialized && $initialization_error eq {} &&
-             $pending_pool_key ne {}} {
-            initialize_pending
-        }
         if {$initialized && $configuration ne {}} {
             return
-        }
-        if {$initialization_error ne {}} {
-            return -options $initialization_options $initialization_error
         }
         error "content generator worker is not initialized"
     }
@@ -123,12 +90,13 @@ namespace eval ::tclwire::cga {
         variable pool_key
         variable application_class
         variable application_descriptor
+        variable application
         variable configuration
-        variable pending_pool_key
-        variable pending_serialized_configuration
-        variable initialization_error
-        variable initialization_options
 
+        if {$application ne {}} {
+            catch {$application shutdown}
+            catch {$application destroy}
+        }
         if {$configuration ne {}} {
             catch {$configuration destroy}
         }
@@ -136,11 +104,8 @@ namespace eval ::tclwire::cga {
         set pool_key {}
         set application_class {}
         set application_descriptor {}
+        set application {}
         set configuration {}
-        set pending_pool_key {}
-        set pending_serialized_configuration {}
-        set initialization_error {}
-        set initialization_options {}
         return
     }
 
@@ -163,11 +128,8 @@ namespace eval ::tclwire::cga {
                 [dict get $request_descriptor multipart_parts]]
         }
         foreach failure $failures {
-            set details [join [list \
-                "path=[::tclwire::logger::log_value \
-                    [dict get $failure path]]" \
-                "error=[::tclwire::logger::log_value \
-                    [dict get $failure message]]"] " "]
+            set details [join [list "path=[::tclwire::logger::log_value [dict get $failure path]]" \
+                                    "error=[::tclwire::logger::log_value [dict get $failure message]]"] " "]
             if {[catch {
                 ::tclwire::logger log_error upload_cleanup $details warn
             }]} {
@@ -236,11 +198,46 @@ namespace eval ::tclwire::cga {
         return
     }
 
+    proc signal {args} {
+        variable application
+
+        ensure_initialized
+        return [$application signal {*}$args]
+    }
+
+    proc begin_request_ambient {request_descriptor} {
+        ::tclwire::io begin [dict get $request_descriptor connection_thread_id] \
+                            [dict get $request_descriptor connection_agent_id]  \
+                            [dict get $request_descriptor transaction_id]
+        ::tclwire::tools::begin $request_descriptor
+        return
+    }
+
+    proc end_request_ambient {} {
+        catch {::tclwire::tools::end}
+        catch {::tclwire::io end}
+        return
+    }
+
+    proc process_request {request_descriptor} {
+        variable application
+
+        set request [::tclwire::HttpRequest new $request_descriptor]
+        try {
+            $application handle_request $request
+            if {[::tclwire::io::accepting_output]} {
+                ::tclwire::io complete
+            }
+        } finally {
+            $request destroy
+        }
+        return
+    }
+
     proc execute {request_descriptor} {
         variable initialized
         variable pool_key
         variable application_class
-        variable application_descriptor
         variable configuration
 
         ensure_initialized
@@ -249,40 +246,18 @@ namespace eval ::tclwire::cga {
         ::tclwire::accounting change_thread_status $worker_id running \
                 [list $application_class [dict get $request_descriptor transaction_id]]
 
-        set application {}
-        set request {}
         try {
-            # Establish the error-reporting path before any application-owned
-            # reload, constructor, or request-handling code can fail.
-            ::tclwire::io begin [dict get $request_descriptor connection_thread_id] \
-                                [dict get $request_descriptor connection_agent_id]  \
-                                [dict get $request_descriptor transaction_id]
 
-            # The configuration and application descriptor are owned by the
-            # worker and are stable for the lifetime of this CGA pool member.
-            # Per-request work may read them, but cleanup must not destroy the
-            # configuration object; it is released by cga::shutdown on worker
-            # exit.
-            reload_application_class $application_class $configuration
-            set application [$application_class new $application_descriptor]
-            ::tclwire::tools::begin $request_descriptor
-            set request [::tclwire::HttpRequest new $request_descriptor]
-            $application handle_request $request
-            if {[::tclwire::io::accepting_output]} {
-                ::tclwire::io complete
-            }
+            # Establish the error-reporting path before any application-owned
+            # request-handling code can fail.
+            begin_request_ambient $request_descriptor
+            process_request $request_descriptor
+
         } on error {message options} {
             log_application_error $request_descriptor $message $options
             catch {::tclwire::io fail $message}
         } finally {
-            catch {::tclwire::tools::end}
-            catch {::tclwire::io end}
-            if {$request ne {}} {
-                catch {$request destroy}
-            }
-            if {$application ne {}} {
-                catch {$application destroy}
-            }
+            end_request_ambient
             cleanup_uploaded_files $configuration $request_descriptor
             catch {
                 ::tclwire::tpba notify_workload_transition \
