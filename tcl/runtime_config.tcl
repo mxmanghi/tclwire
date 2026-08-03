@@ -722,8 +722,6 @@ namespace eval ::tclwire::runtime {
                 set explicit_class [dict exists $descriptor class]
                 set explicit_package [dict exists $descriptor package]
                 set explicit_file [dict exists $descriptor file]
-                set explicit_reload_on_request \
-                    [dict exists $descriptor reload_on_request]
                 set explicit_chore [dict exists $descriptor chore]
                 set explicit_chore_class [dict exists $descriptor chore_class]
                 if {[dict exists $merged_applications $application_id]} {
@@ -997,8 +995,6 @@ namespace eval ::tclwire::runtime {
             }]
             set explicit_package [dict exists $descriptor package]
             set explicit_file [dict exists $descriptor file]
-            set explicit_reload_on_request \
-                [dict exists $descriptor reload_on_request]
             set descriptor \
                 [::tclwire::normalize_application_descriptor_classes \
                     $descriptor]

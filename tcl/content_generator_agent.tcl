@@ -314,6 +314,22 @@ namespace eval ::tclwire::cga {
         return
     }
 
+    proc retire_after_request {} {
+        variable pool_key
+
+        request_thread_exit
+        catch {
+            ::tclwire::tpba notify_workload_transition \
+                $pool_key thread-exit
+        }
+        catch {
+            ::tclwire::tpba request [dict create operation remove_worker \
+                                                pool_key $pool_key \
+                                                worker_id [::thread::id]]
+        }
+        return
+    }
+
     proc exit {{code 0}} {
         variable exit_command
 
@@ -357,7 +373,7 @@ namespace eval ::tclwire::cga {
         set application_descriptor [$configuration snapshot]
         dict set application_descriptor application_id [$configuration id]
         if {[catch {
-            create_application_object 0
+            create_application_object
         } message options]} {
             shutdown
             return -options $options $message
@@ -662,26 +678,6 @@ namespace eval ::tclwire::cga {
         return
     }
 
-    proc reload_application_class {application_class configuration} {
-        if {![$configuration reload_on_request]} {
-            return
-        }
-
-        set application_file [$configuration file]
-        if {[info commands $application_class] ne {}} {
-            if {![info object isa class $application_class]} {
-                error "application command is not a TclOO class: $application_class"
-            }
-            $application_class destroy
-        }
-
-        namespace eval ::tclwire::app [list source $application_file]
-        if {![info object isa class $application_class]} {
-            error "reloaded application file did not define class $application_class"
-        }
-        return
-    }
-
     proc destroy_application_object {} {
         variable application
 
@@ -694,7 +690,7 @@ namespace eval ::tclwire::cga {
         return
     }
 
-    proc create_application_object {reload} {
+    proc create_application_object {} {
         variable pool_key
         variable application
         variable application_class
@@ -702,9 +698,6 @@ namespace eval ::tclwire::cga {
         variable configuration
 
         destroy_application_object
-        if {$reload} {
-            reload_application_class $application_class $configuration
-        }
         if {[info commands $application_class] eq {} ||
            ![info object isa class $application_class]} {
             error "application command is not a TclOO class: $application_class"
@@ -722,17 +715,6 @@ namespace eval ::tclwire::cga {
         } on error {message options} {
             destroy_application_object
             return -options $options $message
-        }
-        return $application
-    }
-
-    proc application_object {} {
-        variable application
-        variable configuration
-
-        set reload [$configuration reload_on_request]
-        if {$application eq {} || $reload} {
-            create_application_object $reload
         }
         return $application
     }
@@ -836,21 +818,24 @@ namespace eval ::tclwire::cga {
                 [list $application_class \
                       [dict get $request_descriptor transaction_id]]
 
-            if {[$configuration reload_on_request]} {
-                application_object
-            }
             process_request $request_descriptor
         } on error {message options} {
             log_application_error $request_descriptor $message $options
             catch {::tclwire::io fail $message}
         } finally {
+            set reload_on_request 0
             if {$configuration ne {}} {
+                set reload_on_request [$configuration reload_on_request]
                 cleanup_uploaded_files $configuration $request_descriptor
             }
             end_request_ambient
-            catch {
-                ::tclwire::tpba notify_workload_transition \
-                    $pool_key request-processed
+            if {$reload_on_request} {
+                retire_after_request
+            } else {
+                catch {
+                    ::tclwire::tpba notify_workload_transition \
+                        $pool_key request-processed
+                }
             }
         }
         return

@@ -3208,6 +3208,96 @@ test application-configuration-1.6 {
         [list shutdown]] \
     response]
 
+test application-configuration-1.6a {
+    reload_on_request retires the CGA worker after completing the request
+} -setup {
+    oo::class create ::tclwire::application_test::ReloadRetireApplication {
+        superclass ::tclwire::CApplication
+
+        method handle_request {request} {
+            lappend ::tclwire::application_test::events \
+                [list handle_request [$request path]]
+            ::tclwire::io response 204 "No Content" {}
+        }
+    }
+    set application_file [makeFile {
+oo::class create ::tclwire::application_test::ReloadRetireApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request} {
+        ::tclwire::io response 204 "No Content" {}
+    }
+}
+} reload-retire-application.tcl]
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set ::tclwire::application_test::tpba_commands {}
+    set ::tclwire::application_test::thread_exit_events {}
+    rename ::tclwire::tpba::request ::tclwire::tpba::request_reload_retire_saved
+    proc ::tclwire::tpba::request {command} {
+        lappend ::tclwire::application_test::tpba_commands $command
+        return [dict create ok 1 result {}]
+    }
+    set configuration [::tclwire::ApplicationConfiguration new reload-retire \
+        [dict create \
+            class ::tclwire::application_test::ReloadRetireApplication \
+            file $application_file \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            reload_on_request 1]]
+} -body {
+    ::tclwire::cga::initialize app:reload-retire [$configuration serialize]
+    ::tclwire::cga::configure_thread_exit_command {
+        lappend ::tclwire::application_test::thread_exit_events \
+            [list release [::thread::id]]
+    }
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id reload-retire \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 93 \
+            method GET \
+            protocol http \
+            headers [dict create host localhost:8990] \
+            path /reload-retire]
+    update
+    list \
+        [::tclwire::cga::thread_exit_requested] \
+        $::tclwire::application_test::thread_exit_events \
+        [lmap command $::tclwire::application_test::tpba_commands {
+            dict get $command operation
+        }] \
+        [lmap event $::tclwire::application_test::events {
+            if {[llength $event] == 2 && [lindex $event 0] == 93} {
+                dict get [lindex $event 1] type
+            } else {
+                lindex $event 0
+            }
+        }]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::application_test::ReloadRetireApplication destroy}
+    catch {::tclwire::io end}
+    catch {rename ::tclwire::tpba::request {}}
+    catch {rename ::tclwire::tpba::request_reload_retire_saved ::tclwire::tpba::request}
+    unset -nocomplain ::tclwire::application_test::tpba_commands
+    unset -nocomplain ::tclwire::application_test::thread_exit_events
+    removeFile $application_file
+} -result [list \
+    1 \
+    [list [list release [::thread::id]]] \
+    [list thread_workload_changed remove_worker] \
+    [list handle_request response complete]]
+
 test application-configuration-1.7 {
     content generator signals are delegated to the application object
 } -setup {
@@ -3359,84 +3449,6 @@ test application-dispatcher-1.9 {package-backed applications remain supported} -
         $dispatcher destroy
     }
 } -result 1
-
-test application-dispatcher-1.9r {
-    file-backed application classes can be replaced during development
-} -setup {
-    set application_file [makeFile {
-oo::class create ::example::ReloadableApplication {
-    method version {} { return first }
-}
-} reloadable-application.tcl]
-    source $application_file
-} -body {
-    set descriptor [dict create \
-        class ::example::ReloadableApplication \
-        hosts localhost \
-        docroot [temporaryDirectory] \
-        encoding utf-8 \
-        application_paths [list [temporaryDirectory]] \
-        file $application_file \
-        reload_on_request 1]
-    set configuration [::tclwire::ApplicationConfiguration new \
-        reload-test $descriptor]
-    ::fileutil::writeFile $application_file {
-oo::class create ::example::ReloadableApplication {
-    method version {} { return second }
-}
-}
-    ::tclwire::cga::reload_application_class \
-        ::example::ReloadableApplication $configuration
-    set application [::example::ReloadableApplication new]
-    try {
-        $application version
-    } finally {
-        $application destroy
-    }
-} -cleanup {
-    catch {$configuration destroy}
-    catch {::example::ReloadableApplication destroy}
-    removeFile $application_file
-} -result second
-
-test application-dispatcher-1.9ra {
-    file-backed bare application classes reload under the app namespace
-} -setup {
-    set application_file [makeFile {
-oo::class create ReloadableApplication {
-    method version {} { return first }
-}
-} bare-reloadable-application.tcl]
-    namespace eval ::tclwire::app [list source $application_file]
-} -body {
-    set descriptor [dict create \
-        class ::tclwire::app::ReloadableApplication \
-        hosts localhost \
-        docroot [temporaryDirectory] \
-        encoding utf-8 \
-        application_paths [list [temporaryDirectory]] \
-        file $application_file \
-        reload_on_request 1]
-    set configuration [::tclwire::ApplicationConfiguration new \
-        reload-test $descriptor]
-    ::fileutil::writeFile $application_file {
-oo::class create ReloadableApplication {
-    method version {} { return second }
-}
-}
-    ::tclwire::cga::reload_application_class \
-        ::tclwire::app::ReloadableApplication $configuration
-    set application [::tclwire::app::ReloadableApplication new]
-    try {
-        $application version
-    } finally {
-        $application destroy
-    }
-} -cleanup {
-    catch {$configuration destroy}
-    catch {::tclwire::app::ReloadableApplication destroy}
-    removeFile $application_file
-} -result second
 
 test application-dispatcher-1.9s {
     package-backed applications reject per-request reloading

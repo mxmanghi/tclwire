@@ -86,11 +86,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
             set explicit_class      [dict exists $original_descriptor class]
             set explicit_package    [dict exists $original_descriptor package]
             set explicit_file       [dict exists $original_descriptor file]
-            set explicit_reload_on_request [dict exists $original_descriptor reload_on_request]
             set explicit_chore      [dict exists $original_descriptor chore]
             set explicit_chore_class [dict exists $original_descriptor chore_class]
-
-            set environment_class_applied 0
 
             # In this context 'loader' means the descriptor fields that tell the
             # worker how the application class gets made available before it is instantiated.
@@ -98,17 +95,18 @@ oo::class create ::tclwire::ApplicationDispatcher {
             #
             #   - package: load the application implementation with package require ...
             #   - file: load/source a Tcl file containing the application implementation
-            #   - reload_on_request: if enabled, re-source the file on each request so code
-            #     changes are picked up
+            #   - reload_on_request: if enabled, retire the worker after each
+            #     request so the replacement worker sources the current file
             #
             # So 'inherited loader' means: a non-default application inherited package,
             # file, or reload behavior from the default application descriptor.
             # That matters because a virtual host may inherit most settings from the default
-            # app but select a different class through an environment. If it keeps the
-            # default app’s file, reload-on-request could re-source the wrong implementation
-            # file for the new class. The constructor therefore removes inherited loader
-            # fields when the final class no longer matches the inherited default class,
-            # unless the descriptor explicitly supplied its own package or file.
+            # app but select a different class through an environment. If it keeps
+            # the default app's file, replacement workers would source the wrong
+            # implementation file for the new class. The constructor therefore
+            # removes inherited loader fields when the final class no longer
+            # matches the inherited default class, unless the descriptor
+            # explicitly supplied its own package or file.
 
             set suppress_inherited_loader 0
 
@@ -177,7 +175,6 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 set environment_class [::tclwire::environment application_class $application_id $descriptor]
                 if {$environment_class ne {}} {
                     dict set descriptor class $environment_class
-                    set environment_class_applied 1
                     set suppress_inherited_loader 1
                 }
             }
@@ -192,11 +189,11 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 if {!$explicit_file && [dict exists $descriptor file]} {
                     dict unset descriptor file
                 }
-                # `reload_on_request` requires a concrete source file.  If the
-                # class came from the environment and no explicit file was
-                # configured, ask the environment for a matching file; otherwise
-                # disable reloads so the inherited file is not reloaded for the
-                # wrong class.
+                # `reload_on_request` requires a concrete source file for
+                # replacement workers. If the class came from the environment
+                # and no explicit file was configured, ask the environment for
+                # a matching file; otherwise disable reloads so the inherited
+                # file is not used for the wrong class.
                 if {!$explicit_file &&  [dict exists $descriptor reload_on_request] &&
                                         [dict get $descriptor reload_on_request]} {
                     set environment_file [::tclwire::environment application_file \

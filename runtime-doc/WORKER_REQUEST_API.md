@@ -160,7 +160,7 @@ loaded with `source` after the same `auto_path` initialization.
 
 ### Development Reloading
 
-A file-backed application can opt into per-request class reloading:
+A file-backed application can opt into per-request worker replacement:
 
 ```toml
 [http.my_application]
@@ -169,15 +169,15 @@ file = "application.tcl"
 reload_on_request = true
 ```
 
-Immediately before constructing an application instance, the worker destroys
-the configured TclOO class and sources the application file again. Each worker
-does this independently. This allows files using `oo::class create` to be
-edited without restarting TclWire. A syntax or initialization error produces
-a 500 response and is retried from the updated file on the next request.
+After completing a request, the worker removes itself from its application pool
+and exits. The next request starts a replacement worker, which sources the
+application file during worker initialization. This allows file-backed
+applications to be edited without restarting TclWire.
 
-This option is intended only for development: it adds file I/O and class
-creation to every request and discards class-level state. It is rejected for
-package-backed applications because `package require` caches loaded packages.
+This option is intended only for development: it replaces the application
+worker after every request and discards worker-local state. It is rejected for
+package-backed applications because replacement workers would still use
+`package require` package caching.
 
 The application constructor receives its effective configuration dictionary.
 The request entry point is:

@@ -287,8 +287,9 @@ then from global runtime defaults.
 : Application or host-specific logging threshold.
 
 `reload_on_request`
-: Reloads an application sourced from `file` for each request. Disabled by
-  default and valid only when `file` is configured.
+: Replaces the application worker after each request so the next worker sources
+  the current `file`. Disabled by default and valid only when `file` is
+  configured.
 
 `retain_uploaded_files`
 : Prevents TclWire from deleting stored multipart upload files after request
