@@ -10,7 +10,7 @@ namespace eval ::tclwire::tpba {
     proc agent_initialize {} {
         variable broker
 
-        if {$broker ne {}} {
+        if {[info object isa object $broker]} {
             error "TPBA agent is already initialized"
         }
 
@@ -21,7 +21,7 @@ namespace eval ::tclwire::tpba {
     proc agent_execute_command {command} {
         variable broker
 
-        if {$broker eq {}} {
+        if {![info object isa object $broker]} {
             error "TPBA agent is not initialized"
         }
         return [$broker execute_command $command]
@@ -30,7 +30,7 @@ namespace eval ::tclwire::tpba {
     proc agent_shutdown {} {
         variable broker
 
-        if {$broker ne {}} {
+        if {[info object isa object $broker]} {
             catch {$broker destroy}
             set broker {}
         }

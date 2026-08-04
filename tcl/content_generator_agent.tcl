@@ -185,6 +185,15 @@ namespace eval ::tclwire::cga {
     variable thread_exit_requested 0
 
     namespace eval context {
+        proc require_fields {label values fields} {
+            foreach field $fields {
+                if {![dict exists $values $field]} {
+                    error "$label context is missing $field"
+                }
+            }
+            return
+        }
+
         proc begin {context_values} {
             if {[catch {dict size $context_values}]} {
                 error "CGA application context must be a dictionary"
@@ -199,11 +208,22 @@ namespace eval ::tclwire::cga {
                         [dict get $context_values $field]
                 }
             }
+            if {[dict size $application_values]} {
+                require_fields application $application_values {
+                    application application_class application_descriptor
+                    configuration pool_key
+                }
+            }
             set request_values [dict create]
             foreach field {request request_descriptor} {
                 if {[dict exists $context_values $field]} {
                     dict set request_values $field \
                         [dict get $context_values $field]
+                }
+            }
+            if {[dict size $request_values]} {
+                require_fields request $request_values {
+                    request request_descriptor
                 }
             }
             if {[dict size $application_values]} {
@@ -349,11 +369,13 @@ namespace eval ::tclwire::cga {
         variable configuration
 
         set worker_pool_key [string trim $worker_pool_key]
-        if {$worker_pool_key eq {}} {
+        if {![string length $worker_pool_key]} {
             error "content generator worker pool key must not be empty"
         }
 
-        if {$initialized || $configuration ne {} || $application ne {}} {
+        if {$initialized ||
+                [info object isa object $configuration] ||
+                [info object isa object $application]} {
             shutdown
         }
 
@@ -455,7 +477,7 @@ namespace eval ::tclwire::cga {
 
     proc load {environment} {
         set environment [string trim $environment]
-        if {$environment eq {}} {
+        if {![string length $environment]} {
             error "application environment name must not be empty"
         }
         set command [command $environment]
@@ -497,7 +519,7 @@ namespace eval ::tclwire::cga {
     proc append_to_namespace {target_namespace} {
         variable path_namespaces
 
-        if {$path_namespaces eq {}} {
+        if {![llength $path_namespaces]} {
             return
         }
         if {![namespace exists $target_namespace]} {
@@ -538,7 +560,7 @@ namespace eval ::tclwire::cga {
 
             $environment_object install
             set namespaces [$environment_object path_namespaces]
-            if {$namespaces eq {}} {
+            if {![llength $namespaces]} {
                 set namespaces [::list $command]
             }
             append_path $namespaces
@@ -607,10 +629,26 @@ namespace eval ::tclwire::cga {
         variable configuration
         variable application
 
-        if {$initialized && $configuration ne {}} {
+        if {$initialized && [info object isa object $configuration]} {
             return
         }
         error "content generator worker is not initialized"
+    }
+
+    proc require_request_descriptor {request_descriptor} {
+        if {[catch {dict size $request_descriptor}]} {
+            error "CGA request descriptor must be a dictionary"
+        }
+        foreach field {
+            application_id connection_thread_id connection_agent_id
+            transaction_id
+        } {
+            if {![dict exists $request_descriptor $field] ||
+                    ![string length [dict get $request_descriptor $field]]} {
+                error "CGA request descriptor is missing $field"
+            }
+        }
+        return
     }
 
     proc shutdown {} {
@@ -625,13 +663,13 @@ namespace eval ::tclwire::cga {
         variable thread_exit_requested
 
         catch {::tclwire::app::end_request}
-        if {$application ne {}} {
+        if {[info object isa object $application]} {
             catch {$application shutdown}
             catch {$application destroy}
         }
         set application {}
         catch {::tclwire::app::end_application}
-        if {$configuration ne {}} {
+        if {[info object isa object $configuration]} {
             catch {$configuration destroy}
         }
         envs::shutdown
@@ -681,7 +719,7 @@ namespace eval ::tclwire::cga {
     proc destroy_application_object {} {
         variable application
 
-        if {$application ne {}} {
+        if {[info object isa object $application]} {
             catch {$application shutdown}
             catch {$application destroy}
         }
@@ -806,6 +844,7 @@ namespace eval ::tclwire::cga {
         variable application_class
         variable configuration
 
+        require_request_descriptor $request_descriptor
         set worker_id [::thread::id]
 
         try {
@@ -824,7 +863,7 @@ namespace eval ::tclwire::cga {
             catch {::tclwire::io fail $message}
         } finally {
             set reload_on_request 0
-            if {$configuration ne {}} {
+            if {[info object isa object $configuration]} {
                 set reload_on_request [$configuration reload_on_request]
                 cleanup_uploaded_files $configuration $request_descriptor
             }

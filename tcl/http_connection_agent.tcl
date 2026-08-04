@@ -429,7 +429,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     method abort_application_response {transaction_id transaction} {
         set transaction [my transaction_for $transaction_id]
-        if {$transaction eq {}} {
+        if {![info object isa object $transaction]} {
             return
         }
         set response_state [$transaction get response_state]
@@ -445,7 +445,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     method application_output {transaction_id event} {
         set transaction [my transaction_for $transaction_id]
-        if {$transaction eq {}} {
+        if {![info object isa object $transaction]} {
             return
         }
 

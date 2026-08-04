@@ -18,9 +18,16 @@ namespace eval ::tclwire::tpba {
         return [::tsv::get tclwire tpba_thread_id]
     }
 
+    proc thread_exists {tid} {
+        if {[catch {::thread::exists $tid} exists]} {
+            return 0
+        }
+        return $exists
+    }
+
     proc is_running {} {
         set tid [thread_id]
-        return [expr {$tid ne {} && [::thread::exists $tid]}]
+        return [thread_exists $tid]
     }
 
     proc start {} {
@@ -28,7 +35,7 @@ namespace eval ::tclwire::tpba {
         variable project_root
 
         set existing [thread_id]
-        if {$existing ne {} && [::thread::exists $existing]} {
+        if {[thread_exists $existing]} {
             error "TPBA thread is already running: $existing"
         }
         ::tsv::set tclwire tpba_thread_id {}
@@ -58,14 +65,14 @@ namespace eval ::tclwire::tpba {
         set tid [thread_id]
         ::tsv::set tclwire tpba_thread_id {}
 
-        if {$tid eq {} || ![::thread::exists $tid]} {
+        if {![thread_exists $tid]} {
             return {}
         }
 
         if {[catch {
             ::thread::send $tid ::tclwire::tpba::agent_shutdown
         } message options]} {
-            if {[::thread::exists $tid]} {
+            if {[thread_exists $tid]} {
                 return -options $options $message
             }
         }
@@ -88,10 +95,10 @@ namespace eval ::tclwire::tpba {
     proc notify_workload_transition {pool_key transition_id} {
         set pool_key [string trim $pool_key]
         set transition_id [string trim $transition_id]
-        if {$pool_key eq {}} {
+        if {![string length $pool_key]} {
             error "workload notification pool key must not be empty"
         }
-        if {$transition_id eq {}} {
+        if {![string length $transition_id]} {
             error "workload notification transition id must not be empty"
         }
         set notification [list [::thread::id] $pool_key $transition_id]
@@ -105,7 +112,7 @@ namespace eval ::tclwire::tpba {
 
     proc require_thread {} {
         set tid [thread_id]
-        if {$tid eq {} || ![::thread::exists $tid]} {
+        if {![thread_exists $tid]} {
             error "TPBA thread is not running"
         }
         return $tid
@@ -122,8 +129,9 @@ namespace eval ::tclwire::tpba {
         return
     }
 
-    namespace export start stop reset request thread_id is_running \
-        notify_workload_transition
+    namespace export start stop reset request \
+                     thread_id is_running \
+                     notify_workload_transition
     namespace ensemble create
 }
 

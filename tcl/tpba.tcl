@@ -40,7 +40,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
 
     method normalize_pool_key {pool_key} {
         set pool_key [string trim $pool_key]
-        if {$pool_key eq {}} {
+        if {![string length $pool_key]} {
             error "pool key must not be empty"
         }
         return $pool_key
@@ -96,7 +96,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                 }
             }
         }
-        if {$identity eq {}} {
+        if {![string length $identity]} {
             error "pool descriptor must define a protocol, application, name, endpoint, or family"
         }
 
@@ -168,7 +168,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     }
 
     method create_pool {pool_key worker_script {policy {}} {descriptor {}}} {
-        if {$pool_key eq {}} {
+        if {![string length [string trim $pool_key]]} {
             set pool_key [my pool_key $descriptor]
         } else {
             set pool_key [my normalize_pool_key $pool_key]
@@ -176,7 +176,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         if {[dict exists $pools $pool_key]} {
             error "thread pool already exists: $pool_key"
         }
-        if {$worker_script eq {}} {
+        if {![string length $worker_script]} {
             error "worker script must not be empty"
         }
         if {[catch {dict size $descriptor}]} {
@@ -210,7 +210,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             set reserved {}
             for {set i 0} {$i < [dict get $policy minimum_workers]} {incr i} {
                 set worker_id [$master acquire_worker]
-                if {$worker_id eq {}} {
+                if {![string length $worker_id]} {
                     error "unable to create minimum workers for pool: $pool_key"
                 }
                 lappend reserved $worker_id
@@ -261,7 +261,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     method remove_worker {pool_key worker_id} {
         set record [my require_pool $pool_key]
         set master [dict get $record thread_master]
-        if {$master eq {}} {
+        if {![info object isa object $master]} {
             return true
         }
         return [$master remove_thread $worker_id]
@@ -272,12 +272,14 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
             error "workload notification must be {thread_id pool_key transition_id}"
         }
         lassign $notification worker_id pool_key transition_id
-        if {$worker_id eq {} || $pool_key eq {} || $transition_id eq {}} {
+        if {![string length $worker_id] ||
+                ![string length $pool_key] ||
+                ![string length $transition_id]} {
             error "workload notification fields must not be empty"
         }
         set record [my require_pool $pool_key]
         set master [dict get $record thread_master]
-        if {$master eq {}} {
+        if {![info object isa object $master]} {
             error "thread pool is not active: $pool_key"
         }
         if {![$master owns_thread $worker_id]} {
@@ -312,7 +314,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         set stats   [dict create    max_threads_number  0   \
                                     live_threads_number 0   \
                                     per_status_lists    {}]
-        if {$master ne {}} {
+        if {[info object isa object $master]} {
             set stats [$master stats]
         }
 
@@ -323,7 +325,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
     method pool_thread_ids {pool_key {filter all}} {
         set record [my require_pool $pool_key]
         set master [dict get $record thread_master]
-        if {$master eq {}} {
+        if {![info object isa object $master]} {
             return {}
         }
         return [$master thread_ids $filter]
@@ -338,9 +340,8 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         dict for {pool_key record} $pools {
             set master [dict get $record thread_master]
 
-            if {$master eq {}} {
-                set stats [dict create]
-            } else {
+            set stats [dict create]
+            if {[info object isa object $master]} {
                 set stats [$master stats]
             }
 

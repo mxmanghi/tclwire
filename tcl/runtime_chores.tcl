@@ -32,7 +32,7 @@ namespace eval ::tclwire::runtime {
 
         set dispatcher $application_dispatcher
         set destroy_dispatcher 0
-        if {$dispatcher eq {}} {
+        if {![info object isa object $dispatcher]} {
             set dispatcher [::tclwire::ApplicationDispatcher new $config]
             set destroy_dispatcher 1
         }
@@ -103,7 +103,7 @@ namespace eval ::tclwire::runtime {
 
         set dispatcher $application_dispatcher
         set destroy_dispatcher 0
-        if {$dispatcher eq {}} {
+        if {![info object isa object $dispatcher]} {
             set dispatcher [::tclwire::ApplicationDispatcher new $config]
             set destroy_dispatcher 1
         }

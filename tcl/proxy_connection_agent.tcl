@@ -157,7 +157,7 @@ oo::class create ::tclwire::ProxyConnectionAgent {
             return
         }
         set transaction [my transaction_for 1]
-        if {$transaction eq {}} {
+        if {![info object isa object $transaction]} {
             return
         }
 

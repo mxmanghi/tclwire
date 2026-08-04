@@ -18,7 +18,7 @@ oo::class create ::tclwire::ConnectionAgent {
     variable transaction_state closed
 
     constructor {conn_channel id host port key} {
-        if {$key eq {}} {
+        if {![string length $key]} {
             error "connection agent requires connection key"
         }
         set channel         $conn_channel
@@ -93,7 +93,7 @@ oo::class create ::tclwire::ConnectionAgent {
         catch {
             set record [::tclwire::accounting get_connection_record $connection_key]
             set bytes_in [expr {
-                $record eq {} ? [string length $chunk] :
+                ![dict exists $record bytes_in] ? [string length $chunk] :
                 [dict get $record bytes_in] + [string length $chunk]
             }]
             ::tclwire::accounting update_connection $connection_key \
@@ -113,7 +113,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method begin_transaction {transaction_id descriptor} {
-        if {$transaction_state ne {}} {
+        if {[info object isa object $transaction_state]} {
             error "connection already has an active transaction"
         }
         set transaction_state \
@@ -122,7 +122,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method transaction_for {transaction_id} {
-        if {$transaction_state eq {}} {
+        if {![info object isa object $transaction_state]} {
             return {}
         }
         if {[$transaction_state id] != $transaction_id} {
@@ -132,7 +132,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method clear_transaction {} {
-        if {$transaction_state ne {}} {
+        if {[info object isa object $transaction_state]} {
             $transaction_state destroy
             set transaction_state {}
         }
@@ -141,7 +141,7 @@ oo::class create ::tclwire::ConnectionAgent {
 
     method finish_transaction {transaction_id} {
         set transaction [my transaction_for $transaction_id]
-        if {$transaction eq {}} {
+        if {![info object isa object $transaction]} {
             return {}
         }
         set descriptor [$transaction snapshot]
@@ -199,7 +199,7 @@ oo::class create ::tclwire::ConnectionAgent {
         catch {
             set record [::tclwire::accounting get_connection_record $connection_key]
             set bytes_out [expr {
-                $record eq {} ? [string length $data] :
+                ![dict exists $record bytes_out] ? [string length $data] :
                 [dict get $record bytes_out] + [string length $data]
             }]
             ::tclwire::accounting update_connection $connection_key \
@@ -245,7 +245,7 @@ oo::class create ::tclwire::ConnectionAgent {
     }
 
     method active_transaction {} {
-        if {$transaction_state eq {}} {
+        if {![info object isa object $transaction_state]} {
             return {}
         }
         return [$transaction_state snapshot]
@@ -257,10 +257,10 @@ oo::class create ::tclwire::ConnectionAgent {
 }
 
 namespace eval ::tclwire {
-    variable connection_descriptors [dict create]
+    variable connection_registrations [dict create]
     variable connection_agent_channels [dict create]
 
-    proc connection_descriptor {
+    proc connection_registration {
         channel_key connection_agent connection_id connection_key
         finished_thread finished_command pool_key
     } {
@@ -274,47 +274,72 @@ namespace eval ::tclwire {
             pool_key         $pool_key]
     }
 
-    proc store_connection_descriptor {descriptor} {
-        variable connection_descriptors
-        variable connection_agent_channels
-
-        set channel_key [dict get $descriptor channel_key]
-        set agent [dict get $descriptor agent]
-        dict set connection_descriptors $channel_key $descriptor
-        dict set connection_agent_channels $agent $channel_key
-        return $descriptor
+    proc validate_connection_registration {connection} {
+        if {[catch {dict size $connection}]} {
+            error "connection registration must be a dictionary"
+        }
+        foreach field {channel_key agent connection_id connection_key pool_key} {
+            if {![dict exists $connection $field] ||
+                    ![string length [dict get $connection $field]]} {
+                error "connection registration is missing $field"
+            }
+        }
+        if {![info object isa object [dict get $connection agent]]} {
+            error "connection registration agent is not a TclOO object: [dict get $connection agent]"
+        }
+        foreach field {finished_thread finished_command} {
+            if {![dict exists $connection $field]} {
+                error "connection registration is missing $field"
+            }
+        }
+        if {[catch {llength [dict get $connection finished_command]}]} {
+            error "connection registration finished_command must be a command prefix list"
+        }
+        return
     }
 
-    proc connection_descriptor_for_agent {agent} {
-        variable connection_descriptors
+    proc store_connection_registration {connection} {
+        variable connection_registrations
+        variable connection_agent_channels
+
+        validate_connection_registration $connection
+        set channel_key [dict get $connection channel_key]
+        set agent [dict get $connection agent]
+        dict set connection_registrations $channel_key $connection
+        dict set connection_agent_channels $agent $channel_key
+        return $connection
+    }
+
+    proc connection_registration_for_agent {agent} {
+        variable connection_registrations
         variable connection_agent_channels
 
         if {![dict exists $connection_agent_channels $agent]} {
             return {}
         }
         set channel_key [dict get $connection_agent_channels $agent]
-        if {![dict exists $connection_descriptors $channel_key]} {
+        if {![dict exists $connection_registrations $channel_key]} {
             return {}
         }
-        return [dict get $connection_descriptors $channel_key]
+        return [dict get $connection_registrations $channel_key]
     }
 
-    proc remove_connection_descriptor {agent} {
-        variable connection_descriptors
+    proc remove_connection_registration {agent} {
+        variable connection_registrations
         variable connection_agent_channels
 
-        set descriptor [connection_descriptor_for_agent $agent]
-        if {$descriptor eq {}} {
+        set connection [connection_registration_for_agent $agent]
+        if {[catch {dict size $connection}]} {
             return {}
         }
-        set channel_key [dict get $descriptor channel_key]
+        set channel_key [dict get $connection channel_key]
         dict unset connection_agent_channels $agent
-        dict unset connection_descriptors $channel_key
-        return $descriptor
+        dict unset connection_registrations $channel_key
+        return $connection
     }
 
     proc prepare_connection_channel {channel transport_config} {
-        if {$transport_config eq {} ||
+        if {[catch {dict size $transport_config}] ||
             ![dict exists $transport_config secure] ||
             ![dict get $transport_config secure]} {
 
@@ -361,7 +386,7 @@ namespace eval ::tclwire {
             error "unknown connection agent class: $agent_class"
         }
         set pool_key [string trim $pool_key]
-        if {$pool_key eq {}} {
+        if {![string length $pool_key]} {
             error "connection agent pool key must not be empty"
         }
 
@@ -381,9 +406,9 @@ namespace eval ::tclwire {
                                                     $connection_id \
                                                     $host $port     \
                                                    -connectionkey $connection_key {*}$agent_args]
-            store_connection_descriptor \
-                [connection_descriptor $channel_key $connection_agent $connection_id $connection_key \
-                                       $finished_thread $finished_command $pool_key]
+            store_connection_registration \
+                [connection_registration $channel_key $connection_agent $connection_id $connection_key \
+                                         $finished_thread $finished_command $pool_key]
 
             ::tclwire::accounting update_connection $connection_key [dict create agent_id $connection_agent]
         } message options]} {
@@ -411,23 +436,23 @@ namespace eval ::tclwire {
     }
 
     proc stop_connection_agent {} {
-        variable connection_descriptors
-        foreach descriptor [dict values $connection_descriptors] {
-            set agent [dict get $descriptor agent]
+        variable connection_registrations
+        foreach connection [dict values $connection_registrations] {
+            set agent [dict get $connection agent]
             catch {$agent close}
         }
         return
     }
 
     proc connection_agent_closed {agent} {
-        set descriptor [remove_connection_descriptor $agent]
-        if {$descriptor eq {}} {
+        set connection [remove_connection_registration $agent]
+        if {[catch {dict size $connection}]} {
             return {}
         }
-        set connection_id [dict get $descriptor connection_id]
-        set pool_key [dict get $descriptor pool_key]
-        set connection_finished_thread [dict get $descriptor finished_thread]
-        set connection_finished_command [dict get $descriptor finished_command]
+        set connection_id [dict get $connection connection_id]
+        set pool_key [dict get $connection pool_key]
+        set connection_finished_thread [dict get $connection finished_thread]
+        set connection_finished_command [dict get $connection finished_command]
         set workload_released 0
 
         if {![catch {
@@ -443,7 +468,7 @@ namespace eval ::tclwire {
                 $connection_id [::thread::id] $workload_released]
             ::thread::send -async $connection_finished_thread $callback
         }
-        return $descriptor
+        return $connection
     }
 
     proc destroy_connection_agent {agent} {
@@ -454,8 +479,8 @@ namespace eval ::tclwire {
     }
 
     proc connection_agent_finished {agent} {
-        set descriptor [connection_agent_closed $agent]
-        if {$descriptor eq {}} {
+        set connection [connection_agent_closed $agent]
+        if {[catch {dict size $connection}]} {
             return
         }
         destroy_connection_agent $agent

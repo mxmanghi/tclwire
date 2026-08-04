@@ -914,6 +914,39 @@ test application-configuration-1.4ba {
     "1 1 1 1 /context context-test app:context-test 1\n" \
     1 0 1 {no TclWire request context is active} 1]
 
+test application-configuration-1.4bab {
+    CGA context construction rejects partial structural state
+} -body {
+    list \
+        [catch {
+            ::tclwire::cga::context::begin [dict create \
+                application app-object]
+        } application_message] \
+        $application_message \
+        [catch {
+            ::tclwire::cga::context::begin [dict create \
+                request request-object]
+        } request_message] \
+        $request_message
+} -cleanup {
+    catch {::tclwire::cga::context::end}
+    catch {::tclwire::app::end_application}
+} -result [list \
+    1 {application context is missing application_class} \
+    1 {request context is missing request_descriptor}]
+
+test application-configuration-1.4bac {
+    CGA execute rejects incomplete request descriptors before application handling
+} -body {
+    catch {
+        ::tclwire::cga::execute [dict create \
+            application_id context-test \
+            connection_thread_id [::thread::id] \
+            transaction_id 921]
+    } message
+    set message
+} -result {CGA request descriptor is missing connection_agent_id}
+
 test application-configuration-1.4bb {
     CGA loads full environment package when helper namespace already exists
 } -body {

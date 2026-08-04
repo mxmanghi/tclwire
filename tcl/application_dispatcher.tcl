@@ -209,7 +209,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             # Resolve required descriptor defaults and fail early when no
             # per-application or global value exists.
             if {![dict exists $descriptor docroot]} {
-                if {$default_docroot eq {}} {
+                if {![string length $default_docroot]} {
                     error "application '$application_id' is missing docroot"
                 }
                 dict set descriptor docroot $default_docroot
@@ -233,7 +233,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             # Encoding is required by the request path; use the global default
             # only when the application omitted it.
             if {![dict exists $descriptor encoding]} {
-                if {$default_encoding eq {}} {
+                if {![string length $default_encoding]} {
                     error "application '$application_id' is missing encoding"
                 }
                 dict set descriptor encoding $default_encoding
@@ -349,7 +349,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
             set host [my normalize_host \
                 [dict get $request_descriptor headers host]]
         }
-        if {$host eq {}} {
+        if {![string length $host]} {
             return $default_application
         }
 
@@ -400,7 +400,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
 
     method worker_script {application_configuration pool_key} {
         set pool_key [string trim $pool_key]
-        if {$pool_key eq {}} {
+        if {![string length $pool_key]} {
             error "application worker pool key must not be empty"
         }
         set application_descriptor [$application_configuration snapshot]
@@ -527,7 +527,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
             error [dict get $response error]
         }
         set worker_id [dict get $response result]
-        if {$worker_id eq {}} {
+        if {[catch {::thread::exists $worker_id} worker_exists] ||
+                !$worker_exists} {
             error "application pool is exhausted: $key"
         }
 

@@ -83,7 +83,7 @@ namespace eval ::tclwire::runtime {
             if {$chore_started} {
                 catch {::tclwire::chore stop}
             }
-            if {$console_reactor ne {}} {
+            if {[info object isa object $console_reactor]} {
                 catch {$console_reactor destroy}
                 set console_reactor {}
             }
@@ -91,7 +91,7 @@ namespace eval ::tclwire::runtime {
                 catch {$reactor destroy}
             }
             set transport_reactors [dict create]
-            if {$application_dispatcher ne {}} {
+            if {[info object isa object $application_dispatcher]} {
                 catch {$application_dispatcher destroy}
                 set application_dispatcher {}
             }
@@ -120,7 +120,7 @@ namespace eval ::tclwire::runtime {
 
         catch {::tclwire::diagnostics stop}
         catch {::tclwire::chore stop}
-        if {$console_reactor ne {}} {
+        if {[info object isa object $console_reactor]} {
             catch {$console_reactor destroy}
             set console_reactor {}
         }
@@ -128,7 +128,7 @@ namespace eval ::tclwire::runtime {
             catch {$reactor destroy}
         }
         set transport_reactors [dict create]
-        if {$application_dispatcher ne {}} {
+        if {[info object isa object $application_dispatcher]} {
             catch {$application_dispatcher destroy}
             set application_dispatcher {}
         }

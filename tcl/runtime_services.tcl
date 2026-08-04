@@ -20,7 +20,7 @@ namespace eval ::tclwire::runtime {
     proc ensure_application_dispatcher {config} {
         variable application_dispatcher
 
-        if {$application_dispatcher eq {}} {
+        if {![info object isa object $application_dispatcher]} {
             set prepared_docroots {}
             dict for {application_id descriptor} [dict get $config applications] {
                 set docroot [dict get $descriptor docroot]
