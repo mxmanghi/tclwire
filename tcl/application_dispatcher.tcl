@@ -493,7 +493,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
                                      descriptor     [dict create kind        application \
                                                                  application $application_id \
                                                                  family      application \
-                                                                 class       [dict get $descriptor class]]]]
+                                                                 class       [dict get $descriptor class] \
+                                                                 hosts       [dict get $descriptor hosts]]]]
 
             if {![dict get $response ok]} {
                 my stop

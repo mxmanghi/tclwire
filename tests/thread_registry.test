@@ -147,6 +147,38 @@ test thread-registry-1.4 {TPBA-created workers are registered by ThreadMaster} -
     }
 } -result {1 allocated http {} 1}
 
+test thread-registry-1.4a {application workers inherit configured host context} -body {
+    set worker_script [format {
+        lappend auto_path %s
+        package require Thread
+        package require tclwire::accounting 1.2
+
+        proc demand_thread_exit {} {
+            ::thread::release [::thread::id]
+        }
+
+        ::thread::wait
+        catch {::tclwire::accounting remove_thread [::thread::id]}
+    } [list $project_root]]
+
+    set broker [::tclwire::TPBA new]
+    try {
+        $broker create_pool app:hosted $worker_script \
+            [dict create maximum_workers 1] \
+            [dict create kind application family application \
+                         application hosted hosts {app.example.test alias.example.test}]
+        set worker_id [$broker acquire_worker app:hosted]
+        set account [::tclwire::accounting get_thread_account $worker_id]
+        list \
+            [expr {$worker_id ne {}}] \
+            [dict get $account status] \
+            [dict get $account family] \
+            [dict get $account http_host]
+    } finally {
+        $broker destroy
+    }
+} -result {1 allocated application app.example.test}
+
 test thread-registry-1.4.1 {ThreadMaster prunes owned workers with no account} -body {
     set worker_script [format {
         lappend auto_path %s

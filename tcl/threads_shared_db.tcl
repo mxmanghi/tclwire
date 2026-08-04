@@ -28,7 +28,8 @@
 #	- command: command currently or most recently run by the thread
 #	- status: current status (created, allocated, idle, running, terminating)
 #	- family: protocol or execution family assigned by the pool owner
-#	- http_host: current or most recently observed Host header for HTTP(S) workers
+#	- http_host: current or most recently observed Host header for HTTP(S)
+#	             workers, or configured host context for application workers
 #	- running_workload: non-negative integer current workload
 #	- cumulative_workload: non-negative integer cumulative workload
 #	- combined_workload: non-negative integer combined workload index
@@ -105,13 +106,23 @@ namespace eval ::tclwire::accounting {
         return $account
     }
 
-    proc register_thread {tid {status created} {family {}}} {
+    proc register_thread {tid {status created} {family {}} {fields {}}} {
         initialize
+        if {[catch {dict size $fields}]} {
+            error "thread account fields must be a dictionary"
+        }
         ::tsv::lock tclwire {
             if {[::tsv::keylget tclwire accounting $tid thread_d]} {
                 error "Thread $tid account already exists"
             }
-            ::tsv::keylset tclwire accounting $tid [new_thread_account $status $family]
+            set thread_d [new_thread_account $status $family]
+            foreach {field value} $fields {
+                if {$field ni {http_host}} {
+                    error "unknown thread account field '$field'"
+                }
+                dict set thread_d $field $value
+            }
+            ::tsv::keylset tclwire accounting $tid $thread_d
         }
         return $tid
     }

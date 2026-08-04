@@ -44,6 +44,88 @@ test console-protocol-1.1 {PS returns thread accounting rows as JSON table} -bod
     }
 } -result {true table PS 1 1 1 1 1}
 
+test console-protocol-1.1a {PS rows are sorted by family and thread id} -body {
+    set thread_ids {
+        console-sort-http-z
+        console-sort-app-b
+        console-sort-http-a
+        console-sort-app-a
+    }
+    foreach thread_id $thread_ids {
+        catch {::tclwire::accounting remove_thread $thread_id}
+    }
+    try {
+        ::tclwire::accounting register_thread console-sort-http-z running http
+        ::tclwire::accounting register_thread console-sort-app-b running application
+        ::tclwire::accounting register_thread console-sort-http-a running http
+        ::tclwire::accounting register_thread console-sort-app-a running application
+        set response [::json::json2dict [::tclwire::console dispatch PS]]
+        set selected {}
+        foreach row [dict get $response rows] {
+            set thread_id [dict get $row thread_id]
+            if {$thread_id in $thread_ids} {
+                lappend selected [list \
+                    [dict get $row family] \
+                    $thread_id]
+            }
+        }
+        set selected
+    } finally {
+        foreach thread_id $thread_ids {
+            catch {::tclwire::accounting remove_thread $thread_id}
+        }
+    }
+} -result {{application console-sort-app-a} {application console-sort-app-b} {http console-sort-http-a} {http console-sort-http-z}}
+
+test console-protocol-1.1b {PS filters rows by family} -body {
+    set thread_ids {
+        console-filter-http
+        console-filter-application
+        console-filter-ftp
+    }
+    foreach thread_id $thread_ids {
+        catch {::tclwire::accounting remove_thread $thread_id}
+    }
+    try {
+        ::tclwire::accounting register_thread console-filter-http running http
+        ::tclwire::accounting register_thread console-filter-application running application
+        ::tclwire::accounting register_thread console-filter-ftp running ftp
+        set response [::json::json2dict \
+            [::tclwire::console dispatch {PS -family APPLICATION}]]
+        set selected {}
+        foreach row [dict get $response rows] {
+            set thread_id [dict get $row thread_id]
+            if {$thread_id in $thread_ids} {
+                lappend selected [list \
+                    [dict get $row family] \
+                    $thread_id]
+            }
+        }
+        list \
+            [dict get $response ok] \
+            [dict get $response command] \
+            $selected
+    } finally {
+        foreach thread_id $thread_ids {
+            catch {::tclwire::accounting remove_thread $thread_id}
+        }
+    }
+} -result {true PS {{application console-filter-application}}}
+
+test console-protocol-1.1c {PS rejects invalid family filter arguments} -body {
+    set missing [::json::json2dict \
+        [::tclwire::console dispatch {PS -family}]]
+    set unknown [::json::json2dict \
+        [::tclwire::console dispatch {PS -status running}]]
+    list \
+        [dict get $missing ok] \
+        [dict get $missing error code] \
+        [dict get $missing error message] \
+        [dict get $unknown ok] \
+        [dict get $unknown error code] \
+        [dict get $unknown error message]
+} -result {false bad_arguments {missing value after -family} false bad_arguments {unknown PS option: -status}}
+
 test console-protocol-1.2 {CONN returns and filters connection rows} -body {
     set first console-http#1
     set second console-ftp#2
@@ -153,10 +235,11 @@ test console-protocol-1.2b {CONF returns global service and host configuration r
 
 test console-protocol-1.2c {CWORK returns connection worker workload rows} -body {
     set worker_id console-worker-thread
+    set ftp_worker_id console-ftp-worker-thread
     set app_worker_id console-app-thread
     set first console-http#worker-1
     set second console-http#worker-2
-    foreach thread_id [list $worker_id $app_worker_id] {
+    foreach thread_id [list $worker_id $ftp_worker_id $app_worker_id] {
         catch {::tclwire::accounting remove_thread $thread_id}
     }
     foreach key [list $first $second] {
@@ -167,6 +250,10 @@ test console-protocol-1.2c {CWORK returns connection worker workload rows} -body
         ::tclwire::accounting update_thread_workload $worker_id \
             [dict create running_workload 2 cumulative_workload 9 \
                          combined_workload 19]
+        ::tclwire::accounting register_thread $ftp_worker_id idle ftp
+        ::tclwire::accounting update_thread_workload $ftp_worker_id \
+            [dict create running_workload 0 cumulative_workload 3 \
+                         combined_workload 3]
         ::tclwire::accounting register_thread $app_worker_id idle application
         ::tclwire::accounting update_thread_workload $app_worker_id \
             [dict create running_workload 0 cumulative_workload 4 \
@@ -181,7 +268,13 @@ test console-protocol-1.2c {CWORK returns connection worker workload rows} -body
         set rows [dict get $response rows]
         set found 0
         set excluded 1
+        set selected {}
         foreach row $rows {
+            if {[dict get $row worker_id] in [list $worker_id $ftp_worker_id]} {
+                lappend selected [list \
+                    [dict get $row family] \
+                    [dict get $row worker_id]]
+            }
             if {[dict get $row worker_id] eq $worker_id} {
                 set found [expr {
                     [dict get $row connection_state] eq "active" &&
@@ -202,16 +295,17 @@ test console-protocol-1.2c {CWORK returns connection worker workload rows} -body
             [dict get $response command] \
             [dict get $response columns] \
             $found \
-            $excluded
+            $excluded \
+            $selected
     } finally {
-        foreach thread_id [list $worker_id $app_worker_id] {
+        foreach thread_id [list $worker_id $ftp_worker_id $app_worker_id] {
             catch {::tclwire::accounting remove_thread $thread_id}
         }
         foreach key [list $first $second] {
             catch {::tclwire::accounting remove_connection $key}
         }
     }
-} -result {true CWORK {worker_id connection_state family active_connections cumulative_connections combined_workload connection_keys} 1 1}
+} -result {true CWORK {worker_id connection_state family active_connections cumulative_connections combined_workload connection_keys} 1 1 {{ftp console-ftp-worker-thread} {http console-worker-thread}}}
 
 test console-protocol-1.2d {SERVICES returns configured service rows} -body {
     ::tclwire::console configure [dict create \

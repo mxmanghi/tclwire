@@ -145,14 +145,54 @@ namespace eval ::tclwire::console {
         return $row
     }
 
-    proc ps_rows {} {
+    proc compare_ps_rows {left right} {
+        foreach column {family thread_id} {
+            set comparison [string compare \
+                [dict get $left $column] [dict get $right $column]]
+            if {$comparison != 0} {
+                return $comparison
+            }
+        }
+        return 0
+    }
+
+    proc ps_rows {{filter {}}} {
         variable ps_columns
         set rows {}
         dict for {thread_id account} [::tclwire::accounting get_threads_database] {
+            if {[dict exists $filter family] &&
+                    [dict get $account family] ne [dict get $filter family]} {
+                continue
+            }
             dict set account thread_id $thread_id
             lappend rows [row_from_dict $ps_columns $account]
         }
-        return $rows
+        return [lsort -command ::tclwire::console::compare_ps_rows $rows]
+    }
+
+    proc parse_ps_args {args} {
+        set filter [dict create]
+        for {set i 0} {$i < [llength $args]} {incr i} {
+            set option [lindex $args $i]
+            switch -exact -- $option {
+                -family {
+                    incr i
+                    if {$i >= [llength $args]} {
+                        error "missing value after -family"
+                    }
+                    set family [::tclwire::accounting normalize_family \
+                        [lindex $args $i]]
+                    if {$family eq {}} {
+                        error "family must not be empty"
+                    }
+                    dict set filter family $family
+                }
+                default {
+                    error "unknown PS option: $option"
+                }
+            }
+        }
+        return $filter
     }
 
     proc connection_rows {{filter {}}} {
@@ -222,15 +262,20 @@ namespace eval ::tclwire::console {
         return $counts
     }
 
+    proc connection_worker_family {family} {
+        return [expr {$family ne {} && $family ne "application"}]
+    }
+
     proc connection_worker_rows {} {
         variable connection_worker_columns
         set rows {}
         set connection_counts [connection_worker_connection_counts]
-        dict for {thread_id account} [::tclwire::accounting get_threads_database] {
-            set family [dict get $account family]
-            if {$family eq {} || $family eq "application"} {
+        foreach thread_row [ps_rows] {
+            set family [dict get $thread_row family]
+            if {![connection_worker_family $family]} {
                 continue
             }
+            set thread_id [dict get $thread_row thread_id]
             set active_connections 0
             set connection_keys {}
             if {[dict exists $connection_counts $thread_id]} {
@@ -247,8 +292,9 @@ namespace eval ::tclwire::console {
                 connection_state $connection_state \
                 family $family \
                 active_connections $active_connections \
-                cumulative_connections [dict get $account cumulative_workload] \
-                combined_workload [dict get $account combined_workload] \
+                cumulative_connections \
+                    [dict get $thread_row cumulative_workload] \
+                combined_workload [dict get $thread_row combined_workload] \
                 connection_keys $connection_keys]
             lappend rows [row_from_dict $connection_worker_columns $row]
         }
@@ -378,11 +424,11 @@ namespace eval ::tclwire::console {
 
         switch -exact -- $command {
             PS {
-                if {[llength $args] != 0} {
+                if {[catch {parse_ps_args {*}$args} message]} {
                     return [error_message $command bad_arguments \
-                        "PS accepts no arguments"]
+                        $message]
                 }
-                return [table_message $command $ps_columns [ps_rows]]
+                return [table_message $command $ps_columns [ps_rows $message]]
             }
             CONN {
                 if {[catch {parse_connection_args {*}$args} message]} {

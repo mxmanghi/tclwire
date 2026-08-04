@@ -3622,6 +3622,61 @@ test application-dispatcher-1.9b {
     }
 } -result {1 1 1}
 
+test application-dispatcher-1.9bc {
+    application pools carry configured hosts for worker accounting
+} -body {
+    variable ::tclwire::application_test::tpba_commands
+    set ::tclwire::application_test::tpba_commands {}
+    rename ::tclwire::tpba ::tclwire::application_test::real_tpba
+    proc ::tclwire::tpba {subcommand command} {
+        variable ::tclwire::application_test::tpba_commands
+        lappend ::tclwire::application_test::tpba_commands \
+            [list $subcommand $command]
+        switch -exact -- $subcommand {
+            request {
+                switch -exact -- [dict get $command operation] {
+                    pool_key {
+                        return [dict create ok true result \
+                            app:[dict get $command descriptor application]]
+                    }
+                    create_pool {
+                        return [dict create ok true result \
+                            [dict get $command pool_key]]
+                    }
+                    destroy_pool {
+                        return [dict create ok true result \
+                            [dict get $command pool_key]]
+                    }
+                }
+            }
+        }
+        error "unexpected TPBA call: $subcommand $command"
+    }
+    set dispatcher {}
+    try {
+        set config $application_config
+        dict set config applications default hosts {example.test www.example.test}
+        set dispatcher [::tclwire::ApplicationDispatcher new $config]
+        $dispatcher start
+        set host_context {}
+        foreach call $::tclwire::application_test::tpba_commands {
+            lassign $call subcommand command
+            if {$subcommand eq "request" &&
+                    [dict get $command operation] eq "create_pool"} {
+                set host_context [dict get $command descriptor hosts]
+            }
+        }
+        set host_context
+    } finally {
+        if {$dispatcher ne {}} {
+            catch {$dispatcher destroy}
+        }
+        rename ::tclwire::tpba {}
+        rename ::tclwire::application_test::real_tpba ::tclwire::tpba
+        unset -nocomplain ::tclwire::application_test::tpba_commands
+    }
+} -result {example.test www.example.test}
+
 test application-dispatcher-1.9bb {
     worker scripts initialize applications before waiting and shutdown after
 } -body {

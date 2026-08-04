@@ -196,6 +196,7 @@ namespace eval ::tclwire {}
     variable workload_db
     variable eligible_threads_list
     variable eligible_threads_head
+    variable initial_thread_account_fields
 
     constructor {tscript {mtn 100} {family {}}} {
         set max_threads_number  $mtn
@@ -208,11 +209,20 @@ namespace eval ::tclwire {}
         set workload_db         [dict create]
         set eligible_threads_list {}
         set eligible_threads_head 0
+        set initial_thread_account_fields [dict create]
     }
 
     # Boundary rule:
     # ::tclwire::accounting is the shared ledger visible to workers and
     # inspectors. ThreadMaster owns pool policy and lifecycle transitions.
+
+    method configure_initial_thread_account_fields {account_fields} {
+        #if {[catch {dict size $account_fields}]} {
+        #    error "initial thread account fields must be a dictionary"
+        #}
+        set initial_thread_account_fields $account_fields
+        return $initial_thread_account_fields
+    }
 
     method accounting_snapshot {} {
         set snapshot [dict create]
@@ -461,7 +471,8 @@ namespace eval ::tclwire {}
             # New workers have no workload.  Publish them as idle so the
             # selected metric inserts them into its authoritative eligibility
             # structure before they can be allocated.
-            $accounting register_thread $thread_id idle $thread_family
+            $accounting register_thread \
+                $thread_id idle $thread_family $initial_thread_account_fields
             my store_workload_record $thread_id [my workload_record $thread_id 0 0]
             my thread_workload_changed $thread_id thread-start
         } error options]} {

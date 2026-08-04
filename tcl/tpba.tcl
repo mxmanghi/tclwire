@@ -167,6 +167,35 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         return {}
     }
 
+    method initial_thread_account_fields {pool_descriptor} {
+        set account_fields [dict create]
+        if {[dict exists $pool_descriptor http_host]} {
+            dict set account_fields http_host \
+                [string trim [dict get $pool_descriptor http_host]]
+            return $account_fields
+        }
+
+        set pool_kind {}
+        if {[dict exists $pool_descriptor kind]} {
+            set pool_kind [string tolower \
+                [string trim [dict get $pool_descriptor kind]]]
+        } elseif {[dict exists $pool_descriptor role]} {
+            set pool_kind [string tolower \
+                [string trim [dict get $pool_descriptor role]]]
+        }
+        if {$pool_kind ni {application app} ||
+                ![dict exists $pool_descriptor hosts]} {
+            return $account_fields
+        }
+
+        set configured_hosts [dict get $pool_descriptor hosts]
+        if {[llength $configured_hosts] > 0} {
+            dict set account_fields http_host \
+                [string trim [lindex $configured_hosts 0]]
+        }
+        return $account_fields
+    }
+
     method create_pool {pool_key worker_script {policy {}} {descriptor {}}} {
         if {![string length [string trim $pool_key]]} {
             set pool_key [my pool_key $descriptor]
@@ -187,6 +216,14 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
         set maximum_workers [dict get $policy maximum_workers]
         set family [my pool_family $descriptor]
         set master [{*}$thread_master_factory new $worker_script $maximum_workers $family]
+        if {[catch {
+            $master configure_initial_thread_account_fields \
+                [my initial_thread_account_fields $descriptor]
+        } error options] &&
+                ![string match {unknown method "configure_initial_thread_account_fields"*} $error]} {
+            catch {$master destroy}
+            return -options $options $error
+        }
         if {[catch {$master configure_metric [my metric_class $descriptor] $policy} \
                 metric_error metric_options] &&
                 ![string match {unknown method "configure_metric"*} $metric_error]} {
@@ -469,6 +506,7 @@ oo::class create ::tclwire::ThreadPoolsBrokerAgent {
                 normalize_pool_key \
                 normalize_policy \
                 pool_family     \
+                initial_thread_account_fields \
                 require_pool    \
                 metric_class    \
                 dispatch_workload_notification
