@@ -37,6 +37,18 @@ namespace eval ::toml {
     variable infile
 }
 
+proc ::toml::multilineQuote {string} {
+    set delimiter [string range $string 0 2]
+    if {$delimiter eq "\"\"\"" || $delimiter eq "'''"} {
+        return $delimiter
+    }
+    return ""
+}
+
+proc ::toml::multilineTerminator {string delimiter} {
+    return [string first $delimiter $string 3]
+}
+
 # stripComment --
 #     Strip off the comment - watch out for embedded "#" characters
 #
@@ -48,6 +60,7 @@ namespace eval ::toml {
 #
 proc ::toml::stripComment {line} {
     set quote ""
+    set quotelen 0
     set escaped 0
 
     for {set index 0} {$index < [string length $line]} {incr index} {
@@ -57,8 +70,25 @@ proc ::toml::stripComment {line} {
             if {$character eq "#"} {
                 return [string range $line 0 $index-1]
             }
+            set delimiter [string range $line $index $index+2]
+            if {$delimiter eq "\"\"\"" || $delimiter eq "'''"} {
+                set quote $character
+                set quotelen 3
+                incr index 2
+                continue
+            }
             if {$character eq "\"" || $character eq "'"} {
                 set quote $character
+                set quotelen 1
+            }
+            continue
+        }
+
+        if {$quotelen == 3} {
+            if {[string range $line $index $index+2] eq [string repeat $quote 3]} {
+                set quote ""
+                set quotelen 0
+                incr index 2
             }
             continue
         }
@@ -76,6 +106,7 @@ proc ::toml::stripComment {line} {
 
         if {$character eq $quote} {
             set quote ""
+            set quotelen 0
         }
     }
 
@@ -114,23 +145,36 @@ proc ::toml::stripQuotes {string} {
 proc ::toml::loadAllLines {string} {
     variable infile
 
-    set quoting [string range $string 0 2]
+    set quoting [multilineQuote $string]
+    if {$quoting eq ""} {
+        return -code error "Syntax error in multiline string: $string"
+    }
 
     #
     # Do we need to load more?
     #
-    if { [string range $string end-2 end] ne $quoting } {
+    set terminator [multilineTerminator $string $quoting]
 
+    if { $terminator < 0 } {
         while { [gets $infile line] >= 0 } {
             append string "\n$line"
+            set terminator [multilineTerminator $string $quoting]
 
-            if { [string range $line end-2 end] eq $quoting } {
+            if { $terminator >= 0 } {
                 break
             }
         }
     }
 
-    return [string range $string 3 end-3]
+    if { $terminator < 0 } {
+        return -code error "Unterminated multiline string"
+    }
+
+    set value [string range $string 3 $terminator-1]
+    if { [string index $value 0] eq "\n" } {
+        set value [string range $value 1 end]
+    }
+    return $value
 }
 
 # makeList --
@@ -260,7 +304,7 @@ proc ::toml::keyValuePair {line} {
     #
     # Is this a value that may span several lines? If so, load all lines
     #
-    if { [string range $value 0 2] eq "\"\"\"" || [string range $value 0 2] eq "'''" } {
+    if { [multilineQuote $value] ne "" } {
         set value [loadAllLines $value]
 
     } elseif { [string index $value 0] eq "\[" } {

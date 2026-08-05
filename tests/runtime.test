@@ -822,6 +822,7 @@ port = 8081
         admin admin@example.test \
         errorlog [file normalize [file join [temporaryDirectory] tclwire-config-[pid] logs apache.err]] \
         server_path /main \
+        aliases {} \
         class ::example::Application \
         environment stdchans \
         configure [dict create \
@@ -830,6 +831,56 @@ port = 8081
         libdir [file normalize [file join [temporaryDirectory] tclwire-config-[pid] site-lib]] \
         file [file join apps example.tcl] \
         pool_policy [dict create minimum_workers 2 maximum_workers 7]]]
+
+test runtime-1.12aa {
+    aliases inherit globally and application aliases take precedence
+} -setup {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+aliases = '''
+Alias /global/ shared
+/override/ global-target
+'''
+
+[http]
+enabled = true
+
+[http.default]
+aliases = '''
+/override/ app-target
+/app/ app-only
+'''
+
+[http.site]
+docroot = "site-www"
+aliases = '''
+/site/ site-only
+'''
+}]
+} -body {
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    list \
+        [dict get $config aliases] \
+        [dict get $config applications default aliases] \
+        [dict get $config applications site aliases]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    [list \
+        [dict create url_path /global/ local_path shared] \
+        [dict create url_path /override/ local_path global-target]] \
+    [list \
+        [dict create url_path /override/ local_path app-target] \
+        [dict create url_path /app/ local_path app-only] \
+        [dict create url_path /global/ local_path shared] \
+        [dict create url_path /override/ local_path global-target]] \
+    [list \
+        [dict create url_path /site/ local_path site-only] \
+        [dict create url_path /override/ local_path app-target] \
+        [dict create url_path /app/ local_path app-only] \
+        [dict create url_path /global/ local_path shared] \
+        [dict create url_path /override/ local_path global-target]]]
 
 test runtime-1.12a {
     application environment can provide the application class omitted by TOML
@@ -1275,6 +1326,7 @@ maximum_workers = 12
         admin {} \
         errorlog [file normalize /tmp/tclwire-err.log] \
         server_path {} \
+        aliases {} \
         class ::example::Application \
         package example::application \
         hosts one.example.test \
@@ -1287,6 +1339,7 @@ maximum_workers = 12
         admin {} \
         errorlog [file normalize /tmp/tclwire-err.log] \
         server_path {} \
+        aliases {} \
         class ::example::Application \
         package example::application \
         hosts {two.example.test www.two.example.test} \

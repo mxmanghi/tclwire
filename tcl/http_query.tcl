@@ -2,6 +2,8 @@
 #
 # Reusable URL query decoding for HTTP applications.
 
+package require tclwire::constants 0.1
+
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::http::query {
@@ -35,7 +37,7 @@ namespace eval ::tclwire::http::query {
     }
 
     proc decode_component {urlencoded_component} {
-        set decoded_bytes [binary format a* {}]
+        set decoded_bytes $::tclwire::constants::empty_bytearray
 
         for {set character_index 0} {
             $character_index < [string length $urlencoded_component]

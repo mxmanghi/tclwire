@@ -137,6 +137,13 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
   `localhost 127.0.0.1`, while a renamed default application without explicit
   hosts uses its application ID.
 
+`tclwire.aliases`
+: Multiline URL-to-local-path alias rules inherited by HTTP and HTTPS
+  applications. Each nonblank line is either `URL-path local-path` or
+  `Alias URL-path local-path`. The URL path must begin with `/`. A relative
+  local path is resolved under each application's `docroot`; an absolute local
+  path is used as-is after normalization.
+
 `--help`
 : Prints runtime usage and returns a prepared configuration without starting
   the server.
@@ -241,6 +248,14 @@ then from global runtime defaults.
 `docroot`
 : Application document root. Inherits from the global `docroot` unless
   overridden.
+
+`aliases`
+: Application-specific URL-to-local-path alias rules. The format is the same
+  as `tclwire.aliases`. Application rules are searched before inherited rules,
+  so they can override a global or default-application prefix and still extend
+  the inherited set. TclWire currently supports only simple prefix aliases in
+  the style of Apache `mod_alias`: the unmatched URL suffix is appended to the
+  target path.
 
 `encoding`
 : Application text encoding. Defaults to `tclwire.encoding` and must be known

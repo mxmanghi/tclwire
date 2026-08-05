@@ -5,6 +5,7 @@ set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
 
 package require Thread
+package require tclwire::constants 0.1
 package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
 package require tclwire::application::tools 0.1
@@ -268,7 +269,7 @@ test http-request-1.2 {HTTP request exposes Content-Type parameters} -body {
 
 test http-request-1.3 {HTTP request exposes multipart form fields and files} -body {
     set boundary AaB03x
-    set body [binary format a* {}]
+    set body $::tclwire::constants::empty_bytearray
     append body "--$boundary\r\n"
     append body "Content-Disposition: form-data; name=\"field\"\r\n\r\n"
     append body "value1\r\n"
@@ -3976,10 +3977,15 @@ test application-1.3 {CApplication maps URL paths beneath its document root} -bo
         docroot $docroot \
         encoding utf-8]]
     try {
+        set literal_null_path "/assets/[binary format c 0]hello.txt"
         list \
             [$application local_path /assets/hello.txt] \
             [$application local_path /assets/../hello.txt] \
-            [$application local_path /%2e%2e/secret.txt]
+            [$application local_path /%2e%2e/secret.txt] \
+            [catch {$application local_path $literal_null_path} literal_message] \
+            $literal_message \
+            [catch {$application local_path /assets/%00hello.txt} message] \
+            $message
     } finally {
         $application destroy
         file delete -force $docroot
@@ -3987,7 +3993,11 @@ test application-1.3 {CApplication maps URL paths beneath its document root} -bo
 } -result [list \
     [file join [temporaryDirectory] tclwire-application-[pid] assets hello.txt] \
     {} \
-    {}]
+    {} \
+    1 \
+    {URL path contains a null byte} \
+    1 \
+    {URL path contains a null byte}]
 
 test application-1.3a {CApplication defaults directory indexes to index.html} -body {
     set docroot [file join [temporaryDirectory] tclwire-application-index-[pid]]
@@ -4011,6 +4021,41 @@ test application-1.3a {CApplication defaults directory indexes to index.html} -b
 } -result [list \
     index.html \
     [file join [temporaryDirectory] tclwire-application-index-[pid] index.html]]
+
+test application-1.3aa {CApplication resolves configured aliases before docroot paths} -body {
+    set docroot [file join [temporaryDirectory] tclwire-application-alias-[pid]]
+    set absolute_root [file join [temporaryDirectory] tclwire-absolute-alias-[pid]]
+    file mkdir [file join $docroot public]
+    file mkdir [file join $docroot relative docs]
+    file mkdir [file join $absolute_root files]
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot public same.txt] docroot
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $docroot relative docs same.txt] relative
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $absolute_root files same.txt] absolute
+    set application [::tclwire::CApplication new [dict create \
+        class ::tclwire::CApplication \
+        package tclwire::application \
+        hosts localhost \
+        docroot $docroot \
+        encoding utf-8 \
+        aliases [list \
+            [dict create url_path /public/ local_path [file join $absolute_root files]] \
+            [dict create url_path /docs local_path relative/docs]]]]
+    try {
+        list \
+            [$application local_path /public/same.txt] \
+            [$application local_path /docs/same.txt] \
+            [$application local_path /docsmore/same.txt]
+    } finally {
+        $application destroy
+        file delete -force $docroot $absolute_root
+    }
+} -result [list \
+    [file join [temporaryDirectory] tclwire-absolute-alias-[pid] files same.txt] \
+    [file join [temporaryDirectory] tclwire-application-alias-[pid] relative docs same.txt] \
+    {}]
 
 test application-1.3b {CApplication searches configured directory index names} -body {
     set docroot [file join [temporaryDirectory] tclwire-application-index-[pid]]

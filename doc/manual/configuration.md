@@ -18,3 +18,12 @@ This chapter will explain TclWire configuration as a user-facing model.
 - `runtime-doc/CONFIGURATION_OPTIONS.md`
 - `tclwire.toml.example`
 - `tcl/application_configuration.tcl`
+
+## Application Aliases
+
+`aliases` can be configured globally under `[tclwire]` or per application under
+`[http.<application>]` and `[https.<application>]`. The value is multiline; each
+nonblank line is either `URL-path local-path` or `Alias URL-path local-path`.
+Relative local paths are resolved under the selected application's `docroot`.
+Application aliases are searched before inherited aliases, so applications can
+override or extend global/default rules.

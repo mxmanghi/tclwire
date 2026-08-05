@@ -39,6 +39,14 @@ max_request_bytes = 16777216
 max_header_bytes = 65536
 request_memory_threshold = 1048576
 
+# Optional global URL path aliases inherited by applications. Each nonblank
+# line is either "URL-path local-path" or "Alias URL-path local-path".
+# Relative local paths are resolved under the selected application's docroot.
+# aliases = '''
+# Alias /shared/ shared-files
+# /downloads/ /srv/downloads
+# '''
+
 # When true, closed connection records remain in the shared accounting store
 # and CONN includes close diagnostics.
 # debug_connection = true
@@ -125,6 +133,12 @@ maximum_workers = 20
 # least to most severe: trace8 through trace1, debug, info, notice, warn,
 # error, crit, alert, emerg.
 # log_level = "debug"
+
+# Optional application aliases are searched before inherited aliases, so they
+# can override or extend [tclwire].aliases and [http.default].aliases.
+# aliases = '''
+# /assets/ public/assets
+# '''
 
 # A virtual host can override only what differs from the default application.
 #

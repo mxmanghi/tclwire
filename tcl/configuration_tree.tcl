@@ -32,7 +32,7 @@ namespace eval ::tclwire::configuration {
         application_configs applications configure pool_policy values
     }
     variable list_fields {
-        application_paths args environment hosts paths server_chores services startservers
+        aliases application_paths args environment hosts paths server_chores services startservers
     }
 
     proc tree {configuration {sink {}}} {

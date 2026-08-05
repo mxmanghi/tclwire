@@ -58,4 +58,40 @@ class = "::example::Application"
     removeFile $config_file
 } -result [list www.example.test ::example::Application]
 
+test toml-1.7 {triple double quoted multiline values preserve embedded content} -setup {
+    set config_file [makeFile {
+[application]
+arguments = """
+--title "quoted # title"
+--path /tmp/example
+""" # trailing comment
+next = "value"
+} toml-multiline-double.toml]
+} -body {
+    set config [::toml::tomlParse $config_file]
+    list \
+        [dict get $config application arguments] \
+        [dict get $config application next]
+} -cleanup {
+    removeFile $config_file
+} -result [list "--title \"quoted # title\"\n--path /tmp/example\n" value]
+
+test toml-1.8 {triple single quoted multiline values preserve embedded content} -setup {
+    set config_file [makeFile {
+[application]
+arguments = '''
+--script {puts "hello # world"}
+--literal backslash\value
+''' # trailing comment
+next = 'value'
+} toml-multiline-single.toml]
+} -body {
+    set config [::toml::tomlParse $config_file]
+    list \
+        [dict get $config application arguments] \
+        [dict get $config application next]
+} -cleanup {
+    removeFile $config_file
+} -result [list "--script {puts \"hello # world\"}\n--literal backslash\\value\n" value]
+
 cleanupTests

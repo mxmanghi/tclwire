@@ -2,6 +2,8 @@
 #
 # Reusable HTTP byte-range parsing and multipart response construction.
 
+package require tclwire::constants 0.1
+
 namespace eval ::tclwire::http::range {
     # Classify the raw value following the `Range:` field name. For example,
     # `Range: bytes=2-5,8-9` supplies `bytes=2-5,8-9` as range_value.
@@ -60,7 +62,7 @@ namespace eval ::tclwire::http::range {
     proc multipart_part {
         data start end content_type total_length boundary
     } {
-        set part [binary format a* {}]
+        set part $::tclwire::constants::empty_bytearray
         append part "--$boundary\r\n"
         append part "Content-Type: $content_type\r\n"
         append part "Content-Range: bytes $start-$end/$total_length\r\n\r\n"

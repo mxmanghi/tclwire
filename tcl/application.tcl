@@ -17,6 +17,7 @@
 # providers while retaining the HTTP request and response machinery.
 
 package require TclOO
+package require tclwire::constants 0.1
 package require tclwire::application_configuration 0.1
 package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
@@ -30,7 +31,7 @@ package require fileutil
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::CApplication {
-    variable configuration_object document_root content_encoding directory_index
+    variable configuration_object document_root content_encoding directory_index aliases
 
     constructor {application_descriptor} {
         if {[catch {dict size $application_descriptor}]} {
@@ -50,6 +51,7 @@ oo::class create ::tclwire::CApplication {
         foreach {property value} [list class       [info object class [self]] \
                                        hosts       {} \
                                        application_paths [list [dict get $application_descriptor docroot]] \
+                                       aliases     {} \
                                        package     tclwire::application] {
             if {![dict exists $complete_descriptor $property]} {
                 dict set complete_descriptor $property $value
@@ -60,6 +62,7 @@ oo::class create ::tclwire::CApplication {
         set document_root    [file normalize [dict get $application_descriptor docroot]]
         set content_encoding [dict get $application_descriptor encoding]
         set directory_index  [my configured_directory_index]
+        set aliases          [dict get $complete_descriptor aliases]
     }
 
     method configuration_object {} {
@@ -85,8 +88,7 @@ oo::class create ::tclwire::CApplication {
     }
 
     method configured_directory_index {} {
-        set options [dict create \
-            directory_index [list index.html]]
+        set options [dict create directory_index [list index.html]]
         foreach class_name [list ::tclwire::CApplication [info object class [self]]] {
             set class_options [$configuration_object class_configuration $class_name]
             if {$class_options ne {}} {
@@ -151,13 +153,12 @@ oo::class create ::tclwire::CApplication {
     }
 
     method decode_path {path} {
-        if {[string first "\x00" $path] >= 0} {
-            error "URL path contains a null byte"
-        }
-
-        set bytes [binary format a* {}]
+        set bytes $::tclwire::constants::empty_bytearray
         for {set i 0} {$i < [string length $path]} {incr i} {
             set character [string index $path $i]
+            if {$character eq "\x00"} {
+                error "URL path contains a null byte"
+            }
             if {$character eq "%"} {
                 if {$i + 2 >= [string length $path]} {
                     error "incomplete percent escape in URL path"
@@ -165,6 +166,9 @@ oo::class create ::tclwire::CApplication {
                 set hex [string range $path $i+1 $i+2]
                 if {![regexp {^[0-9A-Fa-f]{2}$} $hex]} {
                     error "invalid percent escape in URL path"
+                }
+                if {$hex eq "00"} {
+                    error "URL path contains a null byte"
                 }
                 append bytes [binary format H2 $hex]
                 incr i 2
@@ -184,7 +188,11 @@ oo::class create ::tclwire::CApplication {
     }
 
     method resolve_path {url_path} {
-        set candidate [my url_file_candidate $url_path]
+        set path [my decode_path $url_path]
+        set candidate [my alias_file_candidate $path]
+        if {$candidate eq {}} {
+            set candidate [my path_file_candidate $path]
+        }
         if {$candidate eq {}} {
             return {}
         }
@@ -209,6 +217,10 @@ oo::class create ::tclwire::CApplication {
 
     method url_file_candidate {url_path} {
         set path [my decode_path $url_path]
+        return [my path_file_candidate $path]
+    }
+
+    method path_file_candidate {path} {
         if {![string match "/*" $path] || [string first "\\" $path] >= 0} {
             return {}
         }
@@ -230,10 +242,35 @@ oo::class create ::tclwire::CApplication {
         set candidate [file normalize [file join [my document_root] {*}$segments]]
         set root [my document_root]
         if {($candidate ne $root) && \
-            ![string match "${root}[file separator]*" $candidate]} {
+             ![string match "${root}[file separator]*" $candidate]} {
             return {}
         }
         return [file normalize $candidate]
+    }
+
+    method alias_matches {prefix path} {
+        if {[string match */ $prefix]} {
+            return [string match "${prefix}*" $path]
+        }
+        return [expr {$path eq $prefix || [string match "${prefix}/*" $path]}]
+    }
+
+    method alias_file_candidate {path} {
+        foreach alias $aliases {
+            set prefix [dict get $alias url_path]
+            if {![my alias_matches $prefix $path]} { continue }
+            set suffix [string range $path [string length $prefix] end]
+            set suffix [string trimleft $suffix /]
+            set target [dict get $alias local_path]
+            if {[file pathtype $target] eq "absolute"} {
+                set candidate [file normalize [file join $target $suffix]]
+            } else {
+                set candidate [file normalize \
+                    [file join [my document_root] $target $suffix]]
+            }
+            return $candidate
+        }
+        return {}
     }
 
     method log_file_resolution {request status resolved_path {level debug}} {
@@ -352,7 +389,7 @@ oo::class create ::tclwire::CApplication {
         set boundary [::tclwire::http::range boundary]
         set content_type [dict get $resource content_type]
         set length [dict get $resource length]
-        set body [binary format a* {}]
+        set body $::tclwire::constants::empty_bytearray
         foreach range $ranges {
             lassign $range start end
             set data [my read_file_range [dict get $resource path] $start $end]
@@ -427,13 +464,14 @@ oo::class create ::tclwire::CApplication {
         return
     }
 
-    unexport configured_directory_index decode_path directory_index_candidate \
-        directory_index_resolution resolve_path \
-        file_resource log_file_resolution read_file \
-        read_file_range resource_headers send_error \
-        serve_complete_file serve_content_ranges serve_file_metadata \
-        serve_file_ranges serve_single_range serve_unsatisfiable_range \
-        url_file_candidate
+    unexport    alias_file_candidate alias_matches \
+                configured_directory_index decode_path directory_index_candidate \
+                directory_index_resolution resolve_path \
+                file_resource log_file_resolution read_file \
+                read_file_range resource_headers send_error path_file_candidate \
+                serve_complete_file serve_content_ranges serve_file_metadata \
+                serve_file_ranges serve_single_range serve_unsatisfiable_range \
+                url_file_candidate
 }
 
 package provide tclwire::application 0.1

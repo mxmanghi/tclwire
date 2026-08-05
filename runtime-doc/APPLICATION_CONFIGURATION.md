@@ -36,6 +36,7 @@ chore_class {}
 libdir {}
 environment {}
 configure {}
+aliases {}
 log_level {}
 reload_on_request 0
 retain_uploaded_files 0
@@ -51,6 +52,7 @@ The constructor validates:
 
 - `file` and `chore` when present;
 - `hosts` and `application_paths` list shape;
+- `aliases` list entries, each with `url_path` and `local_path`;
 - `configure` dictionary shape;
 - `pool_policy.minimum_workers` and `pool_policy.maximum_workers`;
 - boolean options;

@@ -197,12 +197,14 @@ oo::class create ::tclwire::HttpRequest {
     variable multipart_parts_cached
 
     constructor {request_descriptor} {
+
         # Construction is the descriptor-to-object pivot.  The CGA passes a
         # dictionary copied from the connection thread; this object keeps that
         # dictionary as its request-scoped state and exposes it through methods.
         if {[catch {dict size $request_descriptor}]} {
             error "HTTP request descriptor must be a dictionary"
         }
+
         # Older descriptors used path as the application URL path.  Keep a
         # url_path alias so newer code can ask for the URL-derived path even if
         # application path mapping later changes path.

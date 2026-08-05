@@ -187,6 +187,50 @@ namespace eval ::tclwire::runtime {
         return [file normalize [file join $config_dir $value]]
     }
 
+    proc parse_application_aliases {name value} {
+        set aliases {}
+        set line_number 0
+        foreach line [split $value "\n"] {
+            incr line_number
+            set line [string trim $line]
+            if {$line eq {}} {
+                continue
+            }
+            if {[string match "#*" $line]} {
+                continue
+            }
+            if {[catch {llength $line} count]} {
+                usage_error "invalid alias rule in $name line $line_number: $line"
+            }
+            if {$count == 3 && [string equal -nocase [lindex $line 0] Alias]} {
+                set line [lrange $line 1 end]
+                set count 2
+            }
+            if {$count != 2} {
+                usage_error "invalid alias rule in $name line $line_number: $line"
+            }
+            lassign $line url_path local_path
+            if {![string match /* $url_path]} {
+                usage_error "alias URL path in $name line $line_number must be absolute: $url_path"
+            }
+            if {$local_path eq {}} {
+                usage_error "alias local path in $name line $line_number must not be empty"
+            }
+            lappend aliases [dict create url_path $url_path local_path $local_path]
+        }
+        return $aliases
+    }
+
+    proc merge_application_aliases {base override} {
+        if {![dict exists $base aliases] || ![dict exists $override aliases]} {
+            return $override
+        }
+        dict set override aliases [concat \
+            [dict get $override aliases] \
+            [dict get $base aliases]]
+        return $override
+    }
+
     proc unique_directories {directories} {
         set result {}
         foreach directory $directories {
@@ -266,7 +310,7 @@ namespace eval ::tclwire::runtime {
             class package hosts encoding log_level reload_on_request
             retain_uploaded_files configure docroot libdir file environment
             hostname admin errorlog server_path
-            minimum_workers maximum_workers
+            aliases minimum_workers maximum_workers
         }}]
     }
 
@@ -354,6 +398,7 @@ namespace eval ::tclwire::runtime {
         set hostname            {}
         set admin               {}
         set server_path         {}
+        set aliases             {}
         set log_level           info
         set conn_max_wait       1000
         set conn_max_workers    100
@@ -405,6 +450,7 @@ namespace eval ::tclwire::runtime {
                             admin        $admin \
                             errorlog     $logerr \
                             server_path  $server_path \
+                            aliases      $aliases \
                             log_level    $log_level \
                             conn_max_wait $conn_max_wait \
                             conn_max_workers $conn_max_workers \
@@ -464,7 +510,12 @@ namespace eval ::tclwire::runtime {
             # built-in defaults in one dictionary operation.
             set config [dict merge $config \
                 [dict filter $global key \
-                    host encoding default_application hostname admin server_path]]
+                    host encoding default_application hostname admin server_path aliases]]
+            if {[dict exists $global aliases]} {
+                dict set config aliases \
+                    [parse_application_aliases tclwire.aliases \
+                        [dict get $global aliases]]
+            }
             if {[dict exists $global errorlog]} {
                 dict set config errorlog [resolve_config_path $config_dir \
                     [dict get $global errorlog]]
@@ -655,7 +706,13 @@ namespace eval ::tclwire::runtime {
                 set application [dict filter $descriptor key \
                     class package hosts encoding log_level reload_on_request \
                     retain_uploaded_files chore chore_class environment \
-                    hostname admin server_path]
+                    hostname admin server_path aliases]
+                if {[dict exists $descriptor aliases]} {
+                    dict set application aliases \
+                        [parse_application_aliases \
+                            "$protocol.$application_id.aliases" \
+                            [dict get $descriptor aliases]]
+                }
                 if {[dict exists $descriptor configure]} {
                     dict set application configure [dict get $descriptor configure]
                 }
@@ -734,6 +791,8 @@ namespace eval ::tclwire::runtime {
                     }
                     set descriptor [merge_nested_dict_field \
                         $inherited $descriptor configure]
+                    set descriptor [merge_application_aliases \
+                        $inherited $descriptor]
                     set descriptor [dict merge $inherited $descriptor]
                     if {!$explicit_chore && [dict exists $descriptor chore]} {
                         dict unset descriptor chore
@@ -1004,14 +1063,18 @@ namespace eval ::tclwire::runtime {
             # The named default application is the template for every
             # host-specific application. Global runtime values remain the
             # fallback for fields omitted by the default itself.
-            set inherited [dict merge [dict create \
+            set global_defaults [dict create \
                 docroot [dict get $config docroot] \
                 encoding [dict get $config encoding] \
                 hostname [expr {[dict get $config hostname] ne {} ? \
                     [dict get $config hostname] : [dict get $config host]}] \
                 admin [dict get $config admin] \
                 errorlog [dict get $config errorlog] \
-                server_path [dict get $config server_path]] $default_descriptor]
+                server_path [dict get $config server_path] \
+                aliases [dict get $config aliases]]
+            set inherited [merge_application_aliases \
+                $global_defaults $default_descriptor]
+            set inherited [dict merge $global_defaults $inherited]
             if {$application_id eq $default_application} {
                 set descriptor $inherited
             } else {
@@ -1023,6 +1086,8 @@ namespace eval ::tclwire::runtime {
                 }
                 set descriptor [merge_nested_dict_field \
                     $inherited $descriptor configure]
+                set descriptor [merge_application_aliases \
+                    $inherited $descriptor]
                 set descriptor [dict merge $inherited $descriptor]
                 if {!$explicit_chore && [dict exists $descriptor chore]} {
                     dict unset descriptor chore

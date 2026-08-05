@@ -147,6 +147,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   admin       {} \
                                   errorlog    {} \
                                   server_path {} \
+                                  aliases     {} \
                                   reload_on_request 0 \
                                   retain_uploaded_files 0 \
                                   pool_policy [dict create minimum_workers 0 maximum_workers 20]]
@@ -172,8 +173,25 @@ oo::class create ::tclwire::ApplicationConfiguration {
         }
         if {[catch {llength [dict get $values hosts]}] ||
                 [catch {llength [dict get $values application_paths]}] ||
+                [catch {llength [dict get $values aliases]}] ||
                 [catch {llength [dict get $values environment]}]} {
-            error "application '$id' hosts, application_paths, and environment must be lists"
+            error "application '$id' hosts, application_paths, aliases, and environment must be lists"
+        }
+        foreach alias [dict get $values aliases] {
+            if {[catch {dict size $alias}]} {
+                error "application '$id' aliases entries must be dictionaries"
+            }
+            foreach property {url_path local_path} {
+                if {![dict exists $alias $property]} {
+                    error "application '$id' alias is missing $property"
+                }
+            }
+            if {![string match /* [dict get $alias url_path]]} {
+                error "application '$id' alias URL path must be absolute"
+            }
+            if {[dict get $alias local_path] eq {}} {
+                error "application '$id' alias local path must not be empty"
+            }
         }
         if {[catch {
             set pool_policy [dict merge [dict get $defaults pool_policy] \
@@ -273,7 +291,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
     }
 
     foreach property {
-        class hosts docroot encoding application_paths package file chore chore_class libdir
+        class hosts docroot encoding application_paths aliases package file chore chore_class libdir
         environment log_level reload_on_request retain_uploaded_files pool_policy
     } {
         method $property {} [format {my get %s} [list $property]]

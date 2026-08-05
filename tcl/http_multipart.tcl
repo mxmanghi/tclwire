@@ -2,6 +2,7 @@
 #
 # MIME multipart parsing for HTTP request bodies.
 
+package require tclwire::constants 0.1
 package require tclwire::http::message 0.1
 
 namespace eval ::tclwire {}
@@ -276,12 +277,12 @@ oo::class create ::tclwire::http::multipart::IncrementalParser {
         set boundary [dict get $content_info parameters boundary]
         set upload_area $area
         set state first_boundary
-        set buffer [binary format a* {}]
+        set buffer $::tclwire::constants::empty_bytearray
         set parts {}
         set current_part {}
         set current_channel {}
         set current_path {}
-        set current_body [binary format a* {}]
+        set current_body $::tclwire::constants::empty_bytearray
     }
 
     destructor {
@@ -386,7 +387,7 @@ oo::class create ::tclwire::http::multipart::IncrementalParser {
                 dict set current_part $field [dict get $disposition parameters $field]
             }
         }
-        set current_body [binary format a* {}]
+        set current_body $::tclwire::constants::empty_bytearray
         set current_channel {}
         set current_path {}
         if {[dict exists $current_part filename]} {
@@ -421,7 +422,7 @@ oo::class create ::tclwire::http::multipart::IncrementalParser {
         }
         lappend parts $current_part
         set current_part {}
-        set current_body [binary format a* {}]
+        set current_body $::tclwire::constants::empty_bytearray
         return
     }
 

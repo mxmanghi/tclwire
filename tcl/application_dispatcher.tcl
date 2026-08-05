@@ -46,6 +46,10 @@ oo::class create ::tclwire::ApplicationDispatcher {
         if {[dict exists $application_config encoding]} {
             set default_encoding [dict get $application_config encoding]
         }
+        set default_aliases {}
+        if {[dict exists $application_config aliases]} {
+            set default_aliases [dict get $application_config aliases]
+        }
         set server_defaults [dict create hostname    {} \
                                          admin       {} \
                                          errorlog    {} \
@@ -74,6 +78,12 @@ oo::class create ::tclwire::ApplicationDispatcher {
 
         set default_descriptor [::tclwire::normalize_application_descriptor_classes \
                                         [dict get $applications $default_application]]
+        if {[dict exists $default_descriptor aliases]} {
+            set default_descriptor [my merge_application_aliases \
+                [dict create aliases $default_aliases] $default_descriptor]
+        } else {
+            dict set default_descriptor aliases $default_aliases
+        }
         dict for {application_id original_descriptor} $applications {
 
             # Work on a normalized copy and remember which fields were present
@@ -129,6 +139,7 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 # merges one level deeper so inherited class configuration
                 # survives and only the named options are overlaid.
                 set descriptor [my merge_nested_dict_field $default_descriptor $descriptor configure]
+                set descriptor [my merge_application_aliases $default_descriptor $descriptor]
 
                 # Apply the main descriptor inheritance after special nested
                 # fields have been merged.
@@ -215,6 +226,9 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 dict set descriptor docroot $default_docroot
             }
             dict set descriptor docroot [file normalize [dict get $descriptor docroot]]
+            if {![dict exists $descriptor aliases]} {
+                dict set descriptor aliases $default_aliases
+            }
 
             # Inherit the global library directory, then normalize it.  An
             # empty libdir is treated as absent.
@@ -287,6 +301,16 @@ oo::class create ::tclwire::ApplicationDispatcher {
             }
         }
         dict set override $field $merged
+        return $override
+    }
+
+    method merge_application_aliases {base override} {
+        if {![dict exists $base aliases] || ![dict exists $override aliases]} {
+            return $override
+        }
+        dict set override aliases [concat \
+            [dict get $override aliases] \
+            [dict get $base aliases]]
         return $override
     }
 

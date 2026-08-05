@@ -78,6 +78,17 @@ test configuration-tree-1.2 {configuration tree appends line to sink command} -b
     {`-- values} \
     {    `-- host = localhost}]]
 
+test configuration-tree-1.2a {configuration tree renders aliases as rule lists} -body {
+    set config [dict create values [dict create \
+        aliases [list [dict create url_path /assets/ local_path public/assets]]]]
+    ::tclwire::configuration tree $config
+} -result {configuration
+`-- values
+    `-- aliases
+        `-- [0]
+            |-- url_path = /assets/
+            `-- local_path = public/assets}
+
 test configuration-tree-1.3 {configuration tree replaces sink placeholder} -body {
     ::tclwire::configuration_tree_test::reset
     set config [dict create type example]

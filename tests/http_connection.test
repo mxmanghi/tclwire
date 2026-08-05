@@ -6,6 +6,7 @@ set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
 
 package require tclwire::runtime 0.1
+package require tclwire::constants 0.1
 package require tclwire::http::protocol 0.1
 package require tclwire::http::query 0.1
 package require tclwire::http::request 0.1
@@ -329,7 +330,7 @@ test http-protocol-1.3g {
     set file_path {}
     try {
         set boundary AaB03x
-        set body [binary format a* {}]
+        set body $::tclwire::constants::empty_bytearray
         append body "--$boundary\r\n"
         append body "Content-Disposition: form-data; name=\"field\"\r\n\r\n"
         append body "value\r\n"
@@ -1238,7 +1239,7 @@ encoding = "utf-8"
    $project_root] multipart-config.toml]
 } -body {
     set boundary TclWireBoundary
-    set body [binary format a* {}]
+    set body $::tclwire::constants::empty_bytearray
     append body "--$boundary\r\n"
     append body "Content-Disposition: form-data; name=\"field\"\r\n\r\n"
     append body "value\r\n"
