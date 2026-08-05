@@ -36,7 +36,7 @@ oo::class create Hello {
 
         puts "<pre> stdchans present: [::tclwire::cga::has_environment stdchans]</pre>"
         if {[::tclwire::cga::has_environment stdchans]} {
-            puts "<pre>running within the stdchans environment. I sending output with puts</pre>"
+            puts "<pre>running within the stdchans environment. I'm sending output with puts</pre>"
             set n 5
             while {[incr n -1] > 0} {
                 puts -nonewline ".....$n"

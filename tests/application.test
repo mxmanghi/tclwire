@@ -3440,6 +3440,30 @@ test application-dispatcher-1.7 {an explicit application root needs no global fa
     }
 } -result [file normalize /tmp/tclwire-explicit-docroot]
 
+test application-dispatcher-1.7a {aliases are not duplicated when descriptors are already finalized} -body {
+    set alias [dict create url_path /js local_path /usr/share/javascript/]
+    set config $application_config
+    dict set config aliases [list $alias]
+    dict set config applications default aliases [list $alias]
+    dict set config applications example.test [dict create \
+        class ::tclwire::CApplication \
+        package tclwire::application \
+        hosts example.test \
+        docroot /tmp \
+        encoding utf-8 \
+        aliases [list $alias]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        list \
+            [dict get [$dispatcher application default] aliases] \
+            [dict get [$dispatcher application example.test] aliases]
+    } finally {
+        $dispatcher destroy
+    }
+} -result [list \
+    [list [dict create url_path /js local_path /usr/share/javascript/]] \
+    [list [dict create url_path /js local_path /usr/share/javascript/]]]
+
 test application-dispatcher-1.8 {file-backed applications use source in workers} -setup {
     set application_file [makeFile {
 oo::class create ::example::Application {

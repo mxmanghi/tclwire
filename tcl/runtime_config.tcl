@@ -225,9 +225,13 @@ namespace eval ::tclwire::runtime {
         if {![dict exists $base aliases] || ![dict exists $override aliases]} {
             return $override
         }
-        dict set override aliases [concat \
-            [dict get $override aliases] \
-            [dict get $base aliases]]
+        set aliases [dict get $override aliases]
+        foreach alias [dict get $base aliases] {
+            if {$alias ni $aliases} {
+                lappend aliases $alias
+            }
+        }
+        dict set override aliases $aliases
         return $override
     }
 
