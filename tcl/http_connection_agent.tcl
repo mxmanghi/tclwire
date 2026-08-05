@@ -57,6 +57,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
                                                                  -spooldirectory $options(-uploadarea) \
                                                                  -maxbodybytes   $options(-maxrequestbytes) \
                                                                  -secure         [expr {$options(-protocol) eq "https"}]]
+
+        # Pivotal object: it selects the HTTP application based on the Host: header
+
         set application_dispatcher [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]

@@ -1,6 +1,27 @@
 # http_protocol.tcl --
 #
-# Minimal HTTP protocol session used by the connection-agent prototype.
+# HTTP request parser and response builder used by HttpConnectionAgent.
+#
+# Class boundary:
+#
+#   HttpConnectionAgent owns the client channel, connection limits, 100-continue
+#   handling, request dispatch, and response ordering.
+#
+#   HttpProtocolSession owns only HTTP message syntax for one request at a time:
+#   request-line/header parsing, message-body framing, transfer decoding,
+#   optional multipart decomposition, and construction of a completed request
+#   descriptor.  It never reads from or writes to the socket.  Callers push bytes
+#   in with feed and get back small status dictionaries that say whether more
+#   bytes are needed or a complete request descriptor is ready.
+#
+# The methods below use "pivot" in comments for places where the session
+# deliberately changes responsibility.  For example, after headers are parsed
+# the parser pivots from "find the end of the request head" to "consume the
+# body according to the framing headers"; after body bytes are decoded it pivots
+# from wire syntax to the storage/sink chosen for application-facing data.
+#
+# For 100-continue handling see 
+#   - https://datatracker.ietf.org/doc/html/rfc9110#section-10.1.1
 
 package require TclOO
 package require tclwire::constants 0.1
@@ -9,12 +30,16 @@ package require tclwire::http::message 0.1
 package require tclwire::http::multipart 0.1
 
 oo::class create ::tclwire::HttpProtocolSession {
-    variable input_state header_buffer request_info request_info_status
+    variable input_state
+    variable header_buffer
+    variable request_info
+    variable request_info_status
     variable request_method request_headers
-    variable body_framing transfer_codings
-    variable body_threshold spool_directory body_data body_channel body_path body_size
-    variable body_sink
-    variable body_remaining chunk_buffer chunk_remaining trailers completed_descriptor
+    variable transfer_codings
+    variable body_framing   body_threshold  spool_directory
+    variable body_data      body_channel    body_path 
+    variable body_size      body_sink       body_remaining
+    variable chunk_buffer chunk_remaining trailers completed_descriptor
     variable declared_request_size
     variable header_size
     variable transfer_stream
@@ -58,6 +83,10 @@ oo::class create ::tclwire::HttpProtocolSession {
 
     method reset {} {
         my abort
+        # A session is reusable, but only by resetting it back to the same state
+        # as a newly constructed object.  Any temporary file, transfer decoder,
+        # or multipart parser from the previous request is closed by abort
+        # before the parser state is reinitialized.
         set input_state headers
         set header_buffer {}
         set request_info {}
@@ -231,6 +260,12 @@ oo::class create ::tclwire::HttpProtocolSession {
     #
     # Store decoded bytes for a non-multipart body.  Small bodies remain in
     # body_data; larger bodies spill through body_channel to body_path.
+    #
+    # Pivot: this is where decoded application body bytes stop being an HTTP
+    # parsing concern and become a storage concern.  The caller has already
+    # removed chunk framing and any supported transfer coding.  This method
+    # only decides whether those decoded bytes are still cheap enough to keep in
+    # memory or must move to the spool file.
 
     method append_raw_body {bytes new_size} {
         if {$body_channel eq {} && $new_size > $body_threshold} {
@@ -249,6 +284,11 @@ oo::class create ::tclwire::HttpProtocolSession {
     #
     # Send decoded bytes to the selected semantic body consumer.  At present
     # this is the multipart incremental parser created by select_body_sink.
+    #
+    # Pivot: multipart is not useful to applications as one opaque byte string.
+    # Once a multipart sink exists, decoded body bytes cross this class boundary
+    # into ::tclwire::http::multipart::IncrementalParser, which owns boundaries,
+    # per-part headers, fields, file parts, and per-part spooling.
 
     method append_body_sink {bytes new_size} {
         $body_sink append $bytes
@@ -261,6 +301,11 @@ oo::class create ::tclwire::HttpProtocolSession {
     # Common decoded-body entry point used by fixed-length and chunked paths.
     # It enforces the aggregate decoded-size limit, then dispatches to either
     # the semantic body sink or the raw body storage path.
+    #
+    # Pivot: feed and feed_chunked both produce decoded body bytes, but they do
+    # not know how the application-facing body will be represented.  append_body
+    # is the single gate that applies the decoded-size limit and then chooses
+    # the already-selected destination: multipart sink or raw storage.
 
     method append_body {bytes} {
         if {$bytes eq {}} { return }
@@ -277,6 +322,12 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     method select_body_sink {headers} {
+        # Choose a semantic body consumer after the headers are known and before
+        # any body bytes are appended.  This method must not parse body content;
+        # it only installs the object that will receive body bytes later.
+        #
+        # Class boundary: HttpProtocolSession detects "this is multipart" from
+        # HTTP headers, but the multipart package owns the multipart grammar.
         if {$spool_directory eq {} || ![dict exists $headers content-type]} {
             return
         }
@@ -290,6 +341,13 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     method append_transfer_data {bytes} {
+        # Accept bytes after message framing has been removed but before the
+        # request body is necessarily decoded.  With plain chunked requests this
+        # method passes bytes straight through.  With "gzip, chunked" requests
+        # it feeds the gzip stream and drains any decoded output.
+        #
+        # Pivot: chunk syntax has ended here; transfer decoding begins here.
+        # append_body is called only with decoded request-body bytes.
         if {$transfer_stream eq {}} {
             my append_body $bytes
             return
@@ -308,6 +366,9 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     method drain_transfer_stream {} {
+        # zlib streams can produce decoded bytes in bursts that do not line up
+        # with input chunks.  Drain whatever is currently available and push it
+        # through the normal decoded-body path.
         while 1 {
             set decoded [$transfer_stream get 65536]
             if {$decoded eq {}} { return }
@@ -316,6 +377,12 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     # Finish the request assembled by feed's incremental parser.
+    #
+    # This is the final pivot in the request parser.  Until this method runs,
+    # the object is a mutable parser with open resources: maybe a zlib stream,
+    # maybe a multipart parser, maybe a temporary body file.  After it returns,
+    # the object exposes an immutable completed descriptor and the connection
+    # agent can dispatch that descriptor to application code.
     #
     # During feed, the header section chooses the processing pieces used for
     # transfer decoding, specialized body consumption, and body storage:
@@ -424,6 +491,10 @@ oo::class create ::tclwire::HttpProtocolSession {
     #       the completed descriptor but kept separate from request_headers
     #       because request routing/framing decisions were already made from
     #       the original header section.
+    #
+    # Pivot: this method owns only chunk framing.  It removes size lines,
+    # payload-terminating CRLFs, and trailers.  Payload bytes cross out through
+    # append_transfer_data, where optional gzip decoding and body storage begin.
     method feed_chunked {bytes} {
         append chunk_buffer $bytes
         while 1 {
@@ -540,6 +611,26 @@ oo::class create ::tclwire::HttpProtocolSession {
     #       Header size plus Content-Length.  It is reported before completion
     #       so the connection agent can reject oversized fixed-length requests
     #       without waiting for the whole body.
+    #
+    # Main pivot:
+    #
+    #   1. While input_state is "headers", bytes are just connection input held
+    #      in header_buffer until CRLFCRLF marks the end of the request head.
+    #
+    #   2. Once the request head is complete, feed parses stable request
+    #      metadata and freezes that metadata with install_request_info.
+    #
+    #   3. The headers then decide the rest of the parser plan: no body,
+    #      Content-Length, chunked framing, optional gzip transfer decoding, and
+    #      optional multipart decomposition.
+    #
+    #   4. From that point forward, feed is no longer looking for headers.  It
+    #      consumes exactly the body framing selected in step 3 and eventually
+    #      calls finish_incremental_request.
+    #
+    # Class boundary: feed does not read from the channel and does not dispatch
+    # to applications.  It is a pure protocol-session step over the byte string
+    # supplied by HttpConnectionAgent.
 
     method feed {bytes} {
         # Guard the completed/closed session boundary.

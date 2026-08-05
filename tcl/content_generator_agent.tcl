@@ -373,9 +373,8 @@ namespace eval ::tclwire::cga {
             error "content generator worker pool key must not be empty"
         }
 
-        if {$initialized ||
-                [info object isa object $configuration] ||
-                [info object isa object $application]} {
+        if {$initialized || [info object isa object $configuration] ||
+                            [info object isa object $application]} {
             shutdown
         }
 
@@ -691,13 +690,15 @@ namespace eval ::tclwire::cga {
             return
         }
         if {[dict exists $request_descriptor body_storage] &&
-                [dict get $request_descriptor body_storage] eq "spooled_file" &&
-                [dict exists $request_descriptor body_path]} {
+            [dict get $request_descriptor body_storage] eq "spooled_file" &&
+            [dict exists $request_descriptor body_path]} {
+
             set path [dict get $request_descriptor body_path]
             if {[catch {file delete $path} message options] && [file exists $path]} {
                 catch {::tclwire::logger log_error upload_cleanup \
                     "path=$path error=$message" warn}
             }
+
         }
         set failures {}
         if {[dict exists $request_descriptor multipart_parts]} {
@@ -723,6 +724,7 @@ namespace eval ::tclwire::cga {
             catch {$application shutdown}
             catch {$application destroy}
         }
+
         set application {}
         catch {::tclwire::app::end_application}
         return
@@ -741,13 +743,15 @@ namespace eval ::tclwire::cga {
             error "application command is not a TclOO class: $application_class"
         }
         set application [$application_class new $application_descriptor]
+
         envs::append_to_namespace [info object namespace $application]
         ::tclwire::app::begin_application \
-            [dict create application            $application \
-                         application_class      $application_class \
-                         application_descriptor $application_descriptor \
-                         configuration          $configuration \
-                         pool_key               $pool_key]
+                        [dict create application            $application \
+                                     application_class      $application_class \
+                                     application_descriptor $application_descriptor \
+                                     configuration          $configuration \
+                                     pool_key               $pool_key]
+
         try {
             $application initialize
         } on error {message options} {
@@ -771,12 +775,10 @@ namespace eval ::tclwire::cga {
         foreach field {application_id transaction_id method path} {
             if {[dict exists $request_descriptor $field]} {
                 lappend fields \
-                    "$field=[::tclwire::logger::log_value \
-                        [dict get $request_descriptor $field]]"
+                    "$field=[::tclwire::logger::log_value [dict get $request_descriptor $field]]"
             }
         }
-        lappend fields \
-            "error=[::tclwire::logger::log_value $message]"
+        lappend fields "error=[::tclwire::logger::log_value $message]"
         foreach {option label} {-errorcode errorcode -errorinfo errorinfo} {
             if {[dict exists $options $option]} {
                 lappend fields \
@@ -823,9 +825,8 @@ namespace eval ::tclwire::cga {
 
         set request [::tclwire::HttpRequest new $request_descriptor]
         try {
-            ::tclwire::app::begin_request \
-                [dict create request            $request \
-                             request_descriptor $request_descriptor]
+            ::tclwire::app::begin_request [dict create  request            $request \
+                                                        request_descriptor $request_descriptor]
             $application handle_request $request
             if {[::tclwire::io::accepting_output]} {
                 ::tclwire::io complete
@@ -848,8 +849,8 @@ namespace eval ::tclwire::cga {
         set worker_id [::thread::id]
 
         try {
-            # Establish the error-reporting path before any application-owned
-            # request-handling code can fail.
+            # Establish the error-reporting path before any
+            # application-owned request-handling code can fail.
             begin_request_ambient $request_descriptor
 
             ensure_initialized

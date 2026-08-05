@@ -1,6 +1,30 @@
 # http_request.tcl --
 #
 # Read-only application view of a transported HTTP request descriptor.
+#
+# Class boundary:
+#
+#   HttpRequest is the application-facing wrapper around the request descriptor
+#   produced by the connection thread.  The descriptor has already crossed the
+#   thread boundary: HttpProtocolSession parsed HTTP syntax, HttpConnectionAgent
+#   added connection/transaction metadata, ApplicationDispatcher selected the
+#   application, and the Content Generator Agent created this object in the
+#   worker thread.
+#
+#   HttpRequest does not own the client socket, does not parse wire bytes, does
+#   not choose the application, and does not manage response output.  It gives
+#   application code a stable, method-oriented view of the descriptor and a few
+#   request-scoped conveniences such as CookieJar and multipart helpers.
+#
+# Most fields are read-only accessors over the request dictionary.  The small
+# writable surface, path and local_path, is intentionally application-local
+# metadata used by path-mapping code; changing it does not mutate the
+# connection agent's authoritative transaction state.
+#
+# The comments below call out "pivots": points where the object deliberately
+# changes representation, such as descriptor dictionary to method API, Cookie
+# header to CookieJar object, raw body descriptor to body/body_path access, and
+# multipart request to form/upload projections.
 
 package require TclOO
 package require tclwire::http::message 0.1
@@ -8,6 +32,9 @@ package require tclwire::http::multipart 0.1
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::http::cookie {
+    # Cookie helpers implement the narrow syntax accepted by CookieJar.  They
+    # are kept outside HttpRequest because applications may use CookieJar for
+    # response-side cookie state as well as request cookies parsed from headers.
     proc validate_name {name} {
         if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $name]} {
             error "invalid HTTP cookie name"
@@ -56,6 +83,9 @@ namespace eval ::tclwire::http::cookie {
     }
 
     proc parse_header {value} {
+        # Convert the request's Cookie header into a flat list of
+        # {name value} pairs.  Attributes such as Path or Expires are not part
+        # of the Cookie request header; those belong to Set-Cookie responses.
         set cookies {}
         foreach field [split $value ";"] {
             set field [string trim $field]
@@ -80,6 +110,10 @@ oo::class create ::tclwire::CookieJar {
     variable cookies
 
     constructor {{initial_cookies {}}} {
+        # Store cookies in a dictionary keyed by cookie name.  Values and
+        # response options are validated through the public set method so the
+        # same rules apply to request-initialized and application-created
+        # cookies.
         set cookies [dict create]
         foreach cookie $initial_cookies {
             my set {*}$cookie
@@ -145,52 +179,67 @@ oo::class create ::tclwire::CookieJar {
     }
 
     method serialize {} {
+        # Return a transport-friendly list that can be replayed into another
+        # CookieJar.  This keeps CookieJar's internal dictionary layout private.
         set serialized {}
         dict for {name spec} $cookies {
-            lappend serialized [list $name [dict get $spec value] \
-                {*}[dict get $spec options]]
+            lappend serialized \
+                [list $name [dict get $spec value] {*}[dict get $spec options]]
         }
         return $serialized
     }
 }
 
 oo::class create ::tclwire::HttpRequest {
-    variable request_descriptor
+    variable request
     variable cookie_jar
     variable multipart_parts_cache
     variable multipart_parts_cached
 
-    constructor {descriptor} {
-        if {[catch {dict size $descriptor}]} {
+    constructor {request_descriptor} {
+        # Construction is the descriptor-to-object pivot.  The CGA passes a
+        # dictionary copied from the connection thread; this object keeps that
+        # dictionary as its request-scoped state and exposes it through methods.
+        if {[catch {dict size $request_descriptor}]} {
             error "HTTP request descriptor must be a dictionary"
         }
-        if {[dict exists $descriptor path] && ![dict exists $descriptor url_path]} {
-            dict set descriptor url_path [dict get $descriptor path]
+        # Older descriptors used path as the application URL path.  Keep a
+        # url_path alias so newer code can ask for the URL-derived path even if
+        # application path mapping later changes path.
+        if {[dict exists $request_descriptor path] && ![dict exists $request_descriptor url_path]} {
+            dict set request_descriptor url_path [dict get $request_descriptor path]
         }
-        set request_descriptor $descriptor
+        set request $request_descriptor
         set cookie_jar {}
         set multipart_parts_cache {}
         set multipart_parts_cached 0
     }
 
     destructor {
+        # CookieJar is created lazily and owned by this request object.
         if {$cookie_jar ne {}} {
             $cookie_jar destroy
         }
     }
 
     method required {field} {
-        if {![dict exists $request_descriptor $field]} {
+        # Required descriptor fields are programming/runtime contract fields.
+        # Missing ones should fail loudly instead of quietly returning an empty
+        # value that would hide a malformed request descriptor.
+        if {![dict exists $request $field]} {
             error "HTTP request descriptor is missing $field"
         }
-        return [dict get $request_descriptor $field]
+        return [dict get $request $field]
     }
 
-    method snapshot {} { return $request_descriptor }
+    method snapshot {} { return $request }
 
     method optional {field default_value} {
-        if {[dict exists $request_descriptor $field]} {
-            return [dict get $request_descriptor $field]
+        # Optional descriptor fields have compatibility defaults because older
+        # protocol paths and tests may omit metadata that is not required for
+        # every request.
+        if {[dict exists $request $field]} {
+            return [dict get $request $field]
         }
         return $default_value
     }
@@ -208,6 +257,12 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method path {args} {
+        # path is the application-working path.  With no argument it returns the
+        # current mapped path.  With one argument, application routing or static
+        # resource mapping can replace it with another absolute path.
+        #
+        # Pivot: URL metadata becomes application-local routing metadata.  The
+        # original target and url_path remain available separately.
         switch -exact -- [llength $args] {
             0 {
                 return [my required path]
@@ -222,11 +277,20 @@ oo::class create ::tclwire::HttpRequest {
         if {![string match "/*" $path]} {
             error "HTTP request path must be absolute"
         }
-        dict set request_descriptor path $path
+        dict set request path $path
         return $path
     }
 
     method local_path {args} {
+
+        # local_path is filesystem mapping metadata, normally set by application
+        # path mapping code after it decides which local resource corresponds to
+        # the request path.  Empty string unsets the mapping.
+        #
+        # Class boundary: HttpRequest stores the selected local path, but it
+        # does not check document roots or authorize filesystem access.  That is
+        # application/resource-handler policy.
+
         switch -exact -- [llength $args] {
             0 {
                 return [my optional local_path {}]
@@ -241,13 +305,13 @@ oo::class create ::tclwire::HttpRequest {
 
         if {[llength $args] == 1} {
             if {$path eq {}} {
-                if {[dict exists $request_descriptor local_path]} {
-                    dict unset request_descriptor local_path
+                if {[dict exists $request local_path]} {
+                    dict unset request local_path
                 }
                 return {}
             }
             set path [file normalize $path]
-            dict set request_descriptor local_path $path
+            dict set request local_path $path
             return $path
         }
     }
@@ -281,6 +345,8 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method header {name {default_value {}}} {
+        # Headers are normalized to lowercase by HttpProtocolSession, so lookup
+        # lowercases the caller's name instead of preserving HTTP field casing.
         set name [string tolower $name]
         set headers [my headers]
         if {[dict exists $headers $name]} {
@@ -290,6 +356,12 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method cookie_jar {} {
+        # Lazily parse Cookie only if application code asks for cookies.
+        #
+        # Pivot: the wire-level Cookie header becomes a mutable request-scoped
+        # CookieJar object.  Mutating this jar does not change the original
+        # headers; it gives application code a convenient cookie collection to
+        # inspect or serialize.
         if {$cookie_jar eq {}} {
             set cookie_jar [::tclwire::CookieJar new \
                 [::tclwire::http::cookie::parse_header [my header cookie]]]
@@ -298,6 +370,9 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method scheme {} {
+        # The connection agent records the externally accepted protocol.  This
+        # helper keeps URL construction from needing to know that descriptor
+        # field directly.
         switch -exact -- [my optional protocol http] {
             https { return https }
             default { return http }
@@ -317,6 +392,9 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method absolute_url {{path {}}} {
+        # Build an absolute URL using the request's scheme and Host header.  A
+        # supplied absolute-path reference replaces the current target path;
+        # a relative reference is resolved against the current application path.
         if {$path eq {}} {
             set path [my target]
         }
@@ -337,6 +415,8 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method content_type_info {} {
+        # Content-Type parsing is delegated to the HTTP message helper so media
+        # type and parameter rules stay in one package.
         set value [my content_type]
         if {$value eq {}} {
             error "HTTP request has no Content-Type"
@@ -385,10 +465,16 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method body_storage {} {
+        # Body storage tells application code which accessor is valid:
+        # in_memory uses body, spooled_file uses body_path, and multipart
+        # decomposed data is reached through multipart/form/upload helpers.
         return [my optional body_storage none]
     }
 
     method body {} {
+        # Only in-memory bodies are returned as bytes.  Spooled bodies should be
+        # read from body_path so a large upload is not accidentally copied into
+        # worker memory.
         if {[my body_storage] ne "in_memory"} {
             error "HTTP request body is not stored in memory"
         }
@@ -396,6 +482,9 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method body_path {} {
+        # The connection/CGA lifecycle owns cleanup of spooled request files
+        # after request processing.  This method only exposes the path while the
+        # application is handling the request.
         if {[my body_storage] ne "spooled_file"} {
             error "HTTP request body is not stored in a spooled file"
         }
@@ -407,9 +496,13 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method multipart_parts {} {
+        # Multipart pivot.  A descriptor may already contain decomposed parts
+        # from HttpProtocolSession's incremental multipart sink.  Older or
+        # in-memory paths may still carry one raw body, so parse on demand and
+        # cache the resulting part descriptors for repeated form/file access.
         if {!$multipart_parts_cached} {
-            if {[dict exists $request_descriptor multipart_parts]} {
-                set multipart_parts_cache [dict get $request_descriptor multipart_parts]
+            if {[dict exists $request multipart_parts]} {
+                set multipart_parts_cache [dict get $request multipart_parts]
             } else {
                 set multipart_parts_cache [::tclwire::http::multipart parse \
                     [my content_type] [my body]]
@@ -420,6 +513,8 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method optional_multipart_parts {} {
+        # Form helpers should behave like empty form data for non-multipart
+        # requests instead of forcing every caller to check Content-Type first.
         if {![my is_multipart]} {
             return {}
         }
@@ -458,6 +553,9 @@ oo::class create ::tclwire::HttpRequest {
     }
 
     method trailers {} {
+        # HTTP trailers are available only for chunked requests that supplied
+        # them.  They remain separate from headers because they arrive after the
+        # body and must not affect routing/framing decisions.
         return [my optional trailers [dict create]]
     }
 

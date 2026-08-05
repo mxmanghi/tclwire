@@ -1,6 +1,27 @@
 # transport_reactor.tcl --
 #
 # Listener and TPBA-managed connection-agent dispatcher.
+#
+# Class boundary:
+#
+#   TransportReactor owns one listening socket for one configured service
+#   endpoint.  It accepts client channels, asks the Thread Pools Broker Agent
+#   (TPBA) for a connection-agent worker, moves each accepted channel into that
+#   worker thread, and keeps listener-side bookkeeping until the connection
+#   reports that it has finished.
+#
+#   TransportReactor does not implement HTTP, FTP, proxy, TLS application
+#   behavior, or request parsing.  Those concerns belong to the protocol-specific
+#   connection-agent class selected by -agentclass and started in the worker
+#   thread with ::tclwire::start_connection_agent.  TransportReactor also does
+#   not decide pool sizing itself; it sends pool policy and workload transitions
+#   to TPBA, which owns worker lifecycle and capacity accounting.
+#
+# The comments below call out "pivots": points where ownership intentionally
+# changes hands.  The important pivots are listener setup, accepted channel to
+# pending descriptor, descriptor to worker reservation, channel ownership from
+# listener thread to worker thread, and finally live connection back to completed
+# accounting.
 
 package require TclOO
 package require Thread
@@ -80,6 +101,14 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method start {} {
+        # Start is the service activation boundary.  Before this method returns,
+        # the reactor has created a TPBA pool for this service and opened the
+        # listening socket.  If either step fails, the service is not partially
+        # active: a listener failure destroys the just-created pool.
+        #
+        # Pivot: configuration becomes runtime resources here.  After this point
+        # TPBA may create connection-agent worker threads and the Tcl socket
+        # event loop may call accept for new client channels.
         if {$listener ne {}} {
             error "Transport Reactor is already listening"
         }
@@ -107,6 +136,13 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method validate_transport_config {} {
+
+        # Transport-level validation only.  The reactor checks that secure
+        # services have the files and TclTLS package needed by worker-side TLS
+        # setup.  The actual TLS import/handshake happens later in
+        # ::tclwire::start_connection_agent, after the channel has moved to the
+        # worker interpreter.
+
         if {$transport_config eq {} ||
                 ![dict exists $transport_config secure] ||
                 ![dict get $transport_config secure]} {
@@ -128,6 +164,16 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method stop {} {
+
+        # Stop is the reverse of start.  Close the listener first so no new
+        # channels arrive, ask active connection-agent workers to stop, wait
+        # briefly for their completion callbacks, close any channels still
+        # waiting for a worker, then destroy the TPBA pool.
+        #
+        # Class boundary: the reactor requests shutdown, but each connection
+        # agent owns the protocol-specific close behavior for its client
+        # channel.
+
         if {$listener ne {}} {
             catch {close $listener}
             set listener {}
@@ -156,6 +202,10 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method worker_script {} {
+        # Script used by TPBA-created worker threads.  It loads the project and
+        # protocol-specific connection-agent package, defines the shutdown hook
+        # TPBA will call, then waits for commands.  Accepted channels are not
+        # embedded in this script; they are attached later by dispatch_connection.
         return [format {
             lappend auto_path %s
             package require Thread
@@ -177,6 +227,9 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method destroy_pool {} {
+        # Pool lifecycle boundary.  TPBA owns the actual worker registry and
+        # thread shutdown.  The reactor records whether it asked for a pool so
+        # repeated stop/destroy paths can be harmless.
         if {!$pool_created} {
             return
         }
@@ -189,10 +242,20 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method accept {channel peer_host peer_port} {
+        # Tcl's socket -server callback runs in the event loop at accept time.
+        # Defer real work until idle so the callback stays short and all
+        # connection setup follows the same dispatch_accept path.
+        #
+        # Pivot: raw socket callback becomes a reactor-managed accept event.
         after idle [list [self] dispatch_accept $channel $peer_host $peer_port]
     }
 
     method dispatch_accept {channel peer_host peer_port} {
+        # Assign the service-local connection id and wrap the accepted channel
+        # plus peer information in a descriptor.  From this point on, retry and
+        # logging code can treat new and deferred connections the same way.
+        #
+        # Pivot: accepted channel becomes a connection descriptor.
         set connection_id [incr next_connection_id]
         set descriptor [dict create channel       $channel      \
                                     peer_host     $peer_host    \
@@ -205,6 +268,21 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method dispatch_connection {descriptor} {
+        # Try to turn a pending connection descriptor into a running connection
+        # agent.  The steps are deliberately ordered:
+        #
+        #   1. Ask TPBA for a worker in this service pool.
+        #   2. If no worker is currently available, keep the channel open in the
+        #      pending queue for a bounded retry window.
+        #   3. Reserve workload capacity on the selected worker.
+        #   4. Record listener-side connection accounting.
+        #   5. Move channel ownership from this interpreter to the worker.
+        #   6. Asynchronously start the protocol-specific connection agent.
+        #
+        # Pivot: this is the central handoff from transport acceptance to
+        # connection-agent execution.  After thread::detach/thread::attach
+        # succeeds, the worker thread owns socket I/O and the reactor only keeps
+        # bookkeeping needed for completion and diagnostics.
         set channel [dict get $descriptor channel]
         set connection_id [dict get $descriptor connection_id]
         set acquire_response [::tclwire::tpba request \
@@ -216,18 +294,18 @@ oo::class create ::tclwire::TransportReactor {
         }
         set tid [dict get $acquire_response result]
 
-        # this is central: if we couldn't get a valid thread_id from the TPBA
-        # it's time to 
-
+        # No worker id means the pool is at capacity.  This is not yet a
+        # protocol failure: keep the accepted channel pending and retry until
+        # connmaxwait has been exhausted.
         if {$tid eq {}} {
             set last_accept_error "connection-agent pool is exhausted: $pool_key"
             my defer_connection $descriptor
             return
         }
 
-        # the connection-agent workload has changed so we notify the
-        # TPBA, which keeps the ledger where we keep the threads accounting
-
+        # Reserve a connection slot before handing the channel to the worker.
+        # If startup later fails before the connection opens, the callback path
+        # reports connection-reservation-cancelled to undo this reservation.
         set tpba_msg [dict create operation    thread_workload_changed \
                                   notification [list $tid $pool_key new-connection-processing]]
 
@@ -263,6 +341,10 @@ oo::class create ::tclwire::TransportReactor {
         set detached 0
 
         if {[catch {
+            # Channel ownership pivot.  Tcl channels can be used by only one
+            # interpreter at a time.  Detach from the listener interpreter,
+            # synchronously attach in the worker interpreter, then send the
+            # async command that constructs the connection-agent object there.
             ::thread::detach $channel
             set detached     1
             ::thread::send $tid [list ::thread::attach $channel]
@@ -276,6 +358,10 @@ oo::class create ::tclwire::TransportReactor {
                                                                                $pool_key \
                                                                                $agent_args $transport_config]
         } error options]} {
+            # Failure during the handoff must clean up both sides of the
+            # boundary: close the channel in whichever interpreter currently
+            # owns it, remove listener-side maps, cancel the TPBA reservation,
+            # and release the worker.
             set last_accept_error $error
             if {$detached} {
                 catch {::thread::send $tid [list catch [list close $channel]]}
@@ -321,6 +407,12 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method defer_connection {descriptor} {
+        # Bounded back-pressure path for temporary pool exhaustion.  The reactor
+        # keeps the accepted channel open while waiting for a worker to free up.
+        # Once the configured retry budget is exhausted, the channel is closed
+        # without ever crossing into a connection-agent worker.
+        #
+        # Pivot: runnable connection descriptor becomes queued pending work.
         set attempts [expr {[dict get $descriptor attempts] + 1}]
         dict set descriptor attempts $attempts
         if {$attempts > $pending_max_attempts} {
@@ -338,6 +430,9 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method log_deferred_connection {event descriptor worker_id {level debug} {reason {}}} {
+        # Deferred connections are transport events, not protocol events.  Log
+        # them here with service and peer context so pool saturation can be
+        # diagnosed without involving any protocol-specific connection agent.
 
         set fields [list    "event=connection_$event" \
                             "connection_id=[dict get $descriptor connection_id]" \
@@ -362,6 +457,9 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method schedule_pending_connections {} {
+        # Keep one retry timer active.  Pending descriptors stay in FIFO order;
+        # reschedule_pending_connections will try to dispatch the current queue
+        # and then schedule another timer only if anything is still pending.
         if {$pending_rescheduler ne {} || [llength $pending_connections] == 0} {
             return
         }
@@ -371,6 +469,11 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method reschedule_pending_connections {} {
+        # Retry queued accepts after the short delay.  The queue is cleared
+        # before dispatching so connections that still cannot acquire a worker
+        # re-enter through defer_connection with an incremented attempt count.
+        #
+        # Pivot: queued pending work becomes ordinary dispatch work again.
         set pending_rescheduler {}
         set queue $pending_connections
         set pending_connections {}
@@ -382,6 +485,9 @@ oo::class create ::tclwire::TransportReactor {
     }
 
     method close_pending_connections {reason} {
+        # Shutdown/error boundary for queued accepts.  These channels have not
+        # been handed to worker interpreters, so the listener thread still owns
+        # them and can close them directly.
         if {$pending_rescheduler ne {}} {
             after cancel $pending_rescheduler
             set pending_rescheduler {}
@@ -395,6 +501,15 @@ oo::class create ::tclwire::TransportReactor {
 
     method connection_finished {finished_pool_key connection_id worker_id \
             {workload_released 0} {connection_opened 1}} {
+        # Completion callback from a connection-agent worker.  The worker owns
+        # protocol shutdown and channel close; this method owns listener-side
+        # maps, connection close accounting, and the final TPBA release boundary.
+        #
+        # Pivot: a live worker-owned connection becomes completed reactor
+        # bookkeeping.  The flags tell the reactor whether the worker already
+        # reported the workload transition.  Normal closes usually report
+        # connection-closed from the worker; startup failures usually need this
+        # method to cancel the earlier reservation.
         set removed_connection 0
         if {[dict exists $agent_connection_keys $worker_id $connection_id]} {
             set connection_key \
