@@ -146,6 +146,18 @@ namespace eval ::tclwire::envs::stdchans {
         return $previous
     }
 
+    proc auto_chunked_on_flush {} {
+        if {[catch {
+            set options [::tclwire::app::environment_configuration stdchans]
+        }]} {
+            return 0
+        }
+        if {![dict exists $options auto_chunked_on_flush]} {
+            return 0
+        }
+        return [expr {[dict get $options auto_chunked_on_flush] ? 1 : 0}]
+    }
+
     proc puts {args} {
         set original_args $args
         set nonewline 0
@@ -187,7 +199,11 @@ namespace eval ::tclwire::envs::stdchans {
         if {([llength $args] == 1) && \
             ([lindex $args 0] eq "stdout") && \
             [transaction_active]} {
-            ::tclwire::io flush
+            set channel_event_flags [dict create auto_chunked_on_flush 0]
+            if {[auto_chunked_on_flush]} {
+                dict set channel_event_flags auto_chunked_on_flush 1
+            }
+            ::tclwire::io flush $channel_event_flags
             return
         }
 
@@ -196,7 +212,8 @@ namespace eval ::tclwire::envs::stdchans {
 
     namespace export object name requires path_namespaces \
                      enabled install uninstall puts flush \
-                     stdout_body_mode set_stdout_body_mode
+                     stdout_body_mode set_stdout_body_mode \
+                     auto_chunked_on_flush
     namespace ensemble create
 }
 

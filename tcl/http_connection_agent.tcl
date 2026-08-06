@@ -430,6 +430,45 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return
     }
 
+    method enable_chunked_response_for_flush {transaction} {
+        if {[$transaction get response_state] ne "preparing"} {
+            return [my chunked_response $transaction]
+        }
+        if {[llength [my response_header_values \
+                $transaction Transfer-Encoding]] > 0} {
+            return [my chunked_response $transaction]
+        }
+        if {[llength [my response_header_values \
+                $transaction Content-Length]] > 0} {
+            return 0
+        }
+        if {[$transaction get version] ne "1.1"} {
+            return 0
+        }
+
+        set headers [$transaction get response_headers]
+        lappend headers "Transfer-Encoding: chunked"
+        $transaction set response_headers $headers
+        return [my chunked_response $transaction]
+    }
+
+    method write_chunked_response_body {transaction body body_mode} {
+        my commit_chunked_response $transaction
+        if {[my head_only $transaction]} {
+            return
+        }
+        set body_bytes [$protocol_session encode_response_body \
+            $body \
+            [$transaction get response_encoding] \
+            $body_mode]
+        set frame [$protocol_session chunk_frame $body_bytes]
+        if {$frame ne {} && ![my write_output $frame]} {
+            error "failed to write HTTP response chunk"
+        }
+        $transaction incr response_bytes [string length $body_bytes]
+        return
+    }
+
     method abort_application_response {transaction_id transaction} {
         set transaction [my transaction_for $transaction_id]
         if {![info object isa object $transaction]} {
@@ -504,23 +543,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
                 if {$chunked} {
                     if {[catch {
-                        my commit_chunked_response $transaction
-                        if {![my head_only $transaction]} {
-                            set body_bytes [$protocol_session encode_response_body \
-                                [dict get $event data] \
-                                [$transaction get response_encoding] \
-                                $body_mode]
-                            set frame [$protocol_session chunk_frame $body_bytes]
-                            if {$frame ne {} && ![my write_output $frame]} {
-                                error "failed to write HTTP response chunk"
-                            }
-                        }
+                        my write_chunked_response_body \
+                            $transaction [dict get $event data] $body_mode
                     }]} {
                         my abort_application_response $transaction_id $transaction
                         return
-                    }
-                    if {![my head_only $transaction]} {
-                        $transaction incr response_bytes [string length $body_bytes]
                     }
                 } else {
                     $transaction append response_body [dict get $event data]
@@ -542,20 +569,30 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 $transaction set response_body {}
             }
             flush {
-                if {[catch {set chunked [my chunked_response $transaction]}]} {
-                    my abort_application_response $transaction_id $transaction
-                    return
-                }
-                if {$chunked} {
-                    if {[catch {
+                if {[catch {
+                    set channel_event_flags [dict get $event flags]
+                    if {[dict get $channel_event_flags auto_chunked_on_flush]} {
+                        set chunked [my enable_chunked_response_for_flush \
+                            $transaction]
+                    } else {
+                        set chunked [my chunked_response $transaction]
+                    }
+                    if {$chunked} {
+                        set body [$transaction get response_body]
+                        if {$body ne {}} {
+                            my write_chunked_response_body \
+                                $transaction $body \
+                                [$transaction get response_body_mode]
+                            $transaction set response_body {}
+                        }
                         my commit_chunked_response $transaction
                         if {![my write_output {} 1]} {
                             error "failed to flush HTTP response"
                         }
-                    }]} {
-                        my abort_application_response $transaction_id $transaction
-                        return
                     }
+                }]} {
+                    my abort_application_response $transaction_id $transaction
+                    return
                 }
             }
             complete {
@@ -689,9 +726,10 @@ oo::class create ::tclwire::HttpConnectionAgent {
     unexport abort_application_response apply_header_event \
         chunked_response cleanup_request_body commit_chunked_response \
         dispatch_request_descriptor dump_multipart_descriptor \
+        enable_chunked_response_for_flush \
         handle_request_descriptor head_only header_name header_value \
         log_request request_host response_header_values \
-        send_continue_response_if_needed
+        send_continue_response_if_needed write_chunked_response_body
 }
 
 package provide tclwire::http::connection_agent 0.1

@@ -245,6 +245,11 @@ normalization, configuration for required environments is carried too. Runtime
 application or environment code reads the application-scoped repository through
 `::tclwire::app::environment_configuration ?environment? ?key?`.
 
+`stdchans` recognizes `auto_chunked_on_flush`. When true, an explicit
+`flush stdout` may promote an eligible HTTP/1.1 response to chunked streaming.
+The `rivet` environment enables this `stdchans` default for Rivet-compatible
+output, and explicit `[env.stdchans]` configuration can override it.
+
 Examples inside a running application or application environment:
 
 ```tcl

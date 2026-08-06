@@ -37,6 +37,7 @@ configuration:
 ```toml
 [env.stdchans]
 capture_stderr = true
+auto_chunked_on_flush = true
 
 [env.rivet]
 UploadMaxSize = 10485760
@@ -46,6 +47,12 @@ BeforeScript = "rivet/before.tcl"
 Each `[env.<name>]` table is an environment-owned dictionary. TclWire does not
 validate environment-specific option names, and global `[tclwire]` values are
 not copied into environment configuration.
+
+For the `stdchans` environment, `auto_chunked_on_flush = true` lets an
+explicit `flush stdout` request chunked HTTP streaming when the response has
+not already committed fixed-length headers. The `rivet` environment enables
+this `stdchans` behavior by default for Rivet-compatible streaming output;
+an explicit `[env.stdchans] auto_chunked_on_flush = false` disables it.
 
 Applications that declare `environment = "..."` carry the effective
 environment configuration into their worker-pool configuration. Application

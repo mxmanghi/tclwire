@@ -344,15 +344,17 @@ Application output events are ordered dictionaries:
 | `output_sequence` | Monotonic sequence number starting at 1. |
 | `stream` | Currently `stdout`. |
 | `data` | Event payload, if any. |
-| `flags` | Event-specific metadata. |
+| `flags` | Event-specific metadata. `flush` events always include `auto_chunked_on_flush`, defaulting to false. |
 
 The connection agent rejects out-of-order events by comparing
 `output_sequence` with the transaction's expected next value. This preserves
 response ordering even though delivery is asynchronous.
 
 For non-chunked responses, the connection agent accumulates output until
-`complete`, then serializes and closes the connection. For chunked responses,
-it commits headers and writes chunks as output events arrive.
+`complete`, then serializes and closes the connection. A `flush` event flagged
+with `auto_chunked_on_flush` may promote an eligible HTTP/1.1 response to
+chunked transfer before headers have committed. For chunked responses, it
+commits headers and writes chunks as output events arrive.
 The `close_connection` event skips response serialization and closes the
 client channel.
 

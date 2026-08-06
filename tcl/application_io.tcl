@@ -212,7 +212,7 @@ namespace eval ::tclwire::io {
         return
     }
 
-    proc flush {} {
+    proc flush {{channel_event_flags {}}} {
         variable active
         if {!$active} {
             error "no application output transaction is active"
@@ -220,8 +220,11 @@ namespace eval ::tclwire::io {
         if {![accepting_output]} {
             return
         }
+        set channel_event_flags [dict merge \
+            [dict create auto_chunked_on_flush 0] \
+            $channel_event_flags]
         flush_buffer
-        send_event flush
+        send_event flush {} $channel_event_flags
         return
     }
 
@@ -278,9 +281,9 @@ namespace eval ::tclwire::io {
         return [expr {$active && $response_state eq "open"}]
     }
 
-    namespace export \
-        begin end context response out buffer discard_buffer puts flush complete \
-        close_connection fail
+    namespace export begin end context response out buffer \
+                     discard_buffer puts flush complete \
+                     close_connection fail
     namespace ensemble create
 }
 

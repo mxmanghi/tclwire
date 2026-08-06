@@ -40,6 +40,11 @@ oo::class create ::tclwire::envs::RivetEnvironment {
         return $application_file_path
     }
 
+    method environment_configuration_defaults {} {
+        return [dict create \
+            stdchans [dict create auto_chunked_on_flush 1]]
+    }
+
     method do_install {} {
         variable previous_exit_command
 
