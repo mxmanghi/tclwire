@@ -62,7 +62,7 @@ puts [list \
 } -result [list $project_root 1]
 
 test runtime-1.1 {default arguments prepare one future HTTP service} -body {
-    set config [::tclwire::runtime parse_args {}]
+    set config [::tclwire::runtime prepare_config {}]
     list \
         [dict get $config host] \
         [dict get $config startservers] \
@@ -84,7 +84,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config diagnostics_enabled] \
         [dict get $config diagnostics_interval_ms] \
         [dict get $config diagnostics_watchdog_max_age_ms] \
-        [dict get $config help]
+        [dict get $config help] \
+        [dict get $config config_file]
 } -result [list \
     127.0.0.1 \
     http \
@@ -110,15 +111,61 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     0 \
     5000 \
     10000 \
-    0]
+    0 \
+    .]
 
 test runtime-1.1a {command-line misuse is tagged for usage output} -body {
-    catch {::tclwire::runtime parse_args [list --unknown-option]} message options
+    catch {::tclwire::runtime prepare_config [list --unknown-option]} message options
     list $message [dict get $options -errorcode]
 } -result [list {unknown argument: --unknown-option} {TCLWIRE USAGE}]
 
+test runtime-1.1b {command-line validation precedes configuration loading} -body {
+    set missing_config [file join \
+        [temporaryDirectory] tclwire-missing-config-[pid].toml]
+    catch {
+        ::tclwire::runtime prepare_config [list \
+            --config $missing_config \
+            --unknown-option]
+    } message options
+    list $message [dict get $options -errorcode]
+} -result [list {unknown argument: --unknown-option} {TCLWIRE USAGE}]
+
+test runtime-1.1c {command-line parsing records construction inputs} -body {
+    set cli [::tclwire::cli::arguments [list \
+        --config ./tclwire.toml \
+        --host 192.0.2.50 \
+        --startservers http,proxy \
+        --httpport 8080 \
+        --service https:9443\;certfile=cert.pem\;keyfile=key.pem \
+        --debug]]
+    list \
+        [dict get $cli config_file] \
+        [dict get $cli overrides host] \
+        [dict get $cli overrides startservers] \
+        [dict get $cli port_overrides http] \
+        [dict get $cli custom_services] \
+        [dict get $cli services] \
+        [dict get $cli overrides debug]
+} -result [list \
+    ./tclwire.toml \
+    192.0.2.50 \
+    {http proxy} \
+    8080 \
+    1 \
+    [list [dict create protocol https port 9443 \
+        certfile [file normalize cert.pem] keyfile [file normalize key.pem]]] \
+    1]
+
+test runtime-1.1d {command-line config file is recorded after file merge} -body {
+    set config_file [::tclwire::runtime_test::make_config {}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    expr {[dict get $config config_file] eq [file normalize $config_file]}
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result 1
+
 test runtime-1.2 {legacy service options are normalized without starting services} -body {
-    set config [::tclwire::runtime parse_args [list \
+    set config [::tclwire::runtime prepare_config [list \
         --host 0.0.0.0 \
         --startservers http,https \
         --httpport 8080 \
@@ -193,7 +240,7 @@ test runtime-1.2a {protocol descriptors share connection-agent classes by family
     "HTTP proxy service"]
 
 test runtime-1.2b {connection queue limits are parsed from CLI aliases} -body {
-    set config [::tclwire::runtime parse_args [list \
+    set config [::tclwire::runtime prepare_config [list \
         --conn-max-wait 250 \
         --conn_max_workers 3 \
         --conn-max-per-thread 4]]
@@ -204,7 +251,7 @@ test runtime-1.2b {connection queue limits are parsed from CLI aliases} -body {
 } -result {250 3 4}
 
 test runtime-1.2ba {diagnostic options are parsed from CLI aliases} -body {
-    set config [::tclwire::runtime parse_args [list \
+    set config [::tclwire::runtime prepare_config [list \
         --enable-chores \
         --chore-interval-ms 800 \
         --diagnostics \
@@ -245,7 +292,7 @@ oo::class create ::example::SiteChore {
     }
 }
 }
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set specs [::tclwire::runtime::application_chore_specs $config]
     set spec [lindex $specs 0]
     list \
@@ -280,7 +327,7 @@ oo::class create ServerChore {
     }
 }
 }
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set specs [::tclwire::runtime::server_chore_specs $config]
     set spec [lindex $specs 0]
     set server_context [dict get $spec server_context]
@@ -335,7 +382,7 @@ oo::class create DefaultChore {
     }
 }
 }
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set specs [::tclwire::runtime::application_chore_specs $config]
     list \
         [llength $specs] \
@@ -348,7 +395,7 @@ oo::class create DefaultChore {
 test runtime-1.2c {HTTP services inherit and override the upload area} -body {
     set global_area [file normalize ./global-uploads]
     set service_area [file normalize ./service-uploads]
-    set config [::tclwire::runtime parse_args \
+    set config [::tclwire::runtime prepare_config \
                     [list   --upload-area $global_area \
                             --service http:8080 \
                             --service "https:8443;upload_area=$service_area"]]
@@ -362,7 +409,7 @@ test runtime-1.2c {HTTP services inherit and override the upload area} -body {
     [file normalize ./service-uploads]]
 
 test runtime-1.2d {an empty upload area explicitly selects in-memory uploads} -body {
-    set config [::tclwire::runtime parse_args [list --upload-area {} \
+    set config [::tclwire::runtime prepare_config [list --upload-area {} \
                                                     --service http:8080 \
                                                     --service {https:8443;upload_area=}]]
     list [dict get $config upload_area] \
@@ -377,7 +424,7 @@ enabled = true
 port = 8990
 upload_area = ""
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     dict get [lindex [dict get $config services] 0] upload_area
 } -cleanup {
     ::tclwire::runtime_test::cleanup
@@ -500,7 +547,7 @@ test runtime-1.5d {forced document root seeding writes existing directory} -body
 } -result {1 1 1 1 1 1 1 1}
 
 test runtime-1.5e {force docroot seeding is a global CLI option} -body {
-    set config [::tclwire::runtime parse_args [list --force-docroot-seeding]]
+    set config [::tclwire::runtime prepare_config [list --force-docroot-seeding]]
     dict get $config force_docroot_seeding
 } -result 1
 
@@ -641,7 +688,7 @@ test runtime-1.8 {configured services use distinct reactor pools} -body {
     1 1]
 
 test runtime-1.9 {service TLS credentials override global defaults} -body {
-    set config [::tclwire::runtime parse_args [list \
+    set config [::tclwire::runtime prepare_config [list \
         --startservers https,ftps \
         --certfile ./default-cert.pem \
         --keyfile ./default-key.pem \
@@ -665,7 +712,7 @@ test runtime-1.9 {service TLS credentials override global defaults} -body {
     [file normalize ./default-key.pem]]
 
 test runtime-1.10 {same protocol ports retain independent TLS credentials} -body {
-    set config [::tclwire::runtime parse_args [list \
+    set config [::tclwire::runtime prepare_config [list \
         --startservers https \
         --service "https:9443;certfile=./first.pem;keyfile=./first.key" \
         --service "https:9444;certfile=./second.pem;keyfile=./second.key"]]
@@ -756,7 +803,7 @@ user_check = true
 enabled = false
 port = 8081
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set directory [file dirname $config_file]
     list \
         [dict get $config host] \
@@ -859,7 +906,7 @@ aliases = '''
 '''
 }]
 } -body {
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     list \
         [dict get $config aliases] \
         [dict get $config applications default aliases] \
@@ -904,7 +951,7 @@ docroot = "rivet"
 message = "configured implicitly"
 aliases = "one two"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set descriptor [dict get $config applications rivet]
     list \
         [dict get $descriptor class] \
@@ -951,7 +998,7 @@ hosts = "rivet.rivetweb.org"
 environment = "rivet"
 docroot = "rivet"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set descriptor [dict get $config applications rivet]
     list \
         [dict get $config environment_configs rivet UploadMaxSize] \
@@ -982,7 +1029,7 @@ class = "::tclwire::CApplication"
 package = "tclwire::application"
 hosts = "localhost"
 }]
-    catch {::tclwire::runtime parse_args [list --config $config_file]} message
+    catch {::tclwire::runtime prepare_config [list --config $config_file]} message
     set message
 } -cleanup {
     ::tclwire::runtime_test::cleanup
@@ -1008,7 +1055,7 @@ hosts = "rivet.rivetweb.org"
 environment = "rivet"
 docroot = "rivet"
 } [file join [pwd] tcl application.tcl]]]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set descriptor [dict get $config applications rivet]
     list \
         [dict get $descriptor class] \
@@ -1039,7 +1086,7 @@ port = 2121
 enabled = false
 port = 8180
 }]
-    set config [::tclwire::runtime parse_args [list \
+    set config [::tclwire::runtime prepare_config [list \
         --config $config_file \
         --host 127.0.0.2 \
         --startservers http,proxy \
@@ -1082,7 +1129,7 @@ default_hosts = "example.test 192.0.2.10"
 enabled = true
 port = 8990
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
         set selected [$dispatcher select_application \
@@ -1110,7 +1157,7 @@ port = 8990
 [http.default]
 hosts = "local.example"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     dict get $config applications default hosts
 } -cleanup {
     ::tclwire::runtime_test::cleanup
@@ -1138,7 +1185,7 @@ file = "examples/hello.tcl"
 [http."hello.rivetweb.org".configure."::tclwire::Hello"]
 message = "Hello from RivetWeb"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
         set selected [$dispatcher select_application \
@@ -1191,7 +1238,7 @@ file = "%s"
 [http."hello.rivetweb.org".configure.Hello]
 message = "Hello from concise config"
 } [list $application_file]]]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set descriptor [dict get $config applications hello.rivetweb.org]
     list \
         [dict get $descriptor class] \
@@ -1224,7 +1271,7 @@ class = "::tclwire::Hello"
 file = "examples/hello.tcl"
 }]
     catch {
-        ::tclwire::runtime parse_args [list --config $config_file]
+        ::tclwire::runtime prepare_config [list --config $config_file]
     } message
     set message
 } -cleanup {
@@ -1251,7 +1298,7 @@ hosts = "localhost hello.rivetweb.org"
 class = "::tclwire::Hello"
 file = "examples/hello.tcl"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     try {
         set selected [$dispatcher select_application \
@@ -1269,16 +1316,16 @@ test runtime-1.13c {listen address is a bind address alias} -body {
 [tclwire]
 listen_address = "192.0.2.20"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     dict get $config host
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result 192.0.2.20
 
 test runtime-1.13d {CLI bind address aliases configure listener address} -body {
-    set bind [::tclwire::runtime parse_args \
+    set bind [::tclwire::runtime prepare_config \
         [list --bind-address 192.0.2.30]]
-    set listen [::tclwire::runtime parse_args \
+    set listen [::tclwire::runtime prepare_config \
         [list --listen-address 192.0.2.31]]
     list [dict get $bind host] [dict get $listen host]
 } -result {192.0.2.30 192.0.2.31}
@@ -1301,7 +1348,7 @@ log_level = "notice"
 hosts = "quiet.example"
 log_level = "alert"
 }]
-    set config [::tclwire::runtime parse_args [list \
+    set config [::tclwire::runtime prepare_config [list \
         --config $config_file --log-level warn]]
     list \
         [dict get $config log_level] \
@@ -1317,7 +1364,7 @@ test runtime-1.14 {missing protocol tables disable all external services} -body 
 [tclwire]
 logfile = "runtime.log"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     list [dict get $config startservers] [dict get $config services]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
@@ -1341,7 +1388,7 @@ class = "::example::HostApplication"
 file = "host.tcl"
 libdir = "host-lib"
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     list \
         [dict get $config libdir] \
         [dict get $config applications service libdir] \
@@ -1379,7 +1426,7 @@ hosts = "two.example.test www.two.example.test"
 docroot = "sites/two"
 maximum_workers = 12
 }]
-    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
     list \
         [dict get $config applications one.example.test] \
         [dict get $config applications two]
@@ -1425,8 +1472,8 @@ max_request_bytes = 2048
 max_header_bytes = 384
 request_memory_threshold = 512
 }]
-    set from_file [::tclwire::runtime parse_args [list --config $config_file]]
-    set from_cli [::tclwire::runtime parse_args [list \
+    set from_file [::tclwire::runtime prepare_config [list --config $config_file]]
+    set from_cli [::tclwire::runtime prepare_config [list \
         --max-request-bytes 8192 --max_header_bytes 1536 \
         --request-memory-threshold 2048]]
     list \
@@ -1450,9 +1497,9 @@ test runtime-1.18 {multipart request dumps are explicitly configurable} -body {
 [tclwire]
 dump_multipart_requests = true
 }]
-    set defaults [::tclwire::runtime parse_args {}]
-    set from_file [::tclwire::runtime parse_args [list --config $config_file]]
-    set from_cli [::tclwire::runtime parse_args \
+    set defaults [::tclwire::runtime prepare_config {}]
+    set from_file [::tclwire::runtime prepare_config [list --config $config_file]]
+    set from_cli [::tclwire::runtime prepare_config \
         [list --dump-multipart-requests]]
     list \
         [dict exists $defaults dump_multipart_requests] \

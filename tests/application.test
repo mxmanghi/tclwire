@@ -595,6 +595,25 @@ test application-configuration-1.1f {
     1000 \
     {}]
 
+test application-configuration-1.1g {
+    construction rejects empty environment configuration names
+} -body {
+    catch {
+        ::tclwire::ApplicationConfiguration new example \
+            [dict create \
+                class ::example::Application \
+                package example::application \
+                hosts example.test \
+                docroot /tmp \
+                encoding utf-8 \
+                application_paths [list /tmp] \
+                environment {rivet} \
+                environment_config [dict create \
+                    {} [dict create UploadMaxSize 1000]]]
+    } message
+    set message
+} -result {application 'example' environment_config names must not be empty}
+
 test application-configuration-1.1a {
     construction qualifies bare application class and configure names
 } -body {

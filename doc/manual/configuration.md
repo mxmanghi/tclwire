@@ -39,15 +39,13 @@ configuration:
 capture_stderr = true
 
 [env.rivet]
-parent = "stdchans"
 UploadMaxSize = 10485760
 BeforeScript = "rivet/before.tcl"
 ```
 
-Each `[env.<name>]` table is an environment-owned dictionary. TclWire reserves
-only `parent`, which names another environment configuration table to inherit.
-Child values override parent values, and global `[tclwire]` values are not
-copied into environment configuration.
+Each `[env.<name>]` table is an environment-owned dictionary. TclWire does not
+validate environment-specific option names, and global `[tclwire]` values are
+not copied into environment configuration.
 
 Applications that declare `environment = "..."` carry the effective
 environment configuration into their worker-pool configuration. Application
@@ -64,7 +62,6 @@ set upload_limit [::tclwire::app::environment_configuration rivet UploadMaxSize]
 
 Calling the command with no arguments returns the current application's full
 environment configuration repository. Passing an environment name returns that
-environment's effective dictionary, including inherited parent values. Passing
-an environment name and key returns one value from that dictionary. Missing
-environment names return an empty dictionary; missing keys in an existing
-environment configuration are errors.
+environment's effective dictionary. Passing an environment name and key returns
+one value from that dictionary. Missing environment names return an empty
+dictionary; missing keys in an existing environment configuration are errors.

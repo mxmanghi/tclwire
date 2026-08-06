@@ -39,6 +39,7 @@ namespace eval ::tclwire::runtime {
 foreach script {
     runtime_protocols.tcl
     runtime_config.tcl
+    parse_validate_cli.tcl
     runtime_chores.tcl
     runtime_services.tcl
     runtime_lifecycle.tcl
@@ -52,7 +53,7 @@ if {[file normalize [info script]] eq [file normalize $::argv0]} {
     if {[catch {::tclwire::runtime run $::argv} message options]} {
         if {[dict get $options -errorcode] eq {TCLWIRE USAGE}} {
             puts stderr $message
-            ::tclwire::runtime usage stderr
+            ::tclwire::cli::usage stderr
         } else {
             puts stderr [dict get $options -errorinfo]
         }

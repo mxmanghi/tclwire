@@ -14,83 +14,15 @@
 #   server chore spec: singleton runtime chore descriptor derived from the
 #           [tclwire] stanza.
 
-namespace eval ::tclwire::runtime {
+namespace eval ::tclwire::config {
+    # Raise a configuration/CLI usage error with a stable error code.  Parsers
+    # use this for bad user input before a runtime configuration tree is usable.
     proc usage_error {message} {
         return -code error -errorcode {TCLWIRE USAGE} $message
     }
 
-    proc usage {{channel stdout}} {
-        puts $channel "Usage: tclsh tcl/tclwire.tcl ?options?"
-        puts $channel ""
-        puts $channel "Options:"
-        puts $channel "  --help"
-        puts $channel "      Show this help message."
-        puts $channel "  --config <path>     Default: . (no configuration file)"
-        puts $channel "  --bind-address <address>"
-        puts $channel "      Local address used by service listeners. Default: 127.0.0.1"
-        puts $channel "  --listen-address <address>"
-        puts $channel "      Alias for --bind-address."
-        puts $channel "  --host <address>"
-        puts $channel "      Legacy alias for --bind-address."
-        puts $channel "  --startservers <list>"
-        puts $channel "      Comma-separated protocols to prepare, or 'all'."
-        puts $channel "  --httpport <port>   Default: 8990"
-        puts $channel "  --httpsport <port>  Default: 9443"
-        puts $channel "  --ftpport <port>    Default: 8991"
-        puts $channel "  --ftpsport <port>   Default: 990"
-        puts $channel "  --proxyport <port>  Default: 8992"
-        puts $channel "  --service <protocol:port>"
-        puts $channel "      Add a service. TLS overrides may follow as"
-        puts $channel "      ';certfile=<path>;keyfile=<path>;upload_area=<path>'."
-        puts $channel "  --docroot <path>"
-        puts $channel "  --force-docroot-seeding"
-        puts $channel "      Seed docroot even when the directory already exists. Default: off"
-        puts $channel "  --upload-area <path>"
-        puts $channel "      Store HTTP multipart file parts in this directory."
-        puts $channel "  --max-request-bytes <count>"
-        puts $channel "      Maximum buffered HTTP request size. Default: 16777216"
-        puts $channel "  --max-header-bytes <count>"
-        puts $channel "      Maximum buffered HTTP request header size. Default: 65536"
-        puts $channel "  --request-memory-threshold <count>"
-        puts $channel "      Spool larger HTTP request bodies to disk. Default: 1048576"
-        puts $channel "  --dump-multipart-requests"
-        puts $channel "      Dump complete multipart HTTP requests to stderr. Default: off"
-        puts $channel "  --ftproot <path>"
-        puts $channel "  --certfile <path>"
-        puts $channel "  --keyfile <path>"
-        puts $channel "  --noftp-user-check"
-        puts $channel "  --logfile <path>    Access log. Default: /tmp/tclwire.log"
-        puts $channel "  --logerr <path>     Error log. Default: /tmp/tclwire-err.log"
-        puts $channel "  --log-level <level> Global logging threshold. Default: info"
-        puts $channel "  --conn-max-wait <ms>"
-        puts $channel "      Maximum accepted-socket wait for a connection worker. Default: 1000"
-        puts $channel "  --conn-max-workers <count>"
-        puts $channel "      Maximum connection-agent workers per service. Default: 100"
-        puts $channel "  --conn-max-per-thread <count>"
-        puts $channel "      Maximum connections per connection-agent worker. Default: 5"
-        puts $channel "  --unix-socket <path> Console socket. Default: /tmp/tclwire.sock"
-        puts $channel "  --enable-chores"
-        puts $channel "      Start the chore scheduler. Diagnostics enable it automatically."
-        puts $channel "  --chore-interval-ms <ms>"
-        puts $channel "      Chore scheduler wakeup interval. Default: 5000"
-        puts $channel "  --diagnostics"
-        puts $channel "      Periodically log runtime diagnostic snapshots. Default: off"
-        puts $channel "  --diagnostics-interval-ms <ms>"
-        puts $channel "      Diagnostic snapshot interval. Default: 5000"
-        puts $channel "  --diagnostics-watchdog-max-age-ms <ms>"
-        puts $channel "      Event-loop heartbeat age before watchdog alert. Default: 2 intervals"
-        puts $channel "  --quiet"
-        puts $channel "  --debug"
-        return
-    }
-
-    proc require_value {argv index option} {
-        if {$index >= [llength $argv]} {
-            usage_error "missing value after $option"
-        }
-        return [lindex $argv $index]
-    }
-
+    # Validate a TCP port from TOML or CLI input.  The returned integer is stored
+    # either in the protocol port map or directly in a service descriptor.
     proc parse_port_value {option value} {
         if {![string is integer -strict $value] || $value < 1 || $value > 65535} {
             usage_error "invalid value for $option: $value"
@@ -98,6 +30,8 @@ namespace eval ::tclwire::runtime {
         return $value
     }
 
+    # Validate an integer lower-bounded option.  Shared by counters, byte limits,
+    # worker limits, and timing options before those values enter the config tree.
     proc parse_integer_min {option value minimum} {
         if {![string is integer -strict $value] || $value < $minimum} {
             usage_error "invalid value for $option: $value"
@@ -105,60 +39,8 @@ namespace eval ::tclwire::runtime {
         return $value
     }
 
-    proc parse_service_spec {spec} {
-        set fields [split $spec \;]
-        set endpoint [lindex $fields 0]
-        if {![regexp {^([a-z0-9_+-]+):([0-9]+)$} \
-                $endpoint -> protocol port]} {
-            usage_error "invalid service spec: $spec"
-        }
-        if {$protocol ni [implemented_protocols]} {
-            usage_error "unsupported protocol in service spec: $protocol"
-        }
-        set service [dict create protocol $protocol \
-                                 port     [parse_port_value --service $port]]
-
-        foreach field [lrange $fields 1 end] {
-            if {![regexp {^(certfile|keyfile)=(.+)$|^(upload_area)=(.*)$} \
-                    $field -> tls_name tls_value upload_name upload_value]} {
-                usage_error "invalid service option: $field"
-            }
-            if {$upload_name ne {}} {
-                set name $upload_name
-                set value $upload_value
-            } else {
-                set name $tls_name
-                set value $tls_value
-            }
-            dict set service $name [expr {$value eq {} ? {} : [file normalize $value]}]
-        }
-        return $service
-    }
-    proc parse_protocol_list {value} {
-        set value [string trim $value]
-        if {$value eq {}} {
-            usage_error "invalid value for --startservers: empty list"
-        }
-        if {$value eq "all"} {
-            return [implemented_protocols]
-        }
-
-        set protocols {}
-        foreach protocol [split $value ,] {
-            set protocol [string trim $protocol]
-            if {$protocol eq {}} {
-                usage_error "invalid value for --startservers: empty protocol"
-            }
-            if {$protocol ni [implemented_protocols]} {
-                usage_error "unsupported server in --startservers: $protocol"
-            }
-            if {$protocol ni $protocols} {
-                lappend protocols $protocol
-            }
-        }
-        return $protocols
-    }
-
+    # Convert TOML/CLI boolean spelling into Tcl's 0/1 representation before the
+    # value is merged into global, protocol, or application configuration.
     proc parse_boolean {name value} {
         switch -exact -- [string tolower [string trim $value]] {
             true - 1 - yes - on {
@@ -173,10 +55,15 @@ namespace eval ::tclwire::runtime {
         }
     }
 
+    # Normalize a log-level spelling through the logger package.  The name
+    # argument is kept for parity with other validators and future diagnostics.
     proc normalize_log_level {name value} {
         return [::tclwire::logger normalize_level $value]
     }
 
+    # Resolve a path from the TOML file's directory, preserving empty values as
+    # explicit "unset" values.  This keeps later runtime code from depending on
+    # the process working directory for file-based configuration.
     proc resolve_config_path {config_dir value} {
         if {$value eq {}} {
             return {}
@@ -187,6 +74,9 @@ namespace eval ::tclwire::runtime {
         return [file normalize [file join $config_dir $value]]
     }
 
+    # Parse an Apache-style Alias block into the application descriptor's list of
+    # alias dictionaries.  Global, default-application, and per-application alias
+    # lists are all converted to this shape before inheritance is applied.
     proc parse_application_aliases {name value} {
         set aliases {}
         set line_number 0
@@ -221,6 +111,9 @@ namespace eval ::tclwire::runtime {
         return $aliases
     }
 
+    # Merge inherited aliases into an overriding application descriptor.  The
+    # override entries are searched first at runtime, so inherited entries are
+    # appended only when they are not already present.
     proc merge_application_aliases {base override} {
         if {![dict exists $base aliases] || ![dict exists $override aliases]} {
             return $override
@@ -235,6 +128,9 @@ namespace eval ::tclwire::runtime {
         return $override
     }
 
+    # Normalize a directory list, dropping empty entries and duplicates while
+    # preserving first-seen order.  Used to build deterministic search paths for
+    # server chore files.
     proc unique_directories {directories} {
         set result {}
         foreach directory $directories {
@@ -249,6 +145,9 @@ namespace eval ::tclwire::runtime {
         return $result
     }
 
+    # Build the server-chore file search path from the launch directory, config
+    # directory, optional runtime libdir, and project root.  The resulting paths
+    # are stored in chore specs for child runtime setup.
     proc server_chore_paths {config_dir config} {
         set search_directories [list [pwd] $config_dir]
         if {[dict exists $config libdir]} {
@@ -258,6 +157,9 @@ namespace eval ::tclwire::runtime {
         return [unique_directories $search_directories]
     }
 
+    # Resolve a configured server chore script.  Absolute paths are accepted
+    # directly; relative paths are searched through the chore path list and the
+    # resolved path is stored in the server chore spec.
     proc resolve_server_chore_file {config_dir config file} {
         if {[file pathtype $file] eq "absolute"} {
             return [file normalize $file]
@@ -277,6 +179,10 @@ namespace eval ::tclwire::runtime {
         error "server chore '$file' was not found; searched: [join $searched {, }]"
     }
 
+    # Merge a nested dictionary field from an inherited descriptor and an
+    # overriding descriptor.  This preserves per-class configure blocks and pool
+    # sub-dictionaries while allowing the overriding descriptor to replace scalar
+    # or non-dictionary entries.
     proc merge_nested_dict_field {base override field} {
         if {![dict exists $base $field] || ![dict exists $override $field]} {
             return $override
@@ -382,6 +288,9 @@ namespace eval ::tclwire::runtime {
         return $applications
     }
 
+    # Convert an environment command/name into the key used by [env.<name>]
+    # configuration tables.  Fully-qualified Tcl namespaces are reduced to their
+    # tail so configured environment options can be matched to loaded contracts.
     proc environment_config_name {environment} {
         set environment [string trim $environment]
         if {[string match ::* $environment]} {
@@ -390,6 +299,9 @@ namespace eval ::tclwire::runtime {
         return $environment
     }
 
+    # Return the environment-owned option dictionary for one [env.<name>] table.
+    # The structural "parent" key is consumed by repository resolution and is not
+    # passed to application or environment code as an ordinary option.
     proc environment_config_options {environment_id descriptor} {
         if {[catch {dict size $descriptor}]} {
             error "environment configuration '$environment_id' must be a table"
@@ -401,6 +313,9 @@ namespace eval ::tclwire::runtime {
         return $options
     }
 
+    # Resolve one environment configuration table against its optional parent.
+    # This is the recursive worker for the repository pass: it detects cycles,
+    # resolves parent options first, and lets the child table override them.
     proc resolve_environment_config_one {repository environment_id stack} {
         if {$environment_id in $stack} {
             error "cyclic environment configuration inheritance involving $environment_id"
@@ -426,6 +341,9 @@ namespace eval ::tclwire::runtime {
             [environment_config_options $environment_id $descriptor]]
     }
 
+    # Build the global environment configuration repository from all [env.*]
+    # TOML tables.  The result is a map from environment name to effective option
+    # dictionary; application descriptors later copy only the entries they need.
     proc resolve_environment_config_repository {toml_config} {
         if {![dict exists $toml_config env]} {
             return {}
@@ -447,6 +365,10 @@ namespace eval ::tclwire::runtime {
         return $resolved
     }
 
+    # Expand an application's declared environment list into configuration
+    # repository names.  When an environment package is loadable, its contract can
+    # provide the canonical name and required environments; otherwise the literal
+    # configured name is retained so config can still be carried forward.
     proc application_environment_config_names {environments} {
         set names {}
         set pending $environments
@@ -483,6 +405,9 @@ namespace eval ::tclwire::runtime {
         return $names
     }
 
+    # Select the subset of the resolved environment repository relevant to one
+    # application descriptor.  The selected map becomes the descriptor's
+    # environment_config field and is serialized into worker-pool configuration.
     proc application_environment_config {application_id descriptor repository} {
         if {![dict exists $descriptor environment]} {
             return {}
@@ -502,6 +427,9 @@ namespace eval ::tclwire::runtime {
         return $configuration
     }
 
+    # Construct the seed configuration tree.  This contains built-in global
+    # defaults, the default service, the protocol port map, an empty environment
+    # repository, and the initial default application descriptor.
     proc default_config {} {
         set host                127.0.0.1
         set quiet               0
@@ -536,11 +464,11 @@ namespace eval ::tclwire::runtime {
         set unix_socket         [file normalize /tmp/tclwire.sock]
         set ftp_user_check      1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
-        set startservers        [default_protocols]
+        set startservers        [::tclwire::runtime::default_protocols]
         set services            [list [dict create  protocol http \
-                                                    port [protocol_default_port http]]]
+                                                    port [::tclwire::runtime::protocol_default_port http]]]
         set custom_services     0
-        set ports               [protocol_defaults]
+        set ports               [::tclwire::runtime::protocol_defaults]
         set default_application default
         set default_encoding    utf-8
         set default_hosts       {}
@@ -552,63 +480,55 @@ namespace eval ::tclwire::runtime {
                                                                     encoding   $default_encoding       \
                                                                     pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
 
-        return [dict create help         $help \
-                            config_file  . \
+        return [dict create help                $help \
+                            config_file         . \
                             force_docroot_seeding $force_docroot_seeding \
-                            host         $host \
-                            quiet        $quiet \
-                            debug        $debug \
+                            host                $host \
+                            quiet               $quiet \
+                            debug               $debug \
                             debug_connection $debug_connection \
-                            encoding     $default_encoding \
-                            docroot      $docroot \
-                            upload_area  $upload_area \
+                            encoding            $default_encoding \
+                            docroot             $docroot \
+                            upload_area         $upload_area \
                             max_request_bytes $max_request_bytes \
                             max_header_bytes $max_header_bytes \
                             request_memory_threshold $request_memory_threshold \
-                            ftproot      $ftproot \
-                            certfile     $certfile \
-                            keyfile      $keyfile \
-                            ftp_user_check $ftp_user_check \
-                            logfile      $logfile \
-                            logerr       $logerr \
-                            hostname     $hostname \
-                            admin        $admin \
-                            errorlog     $logerr \
-                            server_path  $server_path \
-                            aliases      $aliases \
-                            log_level    $log_level \
-                            conn_max_wait $conn_max_wait \
-                            conn_max_workers $conn_max_workers \
+                            ftproot             $ftproot \
+                            certfile            $certfile \
+                            keyfile             $keyfile \
+                            ftp_user_check      $ftp_user_check \
+                            logfile             $logfile \
+                            logerr              $logerr \
+                            hostname            $hostname \
+                            admin               $admin \
+                            errorlog            $logerr \
+                            server_path         $server_path \
+                            aliases             $aliases \
+                            log_level           $log_level \
+                            conn_max_wait       $conn_max_wait \
+                            conn_max_workers    $conn_max_workers \
                             conn_max_per_thread $conn_max_per_thread \
-                            chores_enabled $chores_enabled \
-                            chore_interval_ms $chore_interval_ms \
-                            server_chores $server_chores \
+                            chores_enabled      $chores_enabled \
+                            chore_interval_ms   $chore_interval_ms \
+                            server_chores       $server_chores \
                             diagnostics_enabled $diagnostics_enabled \
-                            diagnostics_interval_ms $diagnostics_interval_ms \
+                            diagnostics_interval_ms         $diagnostics_interval_ms \
                             diagnostics_watchdog_max_age_ms $diagnostics_watchdog_max_age_ms \
-                            unix_socket  $unix_socket \
-                            startservers $startservers \
-                            services     $services \
-                            custom_services $custom_services \
-                            ports        $ports \
-                            default_hosts $default_hosts \
+                            unix_socket         $unix_socket \
+                            startservers        $startservers \
+                            services            $services \
+                            custom_services     $custom_services \
+                            ports               $ports \
+                            default_hosts       $default_hosts \
                             ftproot_follows_docroot $ftproot_follows_docroot \
                             environment_configs $environment_configs \
                             default_application $default_application \
-                            applications $applications]
+                            applications        $applications]
     }
 
-    proc find_config_option {argv} {
-        set config_file .
-        for {set i 0} {$i < [llength $argv]} {incr i} {
-            set option [lindex $argv $i]
-            if {$option eq "--config"} {
-                set config_file [require_value $argv [incr i] $option]
-            }
-        }
-        return $config_file
-    }
-
+    # Read the TOML file into the parser's dictionary representation.  A path of
+    # "." is the sentinel for "no configuration file", so the file pass sees an
+    # empty TOML tree.
     proc load_config_file {path} {
         if {$path eq "."} {
             return [dict create]
@@ -620,34 +540,48 @@ namespace eval ::tclwire::runtime {
         return [::toml::tomlParse $path]
     }
 
-    proc apply_file_config {config path toml_config} {
-        if {$path eq "."} {
+    # Merge TOML configuration into the default config tree.
+    #
+    # This pass resolves
+    #   + file-relative paths 
+    #   + validates scalar values
+    #   + builds the global environment configuration repository
+    #   + builds protocol service descriptors
+    #   + converts HTTP/HTTPS application tables into normalized application descriptors.
+
+    proc apply_file_config {config toml_config} {
+        set config_file [dict get $config config_file]
+        if {$config_file eq "."} {
             return $config
         }
-        set config_file [file normalize $path]
-        set config_dir [file dirname $config_file]
-        dict set config config_file $config_file
-        set environment_configs \
-            [resolve_environment_config_repository $toml_config]
+        set config_dir  [file dirname $config_file]
+
+        # Environment configuration is resolved before applications so each
+        # application can later receive only the effective environment options
+        # for the environments it declares or requires.
+        set environment_configs [resolve_environment_config_repository $toml_config]
         dict set config environment_configs $environment_configs
 
+        # The [tclwire] table updates global runtime defaults.  Values that need
+        # type conversion or path resolution are transformed before the merge so
+        # later passes see one normalized representation.
         if {[dict exists $toml_config tclwire]} {
             set global [dict get $toml_config tclwire]
 
             # These fields need no conversion. Filtering before merging keeps
             # unrelated TOML keys out while letting file values replace the
             # built-in defaults in one dictionary operation.
-            set config [dict merge $config \
-                [dict filter $global key \
-                    host encoding default_application hostname admin server_path aliases]]
+
+            set config_keys {host encoding default_application hostname admin server_path aliases}
+
+            set config [dict merge $config [dict filter $global key {*}$config_keys]]
             if {[dict exists $global aliases]} {
                 dict set config aliases \
-                    [parse_application_aliases tclwire.aliases \
-                        [dict get $global aliases]]
+                    [parse_application_aliases tclwire.aliases [dict get $global aliases]]
             }
             if {[dict exists $global errorlog]} {
-                dict set config errorlog [resolve_config_path $config_dir \
-                    [dict get $global errorlog]]
+                dict set config errorlog \
+                            [resolve_config_path $config_dir [dict get $global errorlog]]
             }
             foreach alias {listen_address bind_address} {
                 if {[dict exists $global $alias]} {
@@ -657,15 +591,15 @@ namespace eval ::tclwire::runtime {
             if {[dict exists $global default_hosts]} {
                 dict set config default_hosts [dict get $global default_hosts]
                 set default_application [dict get $config default_application]
+
                 if {[dict exists $config applications $default_application]} {
                     dict set config applications $default_application hosts \
-                        [dict get $config default_hosts]
+                                            [dict get $config default_hosts]
                 }
             }
             if {[dict exists $global log_level]} {
-                dict set config log_level \
-                    [normalize_log_level tclwire.log_level \
-                        [dict get $global log_level]]
+                dict set config log_level [normalize_log_level tclwire.log_level \
+                                          [dict get $global log_level]]
             }
             # dict filter selects the supported source fields; dict map
             # validates and replaces their values. The later merge applies
@@ -728,14 +662,17 @@ namespace eval ::tclwire::runtime {
             }
         }
 
+        # Protocol tables first produce listener service descriptors.  If any
+        # protocol table is present, the service list becomes explicit and
+        # replaces the built-in default service list.
         set startservers {}
         set services {}
-        foreach protocol [implemented_protocols] {
+        foreach protocol [::tclwire::runtime::implemented_protocols] {
             if {![dict exists $toml_config $protocol]} {
                 continue
             }
             set protocol_config [dict get $toml_config $protocol]
-            set port [protocol_default_port $protocol]
+            set port [::tclwire::runtime::protocol_default_port $protocol]
             if {[dict exists $protocol_config port]} {
                 set port [parse_port_value "$protocol.port" \
                     [dict get $protocol_config port]]
@@ -752,28 +689,40 @@ namespace eval ::tclwire::runtime {
             }
 
             set service [dict create protocol $protocol port $port]
-            if {$protocol in {http https} &&
-                    [dict exists $protocol_config upload_area]} {
-                dict set service upload_area [resolve_config_path $config_dir \
-                    [dict get $protocol_config upload_area]]
-            }
-            if {$protocol in {http https} &&
-                    [dict exists $protocol_config max_request_bytes]} {
-                dict set service max_request_bytes [parse_integer_min \
-                    "$protocol.max_request_bytes" \
-                    [dict get $protocol_config max_request_bytes] 1]
-            }
-            if {$protocol in {http https} &&
-                    [dict exists $protocol_config max_header_bytes]} {
-                dict set service max_header_bytes [parse_integer_min \
-                    "$protocol.max_header_bytes" \
-                    [dict get $protocol_config max_header_bytes] 1]
-            }
-            if {$protocol in {http https} &&
-                    [dict exists $protocol_config request_memory_threshold]} {
-                dict set service request_memory_threshold [parse_integer_min \
-                    "$protocol.request_memory_threshold" \
-                    [dict get $protocol_config request_memory_threshold] 0]
+            if {$protocol in {http https}} {
+                set http_options [dict filter $protocol_config key \
+                    upload_area max_request_bytes max_header_bytes \
+                    request_memory_threshold]
+                dict with http_options {
+                    # Dictionary-backed variables from http_options:
+                    # upload_area, max_request_bytes, max_header_bytes,
+                    # request_memory_threshold.
+                    if {[info exists upload_area]} {
+                        set resolved_area [resolve_config_path $config_dir $upload_area]
+                        dict set service upload_area $resolved_area
+                    }
+
+                    if {[info exists max_request_bytes]} {
+                        set parsed_max_req \
+                            [parse_integer_min "$protocol.max_request_bytes" \
+                                                $max_request_bytes 1]
+                        dict set service max_request_bytes $parsed_max_req
+                    }
+
+                    if {[info exists max_header_bytes]} {
+                        set parsed_max_header [parse_integer_min \
+                                                    "$protocol.max_header_bytes" \
+                                                    $max_header_bytes 1]
+                        dict set service max_header_bytes $parsed_max_header
+                    }
+
+                    if {[info exists request_memory_threshold]} {
+                        set parsed_mem_threshold \
+                                [parse_integer_min "$protocol.request_memory_threshold" \
+                                                    $request_memory_threshold 0]
+                        dict set service request_memory_threshold $parsed_mem_threshold
+                    }
+                }
             }
 
             if {[dict exists $protocol_config log_level]} {
@@ -812,6 +761,9 @@ namespace eval ::tclwire::runtime {
         dict set config services $services
         dict set config custom_services 1
 
+        # HTTP and HTTPS protocol tables also contain application subtables.  At
+        # this stage each application table is converted into descriptor shape,
+        # with file-relative paths resolved and local scalar values normalized.
         set applications [dict create]
         foreach protocol {http https} {
             if {![dict exists $toml_config $protocol]} {
@@ -838,9 +790,8 @@ namespace eval ::tclwire::runtime {
                     hostname admin server_path aliases]
                 if {[dict exists $descriptor aliases]} {
                     dict set application aliases \
-                        [parse_application_aliases \
-                            "$protocol.$application_id.aliases" \
-                            [dict get $descriptor aliases]]
+                        [parse_application_aliases "$protocol.$application_id.aliases" \
+                                                    [dict get $descriptor aliases]]
                 }
                 if {[dict exists $descriptor configure]} {
                     dict set application configure [dict get $descriptor configure]
@@ -898,6 +849,9 @@ namespace eval ::tclwire::runtime {
             }
         }
         if {[dict size $applications]} {
+            # Application tables override the current default-application
+            # template.  Nested descriptor fields need field-aware merging before
+            # the final dict merge flattens inherited defaults into each app.
             set merged_applications [dict create]
             set default_application [dict get $config default_application]
             if {[dict exists $config applications $default_application]} {
@@ -932,6 +886,10 @@ namespace eval ::tclwire::runtime {
                     }
                 }
                 if {!$explicit_class} {
+                    # Environment contracts may supply the application class and
+                    # reload file.  Explicit package/file options are preserved;
+                    # inherited loader options are removed when the environment
+                    # selected the concrete application implementation.
                     set environment_class \
                         [::tclwire::environment application_class \
                             $application_id $descriptor]
@@ -958,6 +916,8 @@ namespace eval ::tclwire::runtime {
                         }
                     }
                 }
+                # Attach the per-application slice of the environment repository
+                # after inherited defaults and environment contracts are known.
                 set environment_config [application_environment_config \
                     $application_id $descriptor $environment_configs]
                 if {[dict size $environment_config]} {
@@ -972,203 +932,88 @@ namespace eval ::tclwire::runtime {
         return $config
     }
 
-    proc apply_cli_config {config argv} {
-        set custom_services 0
-        set cli_services {}
-        set startservers_set 0
-        set port_overrides [dict create]
-        set ftproot_set 0
+    proc apply_cli_config_file {config cli} {
+        set config_file [dict get $cli config_file]
 
-        for {set i 0} {$i < [llength $argv]} {incr i} {
-            set option [lindex $argv $i]
-            switch -exact -- $option {
-                --help {
-                    dict set config help 1
-                }
-                --config {
-                    incr i
-                }
-                --bind-address -
-                --listen-address -
-                --host {
-                    dict set config host [require_value $argv [incr i] $option]
-                    if {[dict get $config hostname] eq {}} {
-                        dict set config hostname [dict get $config host]
-                    }
-                }
-                --startservers {
-                    dict set config startservers [parse_protocol_list \
-                        [require_value $argv [incr i] $option]]
-                    set startservers_set 1
-                }
-                --httpport  -
-                --httpsport -
-                --ftpport   -
-                --ftpsport  -
-                --proxyport {
-                    set protocol [string range $option 2 end-4]
-                    dict set port_overrides $protocol \
-                            [parse_port_value $option [require_value $argv [incr i] $option]]
-                }
-                --service {
-                    set custom_services 1
-                    lappend cli_services \
-                        [parse_service_spec [require_value $argv [incr i] $option]]
-                }
-                --docroot {
-                    set docroot [file normalize [require_value \
-                        $argv [incr i] $option]]
-                    dict set config docroot $docroot
-                    set applications [dict get $config applications]
-                    dict for {application_id descriptor} $applications {
-                        dict set descriptor docroot $docroot
-                        dict set applications $application_id $descriptor
-                    }
-                    dict set config applications $applications
-                    if {!$ftproot_set} {
-                        dict set config ftproot $docroot
-                    }
-                }
-                --force-docroot-seeding {
-                    dict set config force_docroot_seeding 1
-                }
-                --upload-area {
-                    set value [require_value $argv [incr i] $option]
-                    dict set config upload_area \
-                        [expr {$value eq {} ? {} : [file normalize $value]}]
-                }
-                --max-request-bytes {
-                    dict set config max_request_bytes [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 1]
-                }
-                --max-header-bytes -
-                --max_header_bytes {
-                    dict set config max_header_bytes [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 1]
-                }
-                --request-memory-threshold {
-                    dict set config request_memory_threshold [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 0]
-                }
-                --dump-multipart-requests {
-                    dict set config dump_multipart_requests 1
-                }
-                --ftproot {
-                    dict set config ftproot [file normalize \
-                        [require_value $argv [incr i] $option]]
-                    set ftproot_set 1
-                }
-                --certfile {
-                    dict set config certfile [file normalize \
-                        [require_value $argv [incr i] $option]]
-                }
-                --keyfile {
-                    dict set config keyfile [file normalize \
-                        [require_value $argv [incr i] $option]]
-                }
-                --noftp-user-check {
-                    dict set config ftp_user_check 0
-                }
-                --logfile {
-                    dict set config logfile [file normalize \
-                        [require_value $argv [incr i] $option]]
-                }
-                --logerr {
-                    dict set config logerr [file normalize \
-                        [require_value $argv [incr i] $option]]
-                    dict set config errorlog [dict get $config logerr]
-                }
-                --log-level {
-                    dict set config log_level [normalize_log_level $option \
-                        [require_value $argv [incr i] $option]]
-                }
-                --conn-max-wait -
-                --conn_max_wait {
-                    dict set config conn_max_wait [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 0]
-                }
-                --conn-max-workers -
-                --conn_max_workers {
-                    dict set config conn_max_workers [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 1]
-                }
-                --conn-max-per-thread -
-                --conn_max_per_thread {
-                    dict set config conn_max_per_thread [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 1]
-                }
-                --unix-socket {
-                    dict set config unix_socket [file normalize \
-                        [require_value $argv [incr i] $option]]
-                }
-                --enable-chores -
-                --chores {
-                    dict set config chores_enabled 1
-                }
-                --chore-interval-ms -
-                --chore_interval_ms {
-                    dict set config chore_interval_ms [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 100]
-                }
-                --diagnostics {
-                    dict set config diagnostics_enabled 1
-                }
-                --diagnostics-interval-ms -
-                --diagnostics_interval_ms {
-                    dict set config diagnostics_interval_ms [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 100]
-                }
-                --diagnostics-watchdog-max-age-ms -
-                --diagnostics_watchdog_max_age_ms {
-                    dict set config diagnostics_watchdog_max_age_ms [parse_integer_min $option \
-                        [require_value $argv [incr i] $option] 100]
-                }
-                --quiet {
-                    dict set config quiet 1
-                }
-                --debug {
-                    dict set config debug 1
-                }
-                default {
-                    usage_error "unknown argument: $option"
-                }
-            }
-        }
-
-        if {$custom_services} {
-            dict set config services $cli_services
-        } else {
-            set services [dict get $config services]
-            if {$startservers_set} {
-                set selected {}
-                foreach protocol [dict get $config startservers] {
-                    set found 0
-                    foreach service $services {
-                        if {[dict get $service protocol] eq $protocol} {
-                            lappend selected $service
-                            set found 1
-                        }
-                    }
-                    if {!$found} {
-                        lappend selected [dict create protocol $protocol \
-                            port [dict get [dict get $config ports] $protocol]]
-                    }
-                }
-                set services $selected
-            }
-            set updated {}
-            foreach service $services {
-                set protocol [dict get $service protocol]
-                if {[dict exists $port_overrides $protocol]} {
-                    dict set service port [dict get $port_overrides $protocol]
-                }
-                lappend updated $service
-            }
-            dict set config services $updated
+        if {$config_file ne "."} {
+            dict set config config_file [file normalize $config_file]
         }
         return $config
     }
 
+    # Apply parsed CLI data on top of defaults and TOML.  This stage mutates the
+    # configuration tree: scalar overrides are merged, docroot cascades into
+    # application descriptors, and service-selection data is materialized.
+    proc apply_cli_config {config cli} {
+        set config [apply_cli_config_file $config $cli]
+        dict with cli {
+            # Dictionary-backed variables from cli:
+            # overrides, custom_services, services, startservers_set,
+            # port_overrides, ftproot_set.
+            if {[dict exists $overrides host]} {
+                dict set config host [dict get $overrides host]
+                if {[dict get $config hostname] eq {}} {
+                    dict set config hostname [dict get $config host]
+                }
+                dict unset overrides host
+            }
+
+            if {[dict exists $overrides docroot]} {
+                set docroot [dict get $overrides docroot]
+                dict set config docroot $docroot
+                set applications [dict get $config applications]
+                dict for {application_id descriptor} $applications {
+                    dict set descriptor docroot $docroot
+                    dict set applications $application_id $descriptor
+                }
+                dict set config applications $applications
+                if {!$ftproot_set} {
+                    dict set config ftproot $docroot
+                }
+                dict unset overrides docroot
+            }
+
+            set config [dict merge $config $overrides]
+
+            if {$custom_services} {
+                dict set config services $services
+            } else {
+                set services [dict get $config services]
+                if {$startservers_set} {
+                    set selected {}
+                    foreach protocol [dict get $config startservers] {
+                        set found 0
+                        foreach service $services {
+                            if {[dict get $service protocol] eq $protocol} {
+                                lappend selected $service
+                                set found 1
+                            }
+                        }
+                        if {!$found} {
+                            lappend selected [dict create protocol $protocol \
+                                port [dict get [dict get $config ports] $protocol]]
+                        }
+                    }
+                    set services $selected
+                }
+                set updated {}
+                foreach service $services {
+                    set protocol [dict get $service protocol]
+                    if {[dict exists $port_overrides $protocol]} {
+                        dict set service port [dict get $port_overrides $protocol]
+                    }
+                    lappend updated $service
+                }
+                dict set config services $updated
+            }
+        }
+        return $config
+    }
+
+    # Complete the normalized configuration tree after defaults, TOML, and CLI
+    # have all been applied.  This expands application inheritance from global
+    # and default-application values, fills service defaults, normalizes service
+    # descriptors, and removes construction-only helper fields.
     proc finalize_config {config} {
         set applications [dict get $config applications]
         set default_application [dict get $config default_application]
@@ -1265,28 +1110,33 @@ namespace eval ::tclwire::runtime {
         }
         dict set config applications $applications
 
+        # Service descriptors inherit HTTP body limits and upload area from the
+        # global config when the service did not specify an override.  TLS
+        # defaults are applied by normalize_service.
         set services [dict get $config services]
+        set service_defaults [dict filter $config key \
+            upload_area max_request_bytes max_header_bytes \
+            request_memory_threshold certfile keyfile]
         set normalized_services {}
-        foreach service $services {
-            if {[dict get $service protocol] in {http https} &&
-                    ![dict exists $service upload_area]} {
-                dict set service upload_area [dict get $config upload_area]
+        dict with service_defaults {
+            # Dictionary-backed variables from service_defaults:
+            # upload_area, max_request_bytes, max_header_bytes,
+            # request_memory_threshold, certfile, keyfile.
+            foreach service $services {
+                set protocol [dict get $service protocol]
+                if {$protocol in {http https}} {
+                    foreach field {
+                        upload_area max_request_bytes max_header_bytes
+                        request_memory_threshold
+                    } {
+                        if {![dict exists $service $field]} {
+                            dict set service $field [set $field]
+                        }
+                    }
+                }
+                lappend normalized_services [::tclwire::runtime::normalize_service \
+                    $service $certfile $keyfile]
             }
-            if {[dict get $service protocol] in {http https} &&
-                    ![dict exists $service max_request_bytes]} {
-                dict set service max_request_bytes [dict get $config max_request_bytes]
-            }
-            if {[dict get $service protocol] in {http https} &&
-                    ![dict exists $service max_header_bytes]} {
-                dict set service max_header_bytes [dict get $config max_header_bytes]
-            }
-            if {[dict get $service protocol] in {http https} &&
-                    ![dict exists $service request_memory_threshold]} {
-                dict set service request_memory_threshold \
-                    [dict get $config request_memory_threshold]
-            }
-            lappend normalized_services [normalize_service \
-                $service [dict get $config certfile] [dict get $config keyfile]]
         }
         dict set config services $normalized_services
         dict set config startservers [lmap service $normalized_services {
@@ -1300,21 +1150,42 @@ namespace eval ::tclwire::runtime {
         return $config
     }
 
-    proc parse_args {argv} {
-        set config_file [find_config_option $argv]
-        set config [default_config]
-        set config [apply_file_config $config $config_file \
-            [load_config_file $config_file]]
-        set config [apply_cli_config $config $argv]
-        return [finalize_config $config]
-    }
+    # Public preparation entry point used by the runtime.  It builds a complete
+    # runtime configuration dictionary from argv, then applies debug/console side
+    # effects needed before services and agents start.
 
     proc prepare_config {argv} {
-        set config [parse_args $argv]
+
+        # The CLI parser validates argv before the TOML file is loaded and
+        # returns a dictionary with these construction inputs:
+        #
+        #   config_file:      TOML file path, or "." when no file was selected.
+        #   overrides:        normalized global option values set by CLI flags.
+        #   custom_services:  true when --service supplied the service list.
+        #   services:         service descriptors built from --service options.
+        #   startservers_set: true when --startservers selected protocols.
+        #   port_overrides:   protocol -> port map from --httpport, --ftpport,
+        #                     and related legacy port options.
+        #   ftproot_set:      true when --ftproot explicitly set the FTP root.
+
+        set cli [::tclwire::cli::arguments $argv]
+        set config [apply_cli_config_file [default_config] $cli]
+        set config_file [dict get $config config_file]
+
+        set configuration [load_config_file $config_file]
+        set config [apply_file_config $config $configuration]
+        set config [apply_cli_config $config $cli]
+        set config [finalize_config $config]
+
         ::tclwire::support configure_debug [dict get $config debug]
-        ::tclwire::accounting configure_debug_connection \
-            [dict get $config debug_connection]
+        ::tclwire::accounting configure_debug_connection [dict get $config debug_connection]
         ::tclwire::console configure $config
         return $config
+    }
+}
+
+namespace eval ::tclwire::runtime {
+    proc prepare_config {argv} {
+        tailcall ::tclwire::config::prepare_config $argv
     }
 }

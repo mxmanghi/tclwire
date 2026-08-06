@@ -9,6 +9,9 @@
 # console_reactor, and application_dispatcher.
 
 namespace eval ::tclwire::runtime {
+
+    # Actually starting the application server
+
     proc start {argv} {
         variable active
         variable active_config
@@ -42,12 +45,12 @@ namespace eval ::tclwire::runtime {
             ::tclwire::tpba start
             set tpba_started 1
 
-            if {[dict get $config chores_enabled] ||
-                    [dict get $config diagnostics_enabled] ||
-                    $server_chores_enabled ||
-                    $application_chores_enabled} {
+            if {[dict get $config chores_enabled] || [dict get $config diagnostics_enabled] ||
+                 $server_chores_enabled || $application_chores_enabled} {
+
                 ::tclwire::chore start [dict create chore_interval_ms [dict get $config chore_interval_ms]]
                 set chore_started 1
+
             }
 
             if {$server_chores_enabled} {
@@ -74,7 +77,7 @@ namespace eval ::tclwire::runtime {
                 $reactor start
             }
 
-            set console_reactor [::tclwire::ConsoleReactor new -path [dict get $config unix_socket] \
+            set console_reactor [::tclwire::ConsoleReactor new -path            [dict get $config unix_socket] \
                                                                -shutdowncommand [list ::tclwire::runtime::request_shutdown]]
             $console_reactor start
 
@@ -222,7 +225,7 @@ namespace eval ::tclwire::runtime {
         return $config
     }
 
-    namespace export usage  parse_args prepare_config start stop is_running \
+    namespace export usage  prepare_config start stop is_running \
                      config transport_reactor transport_reactors request_shutdown run implemented_protocols \
                      default_protocols application_dispatcher console_reactor
     namespace ensemble create

@@ -153,8 +153,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   retain_uploaded_files 0 \
                                   pool_policy [dict create minimum_workers 0 maximum_workers 20]]
 
-        set values \
-            [::tclwire::normalize_application_descriptor_classes [dict merge $defaults $descriptor]]
+        set values [::tclwire::normalize_application_descriptor_classes [dict merge $defaults $descriptor]]
 
         foreach property {class hosts docroot encoding application_paths} {
             if {![dict exists $descriptor $property]} {
@@ -173,9 +172,9 @@ oo::class create ::tclwire::ApplicationConfiguration {
             error "application '$id' chore file does not exist: [dict get $values chore]"
         }
         if {[catch {llength [dict get $values hosts]}] ||
-                [catch {llength [dict get $values application_paths]}] ||
-                [catch {llength [dict get $values aliases]}] ||
-                [catch {llength [dict get $values environment]}]} {
+            [catch {llength [dict get $values application_paths]}] ||
+            [catch {llength [dict get $values aliases]}] ||
+            [catch {llength [dict get $values environment]}]} {
             error "application '$id' hosts, application_paths, aliases, and environment must be lists"
         }
         if {[catch {dict size [dict get $values environment_config]}]} {
