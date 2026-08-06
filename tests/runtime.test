@@ -920,6 +920,74 @@ aliases = "one two"
     [dict create ::tclwire::envs::app::Rivet \
         [dict create message {configured implicitly} aliases {one two}]]]
 
+test runtime-1.12ae {
+    environment configuration is resolved and carried by requiring applications
+} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "default"
+docroot = "www"
+
+[env.stdchans]
+capture_stderr = true
+
+[env.rivet]
+parent = "stdchans"
+UploadMaxSize = 1000
+BeforeScript = "before.tcl"
+
+[env.rivet-dev]
+parent = "rivet"
+UploadMaxSize = 100
+debug = true
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost"
+
+[http.rivet]
+hosts = "rivet.rivetweb.org"
+environment = "rivet"
+docroot = "rivet"
+}]
+    set config [::tclwire::runtime parse_args [list --config $config_file]]
+    set descriptor [dict get $config applications rivet]
+    list \
+        [dict get $config environment_configs rivet UploadMaxSize] \
+        [dict get $config environment_configs rivet capture_stderr] \
+        [dict get $config environment_configs rivet-dev UploadMaxSize] \
+        [dict get $config environment_configs rivet-dev BeforeScript] \
+        [dict get $config environment_configs rivet-dev debug] \
+        [dict get $descriptor environment_config stdchans capture_stderr] \
+        [dict get $descriptor environment_config rivet UploadMaxSize] \
+        [dict get $descriptor environment_config rivet capture_stderr] \
+        [dict exists $descriptor environment_config rivet-dev]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {1000 true 100 before.tcl true true 1000 true 0}
+
+test runtime-1.12af {
+    environment configuration rejects cyclic parent inheritance
+} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[env.one]
+parent = "two"
+
+[env.two]
+parent = "one"
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost"
+}]
+    catch {::tclwire::runtime parse_args [list --config $config_file]} message
+    set message
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {cyclic environment configuration inheritance involving one}
+
 test runtime-1.12b {
     environment-provided application class uses environment reload file
 } -body {

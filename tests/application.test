@@ -563,6 +563,38 @@ test application-configuration-1.1e {
     }
 } -result {stdchans stdchans}
 
+test application-configuration-1.1f {
+    construction preserves application-scoped environment configuration
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp] \
+            environment {rivet} \
+            environment_config [dict create \
+                stdchans [dict create capture_stderr 1] \
+                rivet [dict create UploadMaxSize 1000]]]]
+    try {
+        list \
+            [$configuration environment_configuration] \
+            [$configuration environment_configuration rivet] \
+            [$configuration environment_configuration rivet UploadMaxSize] \
+            [$configuration environment_configuration missing]
+    } finally {
+        $configuration destroy
+    }
+} -result [list \
+    [dict create \
+        stdchans [dict create capture_stderr 1] \
+        rivet [dict create UploadMaxSize 1000]] \
+    [dict create UploadMaxSize 1000] \
+    1000 \
+    {}]
+
 test application-configuration-1.1a {
     construction qualifies bare application class and configure names
 } -body {
@@ -789,6 +821,36 @@ test application-configuration-1.4a {
     }
 } -result [list 1 stdchans 1 1 stdchans 1 0 \
     ::tclwire::envs::stdchans::puts ::puts 1]
+
+test application-configuration-1.4aa {
+    CGA app context exposes environment configuration
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new env-config-test \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {stdchans} \
+            environment_config [dict create \
+                stdchans [dict create capture_stderr 1]]]]
+    try {
+        ::tclwire::cga::initialize app:env-config-test [$configuration serialize]
+        list \
+            [::tclwire::app::environment_configuration] \
+            [::tclwire::app::environment_configuration stdchans] \
+            [::tclwire::app::environment_configuration stdchans capture_stderr]
+    } finally {
+        catch {::tclwire::cga::shutdown}
+        catch {::tclwire::envs::stdchans uninstall}
+        $configuration destroy
+    }
+} -result [list \
+    [dict create stdchans [dict create capture_stderr 1]] \
+    [dict create capture_stderr 1] \
+    1]
 
 test application-configuration-1.4b {
     CGA applies environment namespace path to request-time application objects

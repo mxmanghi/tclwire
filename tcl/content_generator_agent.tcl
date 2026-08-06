@@ -97,6 +97,14 @@ namespace eval ::tclwire::app {
         tailcall application_get configuration
     }
 
+    proc environment_configuration {args} {
+        if {[llength $args] > 2} {
+            error {wrong # args: should be "::tclwire::app::environment_configuration ?environment? ?key?"}
+        }
+        set configuration [application_get configuration]
+        tailcall $configuration environment_configuration {*}$args
+    }
+
     proc pool_key {} {
         tailcall application_get pool_key
     }

@@ -141,6 +141,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   chore_class {} \
                                   libdir      {} \
                                   environment {} \
+                                  environment_config {} \
                                   configure   {} \
                                   log_level   {} \
                                   hostname    {} \
@@ -176,6 +177,17 @@ oo::class create ::tclwire::ApplicationConfiguration {
                 [catch {llength [dict get $values aliases]}] ||
                 [catch {llength [dict get $values environment]}]} {
             error "application '$id' hosts, application_paths, aliases, and environment must be lists"
+        }
+        if {[catch {dict size [dict get $values environment_config]}]} {
+            error "application '$id' environment_config must be a dictionary"
+        }
+        dict for {environment_name environment_options} [dict get $values environment_config] {
+            if {$environment_name eq {}} {
+                error "application '$id' environment_config names must not be empty"
+            }
+            if {[catch {dict size $environment_options}]} {
+                error "application '$id' environment_config.$environment_name must be a dictionary"
+            }
         }
         foreach alias [dict get $values aliases] {
             if {[catch {dict size $alias}]} {
@@ -264,6 +276,24 @@ oo::class create ::tclwire::ApplicationConfiguration {
         return [my configure $class_name]
     }
 
+    method environment_configuration {{environment_name {}} {key {}}} {
+        set configuration [dict get $values environment_config]
+        if {$environment_name eq {}} {
+            return $configuration
+        }
+        if {![dict exists $configuration $environment_name]} {
+            return {}
+        }
+        set environment_options [dict get $configuration $environment_name]
+        if {$key eq {}} {
+            return $environment_options
+        }
+        if {![dict exists $environment_options $key]} {
+            error "environment configuration '$environment_name' has no key: $key"
+        }
+        return [dict get $environment_options $key]
+    }
+
     method serialize {} {
         return [dict create type        tclwire.application_configuration \
                             version     1 \
@@ -292,7 +322,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
 
     foreach property {
         class hosts docroot encoding application_paths aliases package file chore chore_class libdir
-        environment log_level reload_on_request retain_uploaded_files pool_policy
+        environment environment_config log_level reload_on_request retain_uploaded_files pool_policy
     } {
         method $property {} [format {my get %s} [list $property]]
     }

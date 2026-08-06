@@ -225,6 +225,41 @@ semicolon-separated fields, for example:
 : Per-endpoint upload and spool directory for HTTP or HTTPS. An empty value
   disables file storage for that endpoint.
 
+## Environment Configuration
+
+Environment configuration lives under tables such as `[env.stdchans]` or
+`[env.rivet]`. Each table is an environment-owned key/value dictionary. TclWire
+does not inherit global `[tclwire]` values into these dictionaries, and it does
+not validate environment-specific option names.
+
+`parent`
+: Optional environment configuration name to inherit from. The parent table
+  must exist. Child values override parent values, and cyclic inheritance is
+  rejected. `parent` is a runtime control key and is not included in the
+  effective dictionary carried by applications.
+
+Applications that list an environment in their `environment` option carry the
+effective configuration for that environment into their content-generator
+workers. When TclWire can load the environment package during configuration
+normalization, configuration for required environments is carried too. Runtime
+application or environment code reads the application-scoped repository through
+`::tclwire::app::environment_configuration ?environment? ?key?`.
+
+Examples inside a running application or application environment:
+
+```tcl
+set repository [::tclwire::app::environment_configuration]
+set rivet_options [::tclwire::app::environment_configuration rivet]
+set upload_limit [::tclwire::app::environment_configuration rivet UploadMaxSize]
+```
+
+With no arguments, the command returns the full environment configuration
+repository carried by the current application. With one argument, it returns
+that environment's effective dictionary, including inherited parent values.
+With two arguments, it returns one value from that environment dictionary.
+Missing environment names return an empty dictionary; missing keys in an
+existing environment configuration are errors.
+
 ## HTTP Application Options
 
 HTTP and HTTPS application options live under application tables such as
@@ -278,7 +313,9 @@ then from global runtime defaults.
 `environment`
 : Tcl list of application environments loaded into each CGA worker before
   request-time application instances are created. An environment may also
-  provide the application class when `class` is omitted.
+  provide the application class when `class` is omitted. Any effective
+  `[env.<environment>]` configuration is stored on the application
+  configuration object and serialized with the worker-pool configuration.
 
 `configure`
 : Application-owned configuration dictionary. Direct values under

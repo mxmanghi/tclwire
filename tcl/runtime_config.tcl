@@ -382,6 +382,126 @@ namespace eval ::tclwire::runtime {
         return $applications
     }
 
+    proc environment_config_name {environment} {
+        set environment [string trim $environment]
+        if {[string match ::* $environment]} {
+            return [namespace tail $environment]
+        }
+        return $environment
+    }
+
+    proc environment_config_options {environment_id descriptor} {
+        if {[catch {dict size $descriptor}]} {
+            error "environment configuration '$environment_id' must be a table"
+        }
+        set options $descriptor
+        if {[dict exists $options parent]} {
+            dict unset options parent
+        }
+        return $options
+    }
+
+    proc resolve_environment_config_one {repository environment_id stack} {
+        if {$environment_id in $stack} {
+            error "cyclic environment configuration inheritance involving $environment_id"
+        }
+        if {![dict exists $repository $environment_id]} {
+            return {}
+        }
+
+        set descriptor [dict get $repository $environment_id]
+        set effective {}
+        if {[dict exists $descriptor parent]} {
+            set parent [environment_config_name [dict get $descriptor parent]]
+            if {$parent eq {}} {
+                error "environment configuration '$environment_id' parent must not be empty"
+            }
+            if {![dict exists $repository $parent]} {
+                error "environment configuration '$environment_id' parent does not exist: $parent"
+            }
+            set effective [resolve_environment_config_one \
+                $repository $parent [concat $stack [list $environment_id]]]
+        }
+        return [dict merge $effective \
+            [environment_config_options $environment_id $descriptor]]
+    }
+
+    proc resolve_environment_config_repository {toml_config} {
+        if {![dict exists $toml_config env]} {
+            return {}
+        }
+        set repository [dict create]
+        dict for {environment_id descriptor} [dict get $toml_config env] {
+            set environment_id [environment_config_name $environment_id]
+            if {$environment_id eq {}} {
+                error "environment configuration name must not be empty"
+            }
+            dict set repository $environment_id $descriptor
+        }
+
+        set resolved [dict create]
+        dict for {environment_id descriptor} $repository {
+            dict set resolved $environment_id \
+                [resolve_environment_config_one $repository $environment_id {}]
+        }
+        return $resolved
+    }
+
+    proc application_environment_config_names {environments} {
+        set names {}
+        set pending $environments
+        while {[llength $pending]} {
+            set environment [lindex $pending 0]
+            set pending [lrange $pending 1 end]
+
+            set name [environment_config_name $environment]
+            if {$name eq {}} {
+                continue
+            }
+
+            if {[catch {
+                set command [::tclwire::environment load $environment]
+                set environment_object [::tclwire::environment object $command]
+                set name [$environment_object name]
+                set required_environments [$environment_object requires]
+            }]} {
+                if {$name ni $names} {
+                    lappend names $name
+                }
+                continue
+            }
+            if {$name in $names} {
+                continue
+            }
+            lappend names $name
+            foreach required $required_environments {
+                if {[environment_config_name $required] ni $names} {
+                    lappend pending $required
+                }
+            }
+        }
+        return $names
+    }
+
+    proc application_environment_config {application_id descriptor repository} {
+        if {![dict exists $descriptor environment]} {
+            return {}
+        }
+        set environments [dict get $descriptor environment]
+        if {[catch {llength $environments}]} {
+            error "application '$application_id' environment must be a list"
+        }
+
+        set configuration [dict create]
+        foreach environment_id [application_environment_config_names $environments] {
+            if {[dict exists $repository $environment_id]} {
+                dict set configuration $environment_id \
+                    [dict get $repository $environment_id]
+            }
+        }
+        return $configuration
+    }
+
     proc default_config {} {
         set host                127.0.0.1
         set quiet               0
@@ -424,6 +544,7 @@ namespace eval ::tclwire::runtime {
         set default_application default
         set default_encoding    utf-8
         set default_hosts       {}
+        set environment_configs {}
         set applications        [dict create default [dict create   class      ::tclwire::CApplication \
                                                                     package    tclwire::application    \
                                                                     hosts      {localhost 127.0.0.1}   \
@@ -472,6 +593,7 @@ namespace eval ::tclwire::runtime {
                             ports        $ports \
                             default_hosts $default_hosts \
                             ftproot_follows_docroot $ftproot_follows_docroot \
+                            environment_configs $environment_configs \
                             default_application $default_application \
                             applications $applications]
     }
@@ -505,6 +627,9 @@ namespace eval ::tclwire::runtime {
         set config_file [file normalize $path]
         set config_dir [file dirname $config_file]
         dict set config config_file $config_file
+        set environment_configs \
+            [resolve_environment_config_repository $toml_config]
+        dict set config environment_configs $environment_configs
 
         if {[dict exists $toml_config tclwire]} {
             set global [dict get $toml_config tclwire]
@@ -832,6 +957,13 @@ namespace eval ::tclwire::runtime {
                             }
                         }
                     }
+                }
+                set environment_config [application_environment_config \
+                    $application_id $descriptor $environment_configs]
+                if {[dict size $environment_config]} {
+                    dict set descriptor environment_config $environment_config
+                } elseif {[dict exists $descriptor environment_config]} {
+                    dict unset descriptor environment_config
                 }
                 dict set merged_applications $application_id $descriptor
             }
