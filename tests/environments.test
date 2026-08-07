@@ -38,6 +38,12 @@ test stdchans-1.1 {stdchans environment exposes lifecycle metadata} -body {
             [info class superclasses [info object class $object]]}]
 } -result [list stdchans {} ::tclwire::envs::stdchans 0 1 1]
 
+test environment-1.1a {environment configuration requires CGA application configuration} -body {
+    set object [::tclwire::envs::stdchans object]
+    catch {$object configuration capture_stderr} message
+    set message
+} -result {no CGA environment application configuration is active}
+
 test stdchans-1.2 {stdchans captures app-namespace stdout during active output transaction} -body {
     set ::tclwire::environment_test::events {}
     set receiver [::tclwire::environment_test::OutputReceiver new]

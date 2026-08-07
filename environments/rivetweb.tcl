@@ -19,12 +19,16 @@ oo::class create ::tclwire::envs::Rivetweb {
     method do_install {} {
         set configuration [my configuration]
         ::tclwire::logger log_error rivetweb "rivetweb conf $configuration" info
-        set ::rweb_root "rivetweb"
         if {[dict exists $configuration rivetweb_root]} {
             set ::rweb_root [dict get $configuration rivetweb_root]
-            set ::website_root [file normalize [file join $::rweb_root website]]
-            #source [file join $::rweb_root init.tcl]
+        } else {
+            set ::rweb_root "rivetweb"
         }
+
+        set ::website_root [file normalize [file join $::rweb_root website]]
+        namespace eval :: { source [file join $::rweb_root init.tcl] }
+
+        set auto_path [list $::website_root $rivetweb_root {*}$::auto_path]
         return
     }
 

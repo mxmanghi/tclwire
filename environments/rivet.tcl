@@ -45,8 +45,8 @@ oo::class create ::tclwire::envs::RivetEnvironment {
 
         namespace eval ::Rivet {}
         ::tclwire::envs::rivet::install_commands
-        set previous_exit_command [::tclwire::cga::configure_exit_command \
-            [list ::tclwire::envs::rivet::exit_request]]
+        set previous_exit_command \
+            [::tclwire::cga::configure_exit_command [list ::tclwire::envs::rivet::exit_request]]
         return
     }
 

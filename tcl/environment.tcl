@@ -43,19 +43,17 @@ oo::class create ::tclwire::ApplicationEnvironment {
 
     method application_configuration {} {
         if {[info commands ::tclwire::cga::envs::application_configuration] eq {}} {
-            return {}
+            error "no CGA environment application configuration is active"
         }
-        return [::tclwire::cga::envs::application_configuration]
+        set application_configuration [::tclwire::cga::envs::application_configuration]
+        if {$application_configuration eq {}} {
+            error "no CGA environment application configuration is active"
+        }
+        return $application_configuration
     }
 
     method configuration {{key {}}} {
         set application_configuration [my application_configuration]
-        if {$application_configuration eq {}} {
-            if {$key eq {}} {
-                return {}
-            }
-            error "environment '[my name]' configuration has no key: $key"
-        }
         set configuration [$application_configuration environment_configuration [my name]]
         if {$key eq {}} {
             return $configuration
