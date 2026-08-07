@@ -35,6 +35,31 @@ namespace eval ::tclwire::console_client {
     variable timestamp_columns {
         last_run_start last_run_end created_on opened_at closed_at
     }
+    variable column_labels {
+        thread_id Thread
+        status Status
+        family Family
+        running_workload Workload
+        cumulative_workload {Cumulative WL}
+        run_time_ms {Run ms}
+        last_run_start {Last Run}
+        created_on Created
+        command Command
+        http_host Host
+        connection_key Connection
+        protocol Protocol
+        service_id Service
+        listener_port Port
+        peer_host Host
+        peer_port {Remote Port}
+        worker_thread_id Worker
+        current_transaction_id {Last Transaction}
+        current_command Command
+        request_count Count
+        bytes_in Input
+        bytes_out Output
+        opened_at Started
+    }
     proc usage {{channel stdout}} {
         puts $channel "Usage: tclsh utils/tclwire_console.tcl ?--unix-socket path? ?--command command? ?command ...?"
         puts $channel ""
@@ -152,13 +177,24 @@ namespace eval ::tclwire::console_client {
         if {$value eq {}} {
             return {}
         }
-        if {![string is integer -strict $value]} {
+        if {![string is wideinteger -strict $value]} {
             return $value
         }
         if {$value == 0} {
             return {}
         }
+        if {$value > 100000000000} {
+            set value [expr {$value / 1000}]
+        }
         return [clock format $value -format "%d-%m-%Y %H:%M:%S"]
+    }
+
+    proc display_column {column} {
+        variable column_labels
+        if {[dict exists $column_labels $column]} {
+            return [dict get $column_labels $column]
+        }
+        return $column
     }
 
     proc display_value {row column} {
@@ -172,7 +208,9 @@ namespace eval ::tclwire::console_client {
 
     proc matrix_from_response {response} {
         set columns [dict get $response columns]
-        set matrix [list $columns]
+        set matrix [list [lmap column $columns {
+            display_column $column
+        }]]
         foreach row [dict get $response rows] {
             lappend matrix [lmap column $columns {
                 display_value $row $column

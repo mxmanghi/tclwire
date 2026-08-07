@@ -20,6 +20,8 @@ implementation documents while gradually building a coherent manual.
   operational behavior.
 - [Writing Applications](applications.md): application classes,
   `handle_request`, static files, development reloading, and package loading.
+- [Application Environments](environments.md): environment contracts,
+  worker-scoped command setup, and a minimal custom environment.
 - [Request API](request-api.md): `HttpRequest` methods and request-body access.
 - [Response API](response-api.md): response construction, helpers, files,
   redirects, ranges, and output behavior.
