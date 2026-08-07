@@ -1,5 +1,8 @@
 package require tclwire::environment 0.1
 package require tclwire::logger::client
+package require tclwire::rivet
+
+source [file join [file dirname [info script]] rivetweb_app.tcl]
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::envs {}
@@ -24,16 +27,27 @@ oo::class create ::tclwire::envs::Rivetweb {
         } else {
             set ::rweb_root "rivetweb"
         }
+        if {[dict exists $configuration website_root]} {
+            set ::website_root [dict get $configuration website_root]
+        } else {
+            set ::website_root [file join rivetweb website]
+        }
+        set auto_path [list $::website_root $::rweb_root {*}$::auto_path]
 
-        set ::website_root [file normalize [file join $::rweb_root website]]
         namespace eval :: { source [file join $::rweb_root init.tcl] }
-
-        set auto_path [list $::website_root $rivetweb_root {*}$::auto_path]
         return
     }
 
     method do_uninstall {} {
         return
+    }
+
+    method application_class {} {
+        return ::tclwire::envs::app::Rivetweb
+    }
+
+    method application_file {} {
+        return [file normalize [file join [file dirname [info script]] rivetweb_app.tcl]]
     }
 }
 
@@ -57,6 +71,14 @@ namespace eval ::tclwire::envs::rivetweb {
         tailcall [object] path_namespaces
     }
 
+    proc application_class {} {
+        tailcall [object] application_class
+    }
+
+    proc application_file {} {
+        tailcall [object] application_file
+    }
+
     proc enabled {} {
         tailcall [object] enabled
     }
@@ -78,6 +100,7 @@ namespace eval ::tclwire::envs::rivetweb {
     }
 
     namespace export object name requires path_namespaces \
+                     application_class application_file \
                      application_configuration configuration enabled install uninstall
     namespace ensemble create
 }

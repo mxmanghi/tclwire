@@ -11,7 +11,8 @@ namespace eval ::tclwire::envs {}
 
 oo::class create ::tclwire::envs::RivetEnvironment {
     superclass ::tclwire::ApplicationEnvironment
-    variable application_file_path previous_exit_command
+    variable application_file_path
+    variable previous_exit_command
 
     constructor {path} {
         next

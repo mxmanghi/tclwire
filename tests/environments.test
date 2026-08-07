@@ -356,6 +356,24 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
     }
 } -result {1 {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1} 1 1 1 1 1 1 1 1 1 1 0 0 0}
 
+test rivet-1.2a0 {rivet apache_log_error maps Apache levels and preserves error context} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        set ::errorInfo preserved-error-info
+        set ::errorCode {PRESERVED CODE}
+        set result [catch {::rivet::apache_log_error err "mapped error"} message]
+        list $result $message $::errorInfo $::errorCode
+    } finally {
+        unset -nocomplain ::errorInfo ::errorCode
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list 0 {} preserved-error-info {PRESERVED CODE}]
+
 test rivet-1.2a {rivet abort_page records abort state and raises abort errorcode} -body {
     catch {::tclwire::envs::rivet uninstall}
     catch {namespace delete ::Rivet}
