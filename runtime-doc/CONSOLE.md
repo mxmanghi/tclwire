@@ -22,7 +22,23 @@ receives one newline-terminated JSON response.
 
 Returns thread accounting data from the shared accounting store.
 
-Arguments: none.
+Arguments:
+
+- none: return all thread records;
+- `-family <family>`: return only one thread family.
+
+The console client renders the PS columns with shorter labels:
+
+- `Thread`: thread id;
+- `Status`: current state;
+- `Family`: protocol or execution family;
+- `Workload`: current running workload;
+- `Cumulative WL`: historical workload;
+- `Run ms`: last completed run duration in milliseconds;
+- `Last Run`: last run start time;
+- `Created`: accounting record creation time;
+- `Command`: current or most recent command;
+- `Host`: current or most recent HTTP Host value.
 
 ### `SERVICES`
 
@@ -43,6 +59,23 @@ Arguments:
 - none: return all connection records;
 - `-port <portn>`: return connections for a listener port;
 - `-remote <remote-ip>`: return connections for a remote address.
+
+The console client renders the CONN columns with shorter labels:
+
+- `Connection`: connection accounting key;
+- `Status`: current connection state;
+- `Protocol`: protocol family;
+- `Service`: service id;
+- `Port`: listener port;
+- `Host`: remote peer host;
+- `Remote Port`: remote peer port;
+- `Worker`: assigned worker thread id;
+- `Last Transaction`: current or most recent transaction id;
+- `Command`: current or most recent protocol command;
+- `Count`: request count;
+- `Input`: bytes received;
+- `Output`: bytes sent;
+- `Started`: connection open time.
 
 When `debug_connection` is enabled by configuration, the response includes
 retained closed or failed rows and the close diagnostics `closed_at`,

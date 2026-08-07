@@ -16,17 +16,22 @@ test console-protocol-1.1 {PS returns thread accounting rows as JSON table} -bod
         ::tclwire::accounting update_thread_workload $thread_id \
             [dict create running_workload 2 cumulative_workload 7 \
                          combined_workload 17]
+        ::tclwire::accounting change_thread_status $thread_id running test-command
+        after 2
+        ::tclwire::accounting change_thread_status $thread_id idle
         set response [::json::json2dict [::tclwire::console dispatch PS]]
         set rows [dict get $response rows]
         set found 0
         foreach row $rows {
             if {[dict get $row thread_id] eq $thread_id} {
                 set found [expr {
-                    [dict get $row status] eq "running" &&
+                    [dict get $row status] eq "idle" &&
                     [dict get $row family] eq "http" &&
                     [dict get $row running_workload] == 2 &&
                     [dict get $row cumulative_workload] == 7 &&
-                    [dict get $row combined_workload] == 17
+                    [string is integer -strict [dict get $row run_time_ms]] &&
+                    [dict get $row run_time_ms] >= 0 &&
+                    [dict get $row command] eq "test-command"
                 }]
             }
         }
@@ -37,12 +42,14 @@ test console-protocol-1.1 {PS returns thread accounting rows as JSON table} -bod
             [expr {"nruns" ni [dict get $response columns]}] \
             [expr {"running_workload" in [dict get $response columns]}] \
             [expr {"cumulative_workload" in [dict get $response columns]}] \
-            [expr {"combined_workload" in [dict get $response columns]}] \
+            [expr {"combined_workload" ni [dict get $response columns]}] \
+            [expr {"last_run_end" ni [dict get $response columns]}] \
+            [expr {"run_time_ms" in [dict get $response columns]}] \
             $found
     } finally {
         ::tclwire::accounting remove_thread $thread_id
     }
-} -result {true table PS 1 1 1 1 1}
+} -result {true table PS 1 1 1 1 1 1 1}
 
 test console-protocol-1.1a {PS rows are sorted by family and thread id} -body {
     set thread_ids {

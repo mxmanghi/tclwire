@@ -11,7 +11,7 @@ package require tclwire::logger::control 0.1
 namespace eval ::tclwire::console {
     ::tclwire::define_constant ps_columns {
         thread_id status family running_workload cumulative_workload
-        combined_workload last_run_start last_run_end created_on command http_host
+        run_time_ms last_run_start created_on command http_host
     }
     ::tclwire::define_constant connection_columns {
         connection_key status protocol service_id listener_port peer_host peer_port
@@ -64,7 +64,7 @@ namespace eval ::tclwire::console {
         if {$value eq {}} {
             return null
         }
-        if {[string is integer -strict $value]} {
+        if {[string is wideinteger -strict $value]} {
             return $value
         }
         if {[string is double -strict $value]} {
@@ -145,8 +145,42 @@ namespace eval ::tclwire::console {
         return $row
     }
 
+    proc ps_run_time_ms {account} {
+        set start [dict get $account last_run_start]
+        set end [dict get $account last_run_end]
+        if {$start eq {} || $end eq {}} {
+            return {}
+        }
+        if {![string is wideinteger -strict $start] ||
+                ![string is wideinteger -strict $end]} {
+            return {}
+        }
+        if {$start == 0 || $end == 0} {
+            return {}
+        }
+        set duration [expr {$end - $start}]
+        if {$duration < 0} {
+            return {}
+        }
+        if {$start < 100000000000 && $end < 100000000000} {
+            set duration [expr {$duration * 1000}]
+        }
+        return $duration
+    }
+
     proc compare_ps_rows {left right} {
         foreach column {family thread_id} {
+            set comparison [string compare \
+                [dict get $left $column] [dict get $right $column]]
+            if {$comparison != 0} {
+                return $comparison
+            }
+        }
+        return 0
+    }
+
+    proc compare_connection_worker_rows {left right} {
+        foreach column {family worker_id} {
             set comparison [string compare \
                 [dict get $left $column] [dict get $right $column]]
             if {$comparison != 0} {
@@ -165,6 +199,7 @@ namespace eval ::tclwire::console {
                 continue
             }
             dict set account thread_id $thread_id
+            dict set account run_time_ms [ps_run_time_ms $account]
             lappend rows [row_from_dict $ps_columns $account]
         }
         return [lsort -command ::tclwire::console::compare_ps_rows $rows]
@@ -270,12 +305,11 @@ namespace eval ::tclwire::console {
         variable connection_worker_columns
         set rows {}
         set connection_counts [connection_worker_connection_counts]
-        foreach thread_row [ps_rows] {
+        dict for {thread_id thread_row} [::tclwire::accounting get_threads_database] {
             set family [dict get $thread_row family]
             if {![connection_worker_family $family]} {
                 continue
             }
-            set thread_id [dict get $thread_row thread_id]
             set active_connections 0
             set connection_keys {}
             if {[dict exists $connection_counts $thread_id]} {
@@ -298,7 +332,8 @@ namespace eval ::tclwire::console {
                 connection_keys $connection_keys]
             lappend rows [row_from_dict $connection_worker_columns $row]
         }
-        return $rows
+        return [lsort -command \
+            ::tclwire::console::compare_connection_worker_rows $rows]
     }
 
     proc parse_connection_args {args} {
