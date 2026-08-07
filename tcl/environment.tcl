@@ -41,6 +41,31 @@ oo::class create ::tclwire::ApplicationEnvironment {
         return $installed
     }
 
+    method application_configuration {} {
+        if {[info commands ::tclwire::cga::envs::application_configuration] eq {}} {
+            return {}
+        }
+        return [::tclwire::cga::envs::application_configuration]
+    }
+
+    method configuration {{key {}}} {
+        set application_configuration [my application_configuration]
+        if {$application_configuration eq {}} {
+            if {$key eq {}} {
+                return {}
+            }
+            error "environment '[my name]' configuration has no key: $key"
+        }
+        set configuration [$application_configuration environment_configuration [my name]]
+        if {$key eq {}} {
+            return $configuration
+        }
+        if {![dict exists $configuration $key]} {
+            error "environment '[my name]' configuration has no key: $key"
+        }
+        return [dict get $configuration $key]
+    }
+
     method install {} {
         if {$installed} {
             return

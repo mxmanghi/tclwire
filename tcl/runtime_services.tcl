@@ -33,6 +33,7 @@ namespace eval ::tclwire::runtime {
         }
         return $application_dispatcher
     }
+
     proc http_service_agent_args {config service} {
         ensure_application_dispatcher $config
         set dump_multipart_requests 0
@@ -46,7 +47,7 @@ namespace eval ::tclwire::runtime {
                      -maxrequestbytes [dict get $service max_request_bytes] \
                      -maxheaderbytes [dict get $service max_header_bytes] \
                      -requestmemorythreshold \
-                         [dict get $service request_memory_threshold] \
+                                [dict get $service request_memory_threshold] \
                      -dumpmultipartrequests $dump_multipart_requests]
     }
 

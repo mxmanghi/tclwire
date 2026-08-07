@@ -232,6 +232,14 @@ Environment configuration lives under tables such as `[env.stdchans]` or
 does not inherit global `[tclwire]` values into these dictionaries, and it does
 not validate environment-specific option names.
 
+An application can override or provide environment options under its own
+descriptor with `[http.<application>.env.<environment>]` or
+`[https.<application>.env.<environment>]`. The effective environment
+configuration is the global `[env.<environment>]` dictionary, when present,
+merged with the application-local dictionary. Application-local values override
+global values. If the global table does not exist, the application-local table
+is the complete configuration for that environment.
+
 `parent`
 : Optional environment configuration name to inherit from. The parent table
   must exist. Child values override parent values, and cyclic inheritance is

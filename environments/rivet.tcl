@@ -94,6 +94,14 @@ namespace eval ::tclwire::envs::rivet {
         tailcall [object] enabled
     }
 
+    proc configuration {args} {
+        tailcall [object] configuration {*}$args
+    }
+
+    proc application_configuration {} {
+        tailcall [object] application_configuration
+    }
+
     proc install {} {
         tailcall [object] install
     }
@@ -104,7 +112,7 @@ namespace eval ::tclwire::envs::rivet {
 
     namespace export object name requires \
                      path_namespaces application_class application_file \
-                     enabled install uninstall
+                     application_configuration configuration enabled install uninstall
     namespace ensemble create
 }
 

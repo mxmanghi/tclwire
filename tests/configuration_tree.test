@@ -89,6 +89,38 @@ test configuration-tree-1.2a {configuration tree renders aliases as rule lists} 
             |-- url_path = /assets/
             `-- local_path = public/assets}
 
+test configuration-tree-1.2b {configuration tree renders directory_index as a list} -body {
+    set config [dict create values [dict create \
+        configure [dict create \
+            ::tclwire::CApplication [dict create \
+                directory_index {index.html index.rvt}]]]]
+    ::tclwire::configuration tree $config
+} -result {configuration
+`-- values
+    `-- configure
+        `-- ::tclwire::CApplication
+            `-- directory_index
+                |-- [0] = index.html
+                `-- [1] = index.rvt}
+
+test configuration-tree-1.2c {configuration tree renders application configure parameters as strings} -body {
+    set config [dict create values [dict create \
+        configure [dict create \
+            Hello [dict create \
+                greeting {hello world} \
+                options [dict create color blue size large] \
+                directory_index {index.html index.rvt}]]]]
+    ::tclwire::configuration tree $config
+} -result {configuration
+`-- values
+    `-- configure
+        `-- Hello
+            |-- greeting = hello world
+            |-- options = color blue size large
+            `-- directory_index
+                |-- [0] = index.html
+                `-- [1] = index.rvt}
+
 test configuration-tree-1.3 {configuration tree replaces sink placeholder} -body {
     ::tclwire::configuration_tree_test::reset
     set config [dict create type example]

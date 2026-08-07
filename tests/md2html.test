@@ -42,4 +42,15 @@ test md2html-1.5 {navigation omits manual link by default} -body {
     string match {*Manual</a>*} $html
 } -result 0
 
+test md2html-1.6 {runtime-doc discovery includes environment documentation} -body {
+    set documents [::mk2html::collect_documents \
+        [::mk2html::find_markdown_files [file join $project_root runtime-doc]] \
+        [file join $project_root runtime-doc]]
+    set matches [lsearch -inline -all $documents *ENVIRONMENTS.md*]
+    list \
+        [llength $matches] \
+        [dict get [lindex $matches 0] output] \
+        [dict get [lindex $matches 0] title]
+} -result {1 environments.html {Application Environments}}
+
 cleanupTests

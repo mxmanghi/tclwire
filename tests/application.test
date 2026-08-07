@@ -871,6 +871,77 @@ test application-configuration-1.4aa {
     [dict create capture_stderr 1] \
     1]
 
+test application-configuration-1.4ab {
+    CGA passes application-scoped configuration to environment install
+} -body {
+    namespace eval ::tclwire::envs::configuredtest {
+        variable installed_config {}
+        variable installed_application_id {}
+        variable installed_docroot {}
+        variable environment_object {}
+    }
+    oo::class create ::tclwire::envs::ConfiguredTestEnvironment {
+        superclass ::tclwire::ApplicationEnvironment
+
+        method name {} {
+            return configuredtest
+        }
+
+        method do_install {} {
+            set ::tclwire::envs::configuredtest::installed_config \
+                [my configuration]
+            set application_configuration [my application_configuration]
+            set ::tclwire::envs::configuredtest::installed_application_id \
+                [$application_configuration id]
+            set ::tclwire::envs::configuredtest::installed_docroot \
+                [$application_configuration docroot]
+            return
+        }
+    }
+    set ::tclwire::envs::configuredtest::environment_object \
+        [::tclwire::envs::ConfiguredTestEnvironment new]
+    proc ::tclwire::envs::configuredtest::object {} {
+        variable environment_object
+        return $environment_object
+    }
+
+    set configuration [::tclwire::ApplicationConfiguration new env-config-install \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {::tclwire::envs::configuredtest} \
+            environment_config [dict create \
+                configuredtest [dict create option value]]]]
+    try {
+        ::tclwire::cga::initialize app:env-config-install \
+            [$configuration serialize]
+        set object [::tclwire::envs::configuredtest::object]
+        list \
+            $::tclwire::envs::configuredtest::installed_application_id \
+            $::tclwire::envs::configuredtest::installed_docroot \
+            $::tclwire::envs::configuredtest::installed_config \
+            [$object configuration] \
+            [[$object application_configuration] id] \
+            [$object configuration option]
+    } finally {
+        catch {::tclwire::cga::shutdown}
+        catch {$configuration destroy}
+        catch {$::tclwire::envs::configuredtest::environment_object destroy}
+        catch {::tclwire::envs::ConfiguredTestEnvironment destroy}
+        catch {namespace delete ::tclwire::envs::configuredtest}
+    }
+} -result [list \
+    env-config-install \
+    [temporaryDirectory] \
+    [dict create option value] \
+    [dict create option value] \
+    env-config-install \
+    value]
+
 test application-configuration-1.4b {
     CGA applies environment namespace path to request-time application objects
 } -setup {

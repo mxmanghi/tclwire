@@ -198,7 +198,7 @@ test console-protocol-1.2a {CONN debug view includes retained closed connection 
     }
 } -result {1 0 1 true 1 console-http#debug failed test_failed test_error}
 
-test console-protocol-1.2b {CONF returns global service and host configuration rows} -body {
+test console-protocol-1.2b {SERVERCONF returns global service and host configuration rows} -body {
     ::tclwire::console configure [dict create \
         debug_connection 1 \
         host 127.0.0.1 \
@@ -206,7 +206,7 @@ test console-protocol-1.2b {CONF returns global service and host configuration r
         applications [dict create default [dict create \
             hosts {localhost 127.0.0.1} docroot /tmp/tclwire encoding utf-8]]]
     try {
-        set response [::json::json2dict [::tclwire::console dispatch CONF]]
+        set response [::json::json2dict [::tclwire::console dispatch SERVERCONF]]
         set rows [dict get $response rows]
         set found_global 0
         set found_service 0
