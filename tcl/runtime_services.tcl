@@ -21,16 +21,12 @@ namespace eval ::tclwire::runtime {
         variable application_dispatcher
 
         if {![info object isa object $application_dispatcher]} {
-            set prepared_docroots {}
-            dict for {application_id descriptor} [dict get $config applications] {
-                set docroot [dict get $descriptor docroot]
-                if {$docroot ni $prepared_docroots} {
-                    ::tclwire::support prepare_doc_root $docroot \
-                        [::tclwire::support runtime_doc_source] \
-                        [dict get $config force_docroot_seeding]
-                    lappend prepared_docroots $docroot
-                }
-            }
+            set default_application [dict get $config default_application]
+            set descriptor [dict get $config applications $default_application]
+            ::tclwire::support prepare_doc_root \
+                [dict get $descriptor docroot] \
+                [::tclwire::support runtime_doc_source] \
+                [dict get $config force_docroot_seeding]
             set application_dispatcher \
                 [::tclwire::ApplicationDispatcher new $config]
             $application_dispatcher start

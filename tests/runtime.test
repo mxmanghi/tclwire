@@ -11,6 +11,7 @@ namespace eval ::tclwire::runtime_test {
     variable logfile [file join [temporaryDirectory] tclwire-runtime-[pid].log]
     variable logerr [file join [temporaryDirectory] tclwire-runtime-[pid].err]
     variable config_files {}
+    variable prepared_docroots {}
 
     proc cleanup {} {
         variable logfile
@@ -35,6 +36,43 @@ namespace eval ::tclwire::runtime_test {
         close $channel
         lappend config_files $directory
         return $path
+    }
+
+    proc stub_docroot_preparation {} {
+        variable prepared_docroots
+        set prepared_docroots {}
+        rename ::tclwire::support ::tclwire::runtime_test::original_support
+        proc ::tclwire::support {subcommand args} {
+            if {$subcommand eq "runtime_doc_source"} {
+                return runtime-doc
+            }
+            if {$subcommand eq "prepare_doc_root"} {
+                lappend ::tclwire::runtime_test::prepared_docroots $args
+                return [lindex $args 0]
+            }
+            tailcall ::tclwire::runtime_test::original_support \
+                $subcommand {*}$args
+        }
+        rename ::tclwire::ApplicationDispatcher \
+            ::tclwire::runtime_test::OriginalApplicationDispatcher
+        oo::class create ::tclwire::ApplicationDispatcher {
+            constructor {config} {}
+            method start {} {}
+        }
+    }
+
+    proc restore_docroot_preparation {} {
+        catch {rename ::tclwire::support {}}
+        catch {rename ::tclwire::runtime_test::original_support \
+            ::tclwire::support}
+        catch {rename ::tclwire::ApplicationDispatcher {}}
+        catch {rename ::tclwire::runtime_test::OriginalApplicationDispatcher \
+            ::tclwire::ApplicationDispatcher}
+    }
+
+    proc prepared_docroot_calls {} {
+        variable prepared_docroots
+        return $prepared_docroots
     }
 }
 
@@ -550,6 +588,73 @@ test runtime-1.5e {force docroot seeding is a global CLI option} -body {
     set config [::tclwire::runtime prepare_config [list --force-docroot-seeding]]
     dict get $config force_docroot_seeding
 } -result 1
+
+test runtime-1.5ea {
+    runtime prepares only the default application docroot
+} -body {
+    set root [file join [temporaryDirectory] tclwire-runtime-docroots-[pid]]
+    set config_file [::tclwire::runtime_test::make_config [format {
+[tclwire]
+default_application = "default"
+
+[http.default]
+hosts = "localhost"
+docroot = "%s"
+
+[http.secondary]
+hosts = "secondary.example.test"
+docroot = "%s"
+} [file join $root default] [file join $root secondary]]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    ::tclwire::runtime_test::stub_docroot_preparation
+    ::tclwire::runtime::ensure_application_dispatcher $config
+    ::tclwire::runtime_test::prepared_docroot_calls
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    ::tclwire::runtime_test::restore_docroot_preparation
+    catch {file delete -force $root}
+} -result [list [list \
+    [file normalize [file join [temporaryDirectory] \
+        tclwire-runtime-docroots-[pid] default]] \
+    runtime-doc \
+    0]]
+
+test runtime-1.5eb {
+    forced docroot seeding applies only to the default application
+} -body {
+    set root [file join [temporaryDirectory] tclwire-runtime-docroots-[pid]]
+    set default_docroot [file join $root default]
+    set secondary_docroot [file join $root secondary]
+    file mkdir $default_docroot
+    file mkdir $secondary_docroot
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $secondary_docroot index.html] secondary
+    set config_file [::tclwire::runtime_test::make_config [format {
+[tclwire]
+default_application = "default"
+
+[http.default]
+hosts = "localhost"
+docroot = "%s"
+
+[http.secondary]
+hosts = "secondary.example.test"
+docroot = "%s"
+} $default_docroot $secondary_docroot]]
+    set config [::tclwire::runtime prepare_config \
+        [list --config $config_file --force-docroot-seeding]]
+    ::tclwire::runtime_test::stub_docroot_preparation
+    ::tclwire::runtime::ensure_application_dispatcher $config
+    ::tclwire::runtime_test::prepared_docroot_calls
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    ::tclwire::runtime_test::restore_docroot_preparation
+    catch {file delete -force $root}
+} -result [list [list \
+    [file normalize [file join [temporaryDirectory] \
+        tclwire-runtime-docroots-[pid] default]] \
+    runtime-doc \
+    1]]
 
 test runtime-1.5f {manual site pages are copied below manual directory} -body {
     set original_project_root $::tclwire::support::project_root
