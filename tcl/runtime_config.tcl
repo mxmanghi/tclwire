@@ -219,7 +219,7 @@ namespace eval ::tclwire::config {
         return [expr {$field in {
             class package hosts encoding log_level reload_on_request
             retain_uploaded_files configure docroot libdir file environment
-            hostname admin errorlog server_path env
+            hostname admin logfile logerr server_path env
             aliases minimum_workers maximum_workers
         }}]
     }
@@ -525,7 +525,6 @@ namespace eval ::tclwire::config {
                             logerr              $logerr \
                             hostname            $hostname \
                             admin               $admin \
-                            errorlog            $logerr \
                             server_path         $server_path \
                             aliases             $aliases \
                             log_level           $log_level \
@@ -603,10 +602,6 @@ namespace eval ::tclwire::config {
                 dict set config aliases \
                     [parse_application_aliases tclwire.aliases [dict get $global aliases]]
             }
-            if {[dict exists $global errorlog]} {
-                dict set config errorlog \
-                            [resolve_config_path $config_dir [dict get $global errorlog]]
-            }
             foreach alias {listen_address bind_address} {
                 if {[dict exists $global $alias]} {
                     dict set config host [dict get $global $alias]
@@ -642,9 +637,6 @@ namespace eval ::tclwire::config {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
-            if {![dict exists $global errorlog] && [dict exists $paths logerr]} {
-                dict set config errorlog [dict get $paths logerr]
-            }
             foreach {field minimum} {
                 conn_max_wait 0
                 conn_max_workers 1
@@ -844,7 +836,7 @@ namespace eval ::tclwire::config {
                     dict set application hosts [list $application_id]
                 }
                 set application_paths [dict map {field value} \
-                        [dict filter $descriptor key docroot libdir errorlog] {
+                        [dict filter $descriptor key docroot libdir logfile logerr] {
                     resolve_config_path $config_dir $value
                 }]
                 set application [dict merge $application $application_paths]
@@ -1080,7 +1072,8 @@ namespace eval ::tclwire::config {
                 hostname [expr {[dict get $config hostname] ne {} ? \
                     [dict get $config hostname] : [dict get $config host]}] \
                 admin [dict get $config admin] \
-                errorlog [dict get $config errorlog] \
+                logfile [dict get $config logfile] \
+                logerr [dict get $config logerr] \
                 server_path [dict get $config server_path] \
                 aliases [dict get $config aliases]]
             set inherited [merge_application_aliases \

@@ -868,7 +868,6 @@ docroot = "www"
 ftproot = "ftp"
 logfile = "logs/runtime.log"
 logerr = "logs/runtime.err"
-errorlog = "logs/apache.err"
 libdir = "lib"
 certfile = "tls/default.crt"
 keyfile = "tls/default.key"
@@ -977,7 +976,8 @@ port = 8081
         encoding utf-8 \
         hostname server.example.test \
         admin admin@example.test \
-        errorlog [file normalize [file join [temporaryDirectory] tclwire-config-[pid] logs apache.err]] \
+        logfile [file normalize [file join [temporaryDirectory] tclwire-config-[pid] logs runtime.log]] \
+        logerr [file normalize [file join [temporaryDirectory] tclwire-config-[pid] logs runtime.err]] \
         server_path /main \
         aliases {} \
         class ::example::Application \
@@ -1595,8 +1595,33 @@ libdir = "host-lib"
         [temporaryDirectory] tclwire-config-[pid] global-lib]] \
     [file normalize [file join \
         [temporaryDirectory] tclwire-config-[pid] http-lib]] \
+        [file normalize [file join \
+            [temporaryDirectory] tclwire-config-[pid] host-lib]]]
+
+test runtime-1.15a {application descriptors accept logfile and logerr paths} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+
+[http]
+
+[http.default]
+class = "::example::Application"
+package = "example::application"
+logfile = "logs/application.log"
+logerr = "logs/application.err"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    list \
+        [dict get $config applications default logfile] \
+        [dict get $config applications default logerr]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
     [file normalize [file join \
-        [temporaryDirectory] tclwire-config-[pid] host-lib]]]
+        [temporaryDirectory] tclwire-config-[pid] logs application.log]] \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] logs application.err]]]
 
 test runtime-1.16 {host applications inherit the named default descriptor} -body {
     set config_file [::tclwire::runtime_test::make_config {
@@ -1634,7 +1659,8 @@ maximum_workers = 12
         encoding iso8859-1 \
         hostname 127.0.0.1 \
         admin {} \
-        errorlog [file normalize /tmp/tclwire-err.log] \
+        logfile [file normalize /tmp/tclwire.log] \
+        logerr [file normalize /tmp/tclwire-err.log] \
         server_path {} \
         aliases {} \
         class ::example::Application \
@@ -1647,7 +1673,8 @@ maximum_workers = 12
         encoding iso8859-1 \
         hostname 127.0.0.1 \
         admin {} \
-        errorlog [file normalize /tmp/tclwire-err.log] \
+        logfile [file normalize /tmp/tclwire.log] \
+        logerr [file normalize /tmp/tclwire-err.log] \
         server_path {} \
         aliases {} \
         class ::example::Application \

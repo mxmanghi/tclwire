@@ -45,8 +45,9 @@ namespace eval ::tclwire::runtime {
             ::tclwire::tpba start
             set tpba_started 1
 
-            if {[dict get $config chores_enabled] || [dict get $config diagnostics_enabled] ||
-                 $server_chores_enabled || $application_chores_enabled} {
+            if {[dict get $config chores_enabled] || \
+                [dict get $config diagnostics_enabled] ||
+                $server_chores_enabled || $application_chores_enabled} {
 
                 ::tclwire::chore start [dict create chore_interval_ms [dict get $config chore_interval_ms]]
                 set chore_started 1

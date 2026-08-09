@@ -252,7 +252,6 @@ namespace eval ::tclwire::cli {
                     set logerr [file normalize \
                         [value $argv [incr i] $option]]
                     dict set cli overrides logerr $logerr
-                    dict set cli overrides errorlog $logerr
                 }
                 --log-level {
                     dict set cli overrides log_level \

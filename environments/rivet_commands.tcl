@@ -125,7 +125,7 @@ namespace eval ::tclwire::envs::rivet {
         return [dict create \
             hostname    [$configuration get hostname] \
             admin       [$configuration get admin] \
-            errorlog    [$configuration get errorlog] \
+            errorlog    [$configuration get logerr] \
             server_path [$configuration get server_path]]
     }
 
