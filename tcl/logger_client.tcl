@@ -9,9 +9,11 @@ package require tclwire::shared_state 0.1
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::logger {
-    ::tclwire::define_constant levels [list \
-        trace8 trace7 trace6 trace5 trace4 trace3 trace2 trace1 \
-        debug info notice warn error crit alert emerg]
+    ::tclwire::define_constant levels \
+            [list trace8 trace7 trace6 trace5 \
+                  trace4 trace3 trace2 trace1 \
+                  debug info notice warn error \
+                  crit alert emerg]
 
     proc valid_levels {} {
         variable levels
@@ -162,17 +164,15 @@ namespace eval ::tclwire::logger {
                 dict set context host [dict get $account http_host]
             }
         }
-        set fields [list \
-            "connection=[log_value [dict get $record connection_key]]" \
-            "protocol=[log_value [dict get $record protocol]]" \
-            "service=[log_value [dict get $record service_id]]" \
-            "remote=[log_value [dict get $record peer_host]]" \
-            "status=[log_value [dict get $record status]]" \
-            "reason=[log_value [dict get $record close_reason]]" \
-            "bytes_in=[dict get $record bytes_in]" \
-            "bytes_out=[dict get $record bytes_out]"]
-        if {[dict exists $record transport_error] &&
-                [dict get $record transport_error] ne {}} {
+        set fields [list "connection=[log_value [dict get $record connection_key]]"  \
+                         "protocol=[log_value [dict get $record protocol]]"          \
+                         "service=[log_value [dict get $record service_id]]"         \
+                         "remote=[log_value [dict get $record peer_host]]"           \
+                         "status=[log_value [dict get $record status]]"              \
+                         "reason=[log_value [dict get $record close_reason]]"        \
+                         "bytes_in=[dict get $record bytes_in]"                      \
+                         "bytes_out=[dict get $record bytes_out]"]
+        if {[dict exists $record transport_error] && [dict get $record transport_error] ne {}} {
             lappend fields \
                 "transport_error=[log_value [dict get $record transport_error]]"
         }
@@ -193,8 +193,8 @@ namespace eval ::tclwire::logger {
     }
 
     namespace export clear_levels configure_levels effective_level \
-        is_running log log_connection_closed log_error log_value \
-        normalize_level should_log thread_id valid_levels write write_error
+                     is_running log log_connection_closed log_error log_value \
+                     normalize_level should_log thread_id valid_levels write write_error
     namespace ensemble create
 }
 
