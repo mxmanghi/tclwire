@@ -58,10 +58,17 @@ test logger-1.2 {the logger thread owns and writes the configured logfile} -body
         [dict create \
             logfile $::tclwire::logger_test::logfile \
             logerr $::tclwire::logger_test::logerr]
-    ::tclwire::logger write "plain message"
-    ::tclwire::logger log http "method=GET status=200"
-    ::tclwire::logger write_error "stderr message"
-    ::tclwire::logger log_error app "uncaught-error"
+    set default_client [::tclwire::logger::Client new default]
+    set http_client [::tclwire::logger::Client new http]
+    try {
+        $default_client write "plain message"
+        $http_client log "method=GET status=200"
+        $default_client write_error "stderr message"
+        $default_client log_error app "uncaught-error"
+    } finally {
+        $default_client destroy
+        $http_client destroy
+    }
     ::tclwire::logger stop
 
     set lines [split [string trim [::tclwire::logger_test::contents]] \n]
@@ -81,13 +88,17 @@ test logger-1.2 {the logger thread owns and writes the configured logfile} -body
 test logger-1.3 {reset restarts the agent while retaining configuration} -body {
     set first [::tclwire::logger start \
         [dict create logfile $::tclwire::logger_test::logfile]]
-    ::tclwire::logger write before-reset
+    set client [::tclwire::logger::Client new default]
+    $client write before-reset
+    $client destroy
     set second [::tclwire::logger reset]
     set reset_is_live [expr {
         $second eq [::tsv::get tclwire logger_thread_id] &&
         [::thread::exists $second]
     }]
-    ::tclwire::logger write after-reset
+    set client [::tclwire::logger::Client new default]
+    $client write after-reset
+    $client destroy
     ::tclwire::logger stop
 
     set content [::tclwire::logger_test::contents]
@@ -131,15 +142,17 @@ test logger-1.5a {rotate reopens configured log files} -body {
         [dict create \
             logfile $::tclwire::logger_test::logfile \
             logerr $::tclwire::logger_test::logerr]
-    ::tclwire::logger write before-rotate
-    ::tclwire::logger write_error error-before-rotate
+    set client [::tclwire::logger::Client new default]
+    $client write before-rotate
+    $client write_error error-before-rotate
     file rename -force $::tclwire::logger_test::logfile \
         "$::tclwire::logger_test::logfile.1"
     file rename -force $::tclwire::logger_test::logerr \
         "$::tclwire::logger_test::logerr.1"
     set rotated [::tclwire::logger rotate]
-    ::tclwire::logger write after-rotate
-    ::tclwire::logger write_error error-after-rotate
+    $client write after-rotate
+    $client write_error error-after-rotate
+    $client destroy
     ::tclwire::logger stop
 
     set old_log [::fileutil::cat "$::tclwire::logger_test::logfile.1"]
@@ -162,12 +175,86 @@ test logger-1.5a {rotate reopens configured log files} -body {
     [file normalize $::tclwire::logger_test::logerr] \
     1 1 1 1]
 
+test logger-1.5b {client log mappings route access and error lines} -body {
+    set app_log [file join [temporaryDirectory] tclwire-logger-app-[pid].log]
+    set app_err [file join [temporaryDirectory] tclwire-logger-app-[pid].err]
+    set ftp_log [file join [temporaryDirectory] tclwire-logger-ftp-[pid].log]
+    set ftp_err [file join [temporaryDirectory] tclwire-logger-ftp-[pid].err]
+    catch {file delete -force $app_log $app_err $ftp_log $ftp_err}
+    ::tclwire::logger start \
+        [dict create \
+            logfile $::tclwire::logger_test::logfile \
+            logerr $::tclwire::logger_test::logerr \
+            logfiles [dict create \
+                default [list $::tclwire::logger_test::logfile \
+                              $::tclwire::logger_test::logerr] \
+                app [list $app_log $app_err] \
+                ftp:2121 [list $ftp_log $ftp_err]]]
+    set app_client [::tclwire::logger::Client new app]
+    try {
+        $app_client log "method=GET status=200"
+        $app_client log_error application "failed"
+        set ftp_client [::tclwire::logger::Client new ftp:2121]
+        set default_client [::tclwire::logger::Client new default]
+        try {
+            $ftp_client log "command=USER status=331"
+            $default_client write global-message
+        } finally {
+            $ftp_client destroy
+            $default_client destroy
+        }
+    } finally {
+        $app_client destroy
+        ::tclwire::logger stop
+    }
+    set result [list \
+        [string match {*app method=GET status=200*} [::fileutil::cat $app_log]] \
+        [string match {*application level=error failed*} [::fileutil::cat $app_err]] \
+        [string match {*ftp:2121 command=USER status=331*} [::fileutil::cat $ftp_log]] \
+        [string match {*global-message*} [::tclwire::logger_test::contents]]]
+    catch {file delete -force $app_log $app_err $ftp_log $ftp_err}
+    set result
+} -cleanup {
+    ::tclwire::logger_test::cleanup
+} -result {1 1 1 1}
+
+test logger-1.5c {host context routes error logs to application logerr} -body {
+    set app_err [file join [temporaryDirectory] tclwire-logger-host-app-[pid].err]
+    catch {file delete -force $app_err}
+    ::tclwire::logger start \
+        [dict create \
+            logfile $::tclwire::logger_test::logfile \
+            logerr $::tclwire::logger_test::logerr \
+            logfiles [dict create \
+                default [list $::tclwire::logger_test::logfile \
+                              $::tclwire::logger_test::logerr] \
+                app [list $::tclwire::logger_test::logfile $app_err]] \
+            applications [dict create \
+                app [dict create hosts app.example]]]
+    set logger [::tclwire::logger::Client new \
+        [::tclwire::logger::client_for_context [dict create host app.example]]]
+    try {
+        $logger log_error static_file "status=404" error \
+            [dict create host app.example]
+    } finally {
+        $logger destroy
+    }
+    ::tclwire::logger stop
+    set result [string match {*static_file level=error status=404*} \
+        [::fileutil::cat $app_err]]
+    catch {file delete -force $app_err}
+    set result
+} -cleanup {
+    ::tclwire::logger_test::cleanup
+} -result 1
+
 test logger-1.6 {the client package excludes lifecycle control} -body {
     set child [interp create]
     try {
         $child eval [list lappend auto_path $project_root]
         $child eval {package require tclwire::logger::client 0.1}
         list \
+            [$child eval {expr {[info commands ::tclwire::logger::Client] ne {}}}] \
             [$child eval {expr {[info commands ::tclwire::logger::write] ne {}}}] \
             [$child eval {expr {[info commands ::tclwire::logger::write_error] ne {}}}] \
             [$child eval {expr {[info commands ::tclwire::logger::log] ne {}}}] \
@@ -178,7 +265,7 @@ test logger-1.6 {the client package excludes lifecycle control} -body {
     } finally {
         interp delete $child
     }
-} -result {1 1 1 1 0 0 0}
+} -result {1 0 0 0 1 0 0 0}
 
 test logger-1.7 {the logger thread loads only agent runtime commands} -body {
     set tid [::tclwire::logger start \
@@ -191,7 +278,7 @@ test logger-1.7 {the logger thread loads only agent runtime commands} -body {
     set commands
 } -cleanup {
     ::tclwire::logger_test::cleanup
-} -result {agent_initialize agent_rotate agent_shutdown agent_write agent_write_error close_log_channels open_log_channels timestamp}
+} -result {agent_initialize agent_rotate agent_shutdown agent_write agent_write_error agent_write_message client_channel close_log_channels open_log_channels open_one_log_channel timestamp}
 
 test logger-1.7a {admitted log levels match Apache HTTP Server LogLevel names} -body {
     set apache_levels {
@@ -259,7 +346,9 @@ test logger-1.9 {debug connection close logs only at debug threshold} -body {
             logfile $::tclwire::logger_test::logfile \
             logerr $::tclwire::logger_test::logerr \
             log_level info]
-    ::tclwire::logger log_connection_closed $record
+    set logger [::tclwire::logger::Client new [dict get $record service_id]]
+    $logger log_connection_closed $record
+    $logger destroy
     ::tclwire::logger stop
     set suppressed [expr {[string trim [::tclwire::logger_test::error_contents]] eq {}}]
 
@@ -268,7 +357,9 @@ test logger-1.9 {debug connection close logs only at debug threshold} -body {
             logfile $::tclwire::logger_test::logfile \
             logerr $::tclwire::logger_test::logerr \
             log_level debug]
-    ::tclwire::logger log_connection_closed $record
+    set logger [::tclwire::logger::Client new [dict get $record service_id]]
+    $logger log_connection_closed $record
+    $logger destroy
     ::tclwire::logger stop
     set content [::tclwire::logger_test::error_contents]
     list \
@@ -295,7 +386,9 @@ test logger-1.10 {connection close logs include transport errors} -body {
             logfile $::tclwire::logger_test::logfile \
             logerr $::tclwire::logger_test::logerr \
             log_level debug]
-    ::tclwire::logger log_connection_closed $record
+    set logger [::tclwire::logger::Client new [dict get $record service_id]]
+    $logger log_connection_closed $record
+    $logger destroy
     ::tclwire::logger stop
     set content [::tclwire::logger_test::error_contents]
     list \

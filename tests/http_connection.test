@@ -672,7 +672,7 @@ test http-connection-1.3 {each accepted connection receives the document root in
         [regexp "Content-Length: [string length \
             [encoding convertto utf-8 $expected]]" $headers] \
         [expr {[encoding convertfrom utf-8 $body_bytes] eq $expected}] \
-        [regexp {http method=GET path=/ status=200 bytes=[0-9]+ remote=127\.0\.0\.1} $log]
+        [regexp {default method=GET path=/ status=200 bytes=[0-9]+ remote=127\.0\.0\.1} $log]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
 } -result {1 1 1 1 1}

@@ -207,7 +207,7 @@ namespace eval ::tclwire::config {
     # and must not be interpreted as application ids.
     proc protocol_application_option {field} {
         return [expr {$field in {
-            enabled port certfile keyfile libdir log_level upload_area
+            enabled port certfile keyfile libdir log_level logfile logerr upload_area
             max_request_bytes max_header_bytes request_memory_threshold
         }}]
     }
@@ -746,6 +746,12 @@ namespace eval ::tclwire::config {
                     [normalize_log_level "$protocol.log_level" \
                         [dict get $protocol_config log_level]]
             }
+
+            set log_paths [dict filter $protocol_config key logfile logerr]
+            set log_paths [dict map {field value} $log_paths {
+                resolve_config_path $config_dir $value
+            }]
+            set service [dict merge $service $log_paths]
 
             # The script form is useful here because inclusion depends on
             # both the key and its value. It still preserves original values;

@@ -12,7 +12,7 @@ namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ConsoleConnectionAgent {
     variable channel connection_key connection_id socket_path shutdown_command
-    variable closed input_buffer
+    variable closed input_buffer logger
 
     constructor {conn_channel id key path shutdown_callback} {
         if {$key eq {}} {
@@ -25,6 +25,7 @@ oo::class create ::tclwire::ConsoleConnectionAgent {
         set shutdown_command $shutdown_callback
         set closed 0
         set input_buffer {}
+        set logger [::tclwire::logger::Client new console]
 
         chan configure $channel -blocking 0 -buffering line \
             -translation lf -encoding utf-8
@@ -33,6 +34,9 @@ oo::class create ::tclwire::ConsoleConnectionAgent {
 
     destructor {
         my close
+        if {[info object isa object $logger]} {
+            catch {$logger destroy}
+        }
     }
 
     method readable {} {
@@ -103,7 +107,7 @@ oo::class create ::tclwire::ConsoleConnectionAgent {
                 set close_record [::tclwire::accounting record_connection_closed $connection_key \
                     [dict create status failed close_reason write_failed \
                                  transport_error write_failed]]
-                ::tclwire::logger log_connection_closed $close_record
+                $logger log_connection_closed $close_record
             }
             my close
             return 0
@@ -132,7 +136,7 @@ oo::class create ::tclwire::ConsoleConnectionAgent {
         catch {
             set close_record [::tclwire::accounting record_connection_closed \
                 $connection_key [dict create close_reason closed]]
-            ::tclwire::logger log_connection_closed $close_record
+            $logger log_connection_closed $close_record
         }
         return
     }

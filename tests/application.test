@@ -1,5 +1,6 @@
 package require tcltest
 namespace import ::tcltest::*
+package require fileutil
 
 set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
@@ -18,6 +19,7 @@ package require tclwire::application_dispatcher 0.1
 package require tclwire::content_generator_agent 0.1
 package require tclwire::connection_agent 0.1
 package require tclwire::http::errors 0.1
+package require tclwire::logger 0.1
 
 namespace eval ::tclwire::application_test {
     variable events {}
@@ -1088,6 +1090,70 @@ test application-configuration-1.4ba {
     1 1 \
     "1 1 1 1 /context context-test app:context-test 1\n" \
     1 0 1 {no TclWire request context is active} 1]
+
+test application-configuration-1.4baa {
+    CGA exposes one logger instance to application code
+} -setup {
+    oo::class create ::tclwire::application_test::LoggerApplication {
+        superclass ::tclwire::CApplication
+
+        method handle_request {request} {
+            set logger [::tclwire::logger::getlogger]
+            set app_logger [::tclwire::app::logger]
+            set snapshot_logger [dict get [::tclwire::app::application_snapshot] logger]
+            ::tclwire::logger::log_error application from-public-call warn
+            puts [list \
+                [expr {$logger eq $app_logger}] \
+                [expr {$logger eq $snapshot_logger}] \
+                [$logger id]]
+        }
+    }
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set logfile [file join [temporaryDirectory] tclwire-cga-logger-[pid].log]
+    set logerr [file join [temporaryDirectory] tclwire-cga-logger-[pid].err]
+    catch {file delete -force $logfile $logerr}
+    set configuration [::tclwire::ApplicationConfiguration new logger-test \
+        [dict create \
+            class ::tclwire::application_test::LoggerApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {stdchans}]]
+} -body {
+    ::tclwire::logger start [dict create logfile $logfile logerr $logerr]
+    ::tclwire::cga::initialize app:logger-test [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id logger-test \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 922 \
+            method GET \
+            path /logger]
+    update
+    ::tclwire::cga::shutdown
+    ::tclwire::logger stop
+    set output_event [lindex [lindex $::tclwire::application_test::events 0] 1]
+    list \
+        [dict get $output_event data] \
+        [string match {*application level=warn from-public-call*} \
+            [::fileutil::cat $logerr]]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {::tclwire::logger stop}
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::application_test::LoggerApplication destroy}
+    catch {::tclwire::io end}
+    catch {file delete -force $logfile $logerr}
+} -result [list "1 1 logger-test\n" 1]
 
 test application-configuration-1.4bab {
     CGA context construction rejects partial structural state

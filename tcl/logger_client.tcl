@@ -3,6 +3,7 @@
 # Minimal Logging Agent client API for producer threads.
 
 package require Thread
+package require TclOO
 package require tclwire::constants 0.1
 package require tclwire::shared_state 0.1
 
@@ -51,29 +52,41 @@ namespace eval ::tclwire::logger {
             }
         }
 
+        set applications [dict create]
+        set host_clients [dict create]
         set hosts [dict create]
         if {[dict exists $config applications]} {
             dict for {application_id descriptor} [dict get $config applications] {
+                if {[dict exists $descriptor hosts]} {
+                    foreach host [dict get $descriptor hosts] {
+                        set normalized_host [normalize_host $host]
+                        if {[dict exists $descriptor log_level]} {
+                            dict set hosts $normalized_host \
+                                [normalize_level [dict get $descriptor log_level]]
+                        }
+                        dict set host_clients $normalized_host $application_id
+                    }
+                }
                 if {![dict exists $descriptor log_level]} {
                     continue
                 }
                 set level [normalize_level [dict get $descriptor log_level]]
-                if {[dict exists $descriptor hosts]} {
-                    foreach host [dict get $descriptor hosts] {
-                        dict set hosts [normalize_host $host] $level
-                    }
-                }
+                dict set applications $application_id $level
             }
         }
 
         ::tsv::set tclwire logger_levels \
-            [dict create global $global services $services hosts $hosts]
+            [dict create global $global services $services \
+                         applications $applications hosts $hosts]
+        ::tsv::set tclwire logger_client_routes \
+            [dict create hosts $host_clients]
         return [::tsv::get tclwire logger_levels]
     }
 
     proc clear_levels {} {
         ::tclwire::shared_state initialize
         ::tsv::set tclwire logger_levels {}
+        ::tsv::set tclwire logger_client_routes {}
         return
     }
 
@@ -97,6 +110,10 @@ namespace eval ::tclwire::logger {
                 [dict exists $configured services [dict get $context service_id]]} {
             set level [dict get $configured services [dict get $context service_id]]
         }
+        if {[dict exists $context application_id] &&
+                [dict exists $configured applications [dict get $context application_id]]} {
+            set level [dict get $configured applications [dict get $context application_id]]
+        }
         if {[dict exists $context host]} {
             set host [normalize_host [dict get $context host]]
             if {[dict exists $configured hosts $host]} {
@@ -112,6 +129,24 @@ namespace eval ::tclwire::logger {
         }]
     }
 
+    proc client_for_context {context {fallback default}} {
+        if {[dict exists $context application_id]} {
+            return [dict get $context application_id]
+        }
+        if {[dict exists $context service_id]} {
+            return [dict get $context service_id]
+        }
+        if {[dict exists $context host]} {
+            set routes {}
+            catch {set routes [::tsv::get tclwire logger_client_routes]}
+            set host [normalize_host [dict get $context host]]
+            if {[dict exists $routes hosts $host]} {
+                return [dict get $routes hosts $host]
+            }
+        }
+        return $fallback
+    }
+
     proc thread_id {} {
         return [::tsv::get tclwire logger_thread_id]
     }
@@ -121,63 +156,116 @@ namespace eval ::tclwire::logger {
         return [expr {$tid ne {} && [::thread::exists $tid]}]
     }
 
-    proc write {line} {
-        set tid [require_thread]
-        ::thread::send -async $tid [list ::tclwire::logger::agent_write $line]
-        return
+    proc getlogger {} {
+        if {[namespace which ::tclwire::app::application_active] ne {} &&
+                [::tclwire::app::application_active]} {
+            set logger [::tclwire::app::application_get logger]
+            if {[info object isa object $logger]} {
+                return $logger
+            }
+        }
+        if {[namespace exists ::tclwire::cga]} {
+            set variable_name ::tclwire::cga::logger
+            if {[info exists $variable_name]} {
+                set logger [set $variable_name]
+                if {[info object isa object $logger]} {
+                    return $logger
+                }
+            }
+        }
+        error "no TclWire logger client is active"
     }
 
-    proc write_error {line} {
-        set tid [require_thread]
-        ::thread::send -async $tid \
-            [list ::tclwire::logger::agent_write_error $line]
-        return
-    }
+    oo::class create Client {
+        variable client
 
-    proc log {protocol message {level info} {context {}}} {
-        if {[should_log $level $context]} {
-            write "$protocol $message"
+        constructor {client_id} {
+            set client_id [string trim $client_id]
+            if {$client_id eq {}} {
+                error "logger client id must not be empty"
+            }
+            set client $client_id
+        }
+
+        method id {} {
+            return $client
+        }
+
+        method write {line} {
+            set tid [::tclwire::logger::require_thread]
+            ::thread::send -async $tid \
+                [list ::tclwire::logger::agent_write_message \
+                    [list $client access $line]]
+            return
+        }
+
+        method write_error {line} {
+            set tid [::tclwire::logger::require_thread]
+            ::thread::send -async $tid \
+                [list ::tclwire::logger::agent_write_message \
+                    [list $client error $line]]
+            return
+        }
+
+        method log {message {level info} {context {}}} {
+            if {$context eq {}} {
+                set context [dict create service_id $client application_id $client]
+            }
+            if {[::tclwire::logger::should_log $level $context]} {
+                my write "$client $message"
+            }
+            return
+        }
+
+        method log_error {source message {level error} {context {}}} {
+            if {$context eq {}} {
+                set context [dict create service_id $client application_id $client]
+            }
+            if {[::tclwire::logger::should_log $level $context]} {
+                my write_error "$source level=$level $message"
+            }
+            return
+        }
+
+        method log_connection_closed {record} {
+            if {$record eq {}} {
+                return
+            }
+            set context [dict create service_id $client]
+            foreach {source target} {service_id service_id peer_host remote} {
+                if {[dict exists $record $source]} {
+                    dict set context $target [dict get $record $source]
+                }
+            }
+            if {[dict exists $record worker_thread_id] &&
+                    [dict get $record worker_thread_id] ne {}} {
+                set account [::tclwire::accounting get_thread_account \
+                    [dict get $record worker_thread_id]]
+                if {[dict get $account http_host] ne {}} {
+                    dict set context host [dict get $account http_host]
+                }
+            }
+            set fields [list "connection=[::tclwire::logger::log_value [dict get $record connection_key]]"  \
+                             "protocol=[::tclwire::logger::log_value [dict get $record protocol]]"          \
+                             "service=[::tclwire::logger::log_value [dict get $record service_id]]"         \
+                             "remote=[::tclwire::logger::log_value [dict get $record peer_host]]"           \
+                             "status=[::tclwire::logger::log_value [dict get $record status]]"              \
+                             "reason=[::tclwire::logger::log_value [dict get $record close_reason]]"        \
+                             "bytes_in=[dict get $record bytes_in]"                      \
+                             "bytes_out=[dict get $record bytes_out]"]
+            if {[dict exists $record transport_error] && [dict get $record transport_error] ne {}} {
+                lappend fields \
+                    "transport_error=[::tclwire::logger::log_value [dict get $record transport_error]]"
+            }
+            set message [join $fields " "]
+            my log_error connection $message debug $context
+            return
         }
     }
 
     proc log_error {source message {level error} {context {}}} {
-        if {[should_log $level $context]} {
-            write_error "$source level=$level $message"
-        }
-    }
-
-    proc log_connection_closed {record} {
-        if {$record eq {}} {
-            return
-        }
-        set context [dict create]
-        foreach {source target} {service_id service_id peer_host remote} {
-            if {[dict exists $record $source]} {
-                dict set context $target [dict get $record $source]
-            }
-        }
-        if {[dict exists $record worker_thread_id] &&
-                [dict get $record worker_thread_id] ne {}} {
-            set account [::tclwire::accounting get_thread_account \
-                [dict get $record worker_thread_id]]
-            if {[dict get $account http_host] ne {}} {
-                dict set context host [dict get $account http_host]
-            }
-        }
-        set fields [list "connection=[log_value [dict get $record connection_key]]"  \
-                         "protocol=[log_value [dict get $record protocol]]"          \
-                         "service=[log_value [dict get $record service_id]]"         \
-                         "remote=[log_value [dict get $record peer_host]]"           \
-                         "status=[log_value [dict get $record status]]"              \
-                         "reason=[log_value [dict get $record close_reason]]"        \
-                         "bytes_in=[dict get $record bytes_in]"                      \
-                         "bytes_out=[dict get $record bytes_out]"]
-        if {[dict exists $record transport_error] && [dict get $record transport_error] ne {}} {
-            lappend fields \
-                "transport_error=[log_value [dict get $record transport_error]]"
-        }
-        set message [join $fields " "]
-        log_error connection $message debug $context
+        set logger [getlogger]
+        tailcall $logger log_error $source $message $level $context
     }
 
     proc log_value {value} {
@@ -192,9 +280,9 @@ namespace eval ::tclwire::logger {
         return $tid
     }
 
-    namespace export clear_levels configure_levels effective_level \
-                     is_running log log_connection_closed log_error log_value \
-                     normalize_level should_log thread_id valid_levels write write_error
+    namespace export Client clear_levels configure_levels effective_level \
+                     getlogger is_running log_error log_value normalize_level \
+                     should_log thread_id valid_levels
     namespace ensemble create
 }
 

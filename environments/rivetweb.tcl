@@ -21,7 +21,8 @@ oo::class create ::tclwire::envs::Rivetweb {
 
     method do_install {} {
         set configuration [my configuration]
-        ::tclwire::logger log_error rivetweb "rivetweb conf $configuration" info
+        set logger [::tclwire::logger::getlogger]
+        $logger log_error rivetweb "rivetweb conf $configuration" info
         if {[dict exists $configuration rivetweb_root]} {
             set ::rweb_root [dict get $configuration rivetweb_root]
         } else {

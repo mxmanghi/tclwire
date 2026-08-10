@@ -1685,7 +1685,8 @@ namespace eval ::tclwire::envs::rivet {
                 set saved_error_code $::errorCode
             }
             catch {
-                ::tclwire::logger log_error rivet \
+                set logger [::tclwire::logger::getlogger]
+                $logger log_error rivet \
                     [::tclwire::logger::log_value $message] $level
             }
             if {$had_error_info} {

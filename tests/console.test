@@ -379,11 +379,13 @@ test console-protocol-1.5 {LOGROTATE reopens logger files and returns OK} -body 
     catch {file delete -force $logfile $logerr "$logfile.1" "$logerr.1"}
     try {
         ::tclwire::logger start [dict create logfile $logfile logerr $logerr]
-        ::tclwire::logger write before-console-rotate
+        set logger [::tclwire::logger::Client new default]
+        $logger write before-console-rotate
         file rename -force $logfile "$logfile.1"
         set response [::json::json2dict \
             [::tclwire::console dispatch LOGROTATE]]
-        ::tclwire::logger write after-console-rotate
+        $logger write after-console-rotate
+        $logger destroy
         ::tclwire::logger stop
         list \
             [dict get $response ok] \

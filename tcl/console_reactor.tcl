@@ -11,7 +11,7 @@ package require tclwire::logger::client 0.1
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ConsoleReactor {
-    variable socket_path listener next_connection_id connections shutdown_command
+    variable socket_path listener next_connection_id connections shutdown_command logger
 
     constructor args {
         array set options {
@@ -36,10 +36,14 @@ oo::class create ::tclwire::ConsoleReactor {
         set listener {}
         set next_connection_id 0
         set connections [dict create]
+        set logger [::tclwire::logger::Client new console]
     }
 
     destructor {
         my stop
+        if {[info object isa object $logger]} {
+            catch {$logger destroy}
+        }
     }
 
     method start {} {
@@ -103,7 +107,7 @@ oo::class create ::tclwire::ConsoleReactor {
                 set close_record [::tclwire::accounting record_connection_closed $connection_key \
                     [dict create status failed close_reason startup_failed \
                                  transport_error $message]]
-                ::tclwire::logger log_connection_closed $close_record
+                $logger log_connection_closed $close_record
             }
             return -options $options $message
         }

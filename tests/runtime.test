@@ -175,7 +175,7 @@ test runtime-1.1c {command-line parsing records construction inputs} -body {
         --host 192.0.2.50 \
         --startservers http,proxy \
         --httpport 8080 \
-        --service https:9443\;certfile=cert.pem\;keyfile=key.pem \
+        --service https:9443\;certfile=cert.pem\;keyfile=key.pem\;logfile=https.log\;logerr=https.err \
         --debug]]
     list \
         [dict get $cli config_file] \
@@ -192,7 +192,8 @@ test runtime-1.1c {command-line parsing records construction inputs} -body {
     8080 \
     1 \
     [list [dict create protocol https port 9443 \
-        certfile [file normalize cert.pem] keyfile [file normalize key.pem]]] \
+        certfile [file normalize cert.pem] keyfile [file normalize key.pem] \
+        logfile [file normalize https.log] logerr [file normalize https.err]]] \
     1]
 
 test runtime-1.1d {command-line config file is recorded after file merge} -body {
@@ -1622,6 +1623,31 @@ logerr = "logs/application.err"
         [temporaryDirectory] tclwire-config-[pid] logs application.log]] \
     [file normalize [file join \
         [temporaryDirectory] tclwire-config-[pid] logs application.err]]]
+
+test runtime-1.15b {service descriptors accept logfile and logerr paths} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+
+[ftp]
+port = 2121
+logfile = "logs/ftp.log"
+logerr = "logs/ftp.err"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    set service [lindex [dict get $config services] 0]
+    list \
+        [dict get $service id] \
+        [dict get $service logfile] \
+        [dict get $service logerr]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    ftp:2121 \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] logs ftp.log]] \
+    [file normalize [file join \
+        [temporaryDirectory] tclwire-config-[pid] logs ftp.err]]]
 
 test runtime-1.16 {host applications inherit the named default descriptor} -body {
     set config_file [::tclwire::runtime_test::make_config {

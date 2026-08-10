@@ -35,8 +35,9 @@ final argument.
 ::tclwire::configuration tree $configuration \
     [list puts stderr]
 
+set logger [::tclwire::logger::Client new chore]
 ::tclwire::configuration tree $configuration \
-    [list ::tclwire::logger log_error chore %s info]
+    [list $logger log_error chore %s info]
 
 ::tclwire::configuration tree $configuration \
     [list ::tclwire::io out "%s\n"]
@@ -181,11 +182,13 @@ oo::class create MyServerChore {
 
     constructor args {
         next {*}$args
+        set logger [::tclwire::logger::Client new chore]
         ::tclwire::configuration tree [my server_config] \
-            [list ::tclwire::logger log_error chore %s info]
+            [list $logger log_error chore %s info]
+        $logger destroy
     }
 }
 ```
 
-Because the helper is line-oriented, it works with `puts`, logger procedures,
+Because the helper is line-oriented, it works with `puts`, logger methods,
 test collectors, and other command forms without needing a special logger API.

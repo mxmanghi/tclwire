@@ -15,7 +15,7 @@ oo::class create ::tclwire::FtpConnectionAgent {
 
     variable channel closed protocol_session command_buffer ftp_root connection_key
     variable ftp_user_check bind_host session secure_transport
-    variable tls_certfile tls_keyfile log_protocol timeout_id
+    variable tls_certfile tls_keyfile log_protocol logger timeout_id
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -48,7 +48,12 @@ oo::class create ::tclwire::FtpConnectionAgent {
         set ftp_root [::fileutil::fullnormalize [dict get $config ftproot]]
         set ftp_user_check [expr {[dict get $config ftp_user_check] ? 1 : 0}]
         set bind_host [dict get $config host]
-        set log_protocol [dict get $config protocol]
+        if {[dict exists $config id]} {
+            set log_protocol [dict get $config id]
+        } else {
+            set log_protocol [dict get $config protocol]
+        }
+        set logger [::tclwire::logger::Client new $log_protocol]
         set secure_transport [expr {
             [dict exists $config secure] && [dict get $config secure]
         }]
@@ -88,6 +93,9 @@ oo::class create ::tclwire::FtpConnectionAgent {
     destructor {
         my reset_passive_state
         catch {$protocol_session destroy}
+        if {[info object isa object $logger]} {
+            catch {$logger destroy}
+        }
         next
     }
 
@@ -782,8 +790,8 @@ oo::class create ::tclwire::FtpConnectionAgent {
         }
         set remote_host [dict get [my peer] host]
         catch {
-            ::tclwire::logger log $log_protocol \
-                "command=$command argument=[::tclwire::logger log_value $argument] status=$status remote=[::tclwire::logger log_value $remote_host]"
+            $logger log \
+                "command=$command argument=[::tclwire::logger::log_value $argument] status=$status remote=[::tclwire::logger::log_value $remote_host]"
         }
         return
     }
@@ -791,8 +799,8 @@ oo::class create ::tclwire::FtpConnectionAgent {
     method log_transfer {action path status bytes} {
         set remote_host [dict get [my peer] host]
         catch {
-            ::tclwire::logger log $log_protocol \
-                "transfer=$action path=[::tclwire::logger log_value $path] status=$status bytes=$bytes remote=[::tclwire::logger log_value $remote_host]"
+            $logger log \
+                "transfer=$action path=[::tclwire::logger::log_value $path] status=$status bytes=$bytes remote=[::tclwire::logger::log_value $remote_host]"
         }
         return
     }

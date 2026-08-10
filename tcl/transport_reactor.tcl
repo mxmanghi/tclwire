@@ -36,6 +36,7 @@ oo::class create ::tclwire::TransportReactor {
     variable last_accept_error pool_key pool_descriptor pool_policy pool_created
     variable agent_class agent_package agent_args transport_config service_id protocol
     variable pending_connections pending_rescheduler pending_retry_after_ms pending_max_attempts
+    variable logger
 
     constructor args {
         array set options {
@@ -78,6 +79,7 @@ oo::class create ::tclwire::TransportReactor {
         set transport_config $options(-transportconfig)
         set protocol        $options(-protocol)
         set service_id [expr {$options(-serviceid) eq {} ? "$options(-protocol):$port" : $options(-serviceid)}]
+        set logger [::tclwire::logger::Client new $service_id]
         set pool_descriptor [dict create kind           connection_agent \
                                          protocol       $options(-protocol) \
                                          family         $options(-protocol) \
@@ -98,6 +100,13 @@ oo::class create ::tclwire::TransportReactor {
 
     destructor {
         my stop
+        if {[info object isa object $logger]} {
+            catch {$logger destroy}
+        }
+    }
+
+    method logger_for_record {record} {
+        return $logger
     }
 
     method start {} {
@@ -383,14 +392,11 @@ oo::class create ::tclwire::TransportReactor {
                 }
             }
             catch {
-
                 set close_status [dict create status failed close_reason dispatch_failed transport_error $error]
-                set close_record [::tclwire::accounting record_connection_closed $connection_key \
-                                                                                 ::tclwire::logger \
-                                                                                 log_connection_closed \
-                                                                                 $close_record \
-                                                                                 $close_status]
-
+                set close_record [::tclwire::accounting record_connection_closed \
+                    $connection_key $close_status]
+                [my logger_for_record $close_record] log_connection_closed \
+                    $close_record
             }
             catch {::tclwire::tpba request [dict create \
                 operation thread_workload_changed \
@@ -436,20 +442,20 @@ oo::class create ::tclwire::TransportReactor {
 
         set fields [list    "event=connection_$event" \
                             "connection_id=[dict get $descriptor connection_id]" \
-                            "service=[::tclwire::logger log_value $service_id]" \
-                            "remote=[::tclwire::logger log_value [dict get $descriptor peer_host]]" \
+                            "service=[::tclwire::logger::log_value $service_id]" \
+                            "remote=[::tclwire::logger::log_value [dict get $descriptor peer_host]]" \
                             "remote_port=[dict get $descriptor peer_port]" \
                             "attempts=[dict get $descriptor attempts]" \
                             "queue_depth=[llength $pending_connections]"]
 
         if {$worker_id ne {}} {
-            lappend fields "worker_thread_id=[::tclwire::logger log_value $worker_id]"
+            lappend fields "worker_thread_id=[::tclwire::logger::log_value $worker_id]"
         }
         if {$reason ne {}} {
-            lappend fields "reason=[::tclwire::logger log_value $reason]"
+            lappend fields "reason=[::tclwire::logger::log_value $reason]"
         }
         catch {
-            ::tclwire::logger log_error transport [join $fields " "] $level \
+            $logger log_error transport [join $fields " "] $level \
                 [dict create service_id $service_id]
         }
         return
@@ -522,7 +528,8 @@ oo::class create ::tclwire::TransportReactor {
             catch {
                 set close_record \
                     [::tclwire::accounting record_connection_closed $connection_key [dict create close_reason finished]]
-                ::tclwire::logger log_connection_closed $close_record
+                [my logger_for_record $close_record] log_connection_closed \
+                    $close_record
             }
         }
         if {[dict exists $agent_threads $worker_id $connection_id]} {

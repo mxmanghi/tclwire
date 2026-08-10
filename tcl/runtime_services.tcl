@@ -43,6 +43,7 @@ namespace eval ::tclwire::runtime {
         }
         return [list -applicationconfig $config \
                      -protocol [dict get $service protocol] \
+                     -serviceid [dict get $service id] \
                      -uploadarea [dict get $service upload_area] \
                      -maxrequestbytes [dict get $service max_request_bytes] \
                      -maxheaderbytes [dict get $service max_header_bytes] \
@@ -57,7 +58,7 @@ namespace eval ::tclwire::runtime {
     }
 
     proc proxy_service_agent_args {config service} {
-        return [list -config $config]
+        return [list -config [dict merge $config $service]]
     }
 
     proc create_transport_reactor {config service} {
