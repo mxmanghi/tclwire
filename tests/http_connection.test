@@ -1429,6 +1429,58 @@ environment = "stdchans"
     removeFile $stdchans_streaming_application
 } -result {1 1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a}
 
+test http-connection-1.12ab {
+    stdchans binary stdout can establish implicit binary response mode
+} -setup {
+    set stdchans_binary_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::StdchansBinaryApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request} {
+        fconfigure stdout -translation binary
+        puts -nonewline stdout [binary format H* 0080ff]
+    }
+}
+} stdchans-binary-application.tcl]
+    set stdchans_binary_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::StdchansBinaryApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+environment = "stdchans"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $stdchans_binary_application \
+   $project_root] stdchans-binary-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $stdchans_binary_config]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 $separator-1]
+    set body [string range $response $separator+4 end]
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        [regexp -nocase {Content-Length:\s*3} $headers] \
+        [binary encode hex $body]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $stdchans_binary_config
+    removeFile $stdchans_binary_application
+} -result {1 1 0080ff}
+
 test http-connection-1.12a {applications can close a connection without response} -setup {
     set close_application [makeFile {
     package require tclwire::application 0.1

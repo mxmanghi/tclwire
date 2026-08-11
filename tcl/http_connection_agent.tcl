@@ -259,6 +259,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         $transaction set response_reason    OK
         $transaction set response_headers   {}
         $transaction set response_body_mode text
+        $transaction set response_body_mode_explicit 0
         $transaction set response_state     preparing
         $transaction set response_bytes     0
         $transaction set output_sequence    0
@@ -486,11 +487,55 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return
     }
 
-    method abort_application_response {transaction_id transaction} {
+    method log_application_response_abort {transaction reason options} {
+        if {$reason eq {}} {
+            return
+        }
+        set descriptor {}
+        if {[info object isa object $transaction]} {
+            set descriptor [$transaction snapshot]
+        }
+
+        set client $log_service_id
+        set context [dict create service_id $log_service_id]
+        if {$descriptor ne {} && [dict exists $descriptor application_id]} {
+            set client [dict get $descriptor application_id]
+            dict set context application_id $client
+        }
+        if {$descriptor ne {} && [dict exists $descriptor headers host]} {
+            dict set context host [dict get $descriptor headers host]
+        }
+
+        set fields [list \
+            "reason=[::tclwire::logger::log_value $reason]"]
+        foreach field {application_id transaction_id method path response_state response_body_mode} {
+            if {$descriptor ne {} && [dict exists $descriptor $field]} {
+                lappend fields \
+                    "$field=[::tclwire::logger::log_value [dict get $descriptor $field]]"
+            }
+        }
+        foreach {option label} {-errorcode errorcode -errorinfo errorinfo} {
+            if {[dict exists $options $option]} {
+                lappend fields \
+                    "$label=[::tclwire::logger::log_value [dict get $options $option]]"
+            }
+        }
+
+        if {[catch {
+            set logger [my logger_for_client $client]
+            $logger log_error application_output [join $fields " "] error $context
+        }]} {
+            catch {puts stderr "application_output level=error [join $fields " "]"}
+        }
+        return
+    }
+
+    method abort_application_response {transaction_id transaction {reason {}} {options {}}} {
         set transaction [my transaction_for $transaction_id]
         if {![info object isa object $transaction]} {
             return
         }
+        my log_application_response_abort $transaction $reason $options
         set response_state [$transaction get response_state]
         set head_only [my head_only $transaction]
         my finish_transaction $transaction_id
@@ -510,6 +555,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
         set expected [expr {[$transaction get output_sequence] + 1}]
         if {[dict get $event output_sequence] != $expected} {
+            my log_application_response_abort $transaction \
+                "application output event sequence mismatch: expected $expected, received [dict get $event output_sequence]" \
+                {}
             set head_only [my head_only $transaction]
             my finish_transaction $transaction_id
             my send_error 500 {} $head_only
@@ -521,27 +569,31 @@ oo::class create ::tclwire::HttpConnectionAgent {
             response {
                 if {[$transaction get response_state] ne "preparing" ||
                         [$transaction get response_body] ne {}} {
-                    my abort_application_response $transaction_id $transaction
+                    my abort_application_response $transaction_id $transaction \
+                        "response event arrived after response output started"
                     return
                 }
                 set flags [dict get $event flags]
                 foreach field {status reason headers body_mode} {
                     $transaction set response_$field [dict get $flags $field]
                 }
+                $transaction set response_body_mode_explicit 1
                 if {[dict get $flags encoding] ne {}} {
                     $transaction set response_encoding \
                         [dict get $flags encoding]
                 }
-                if {[catch {my chunked_response $transaction}]} {
-                    my abort_application_response $transaction_id $transaction
+                if {[catch {my chunked_response $transaction} message options]} {
+                    my abort_application_response $transaction_id $transaction \
+                        $message $options
                     return
                 }
             }
             http_header {
                 if {[catch {
                     my apply_header_event $transaction [dict get $event flags]
-                }]} {
-                    my abort_application_response $transaction_id $transaction
+                } message options]} {
+                    my abort_application_response $transaction_id $transaction \
+                        $message $options
                     return
                 }
             }
@@ -551,19 +603,29 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     set body_mode [dict get $event flags body_mode]
                 }
                 if {$body_mode ne [$transaction get response_body_mode]} {
-                    my abort_application_response $transaction_id $transaction
-                    return
+                    if {[$transaction get response_state] eq "preparing" &&
+                            ![$transaction get response_body_mode_explicit] &&
+                            [$transaction get response_body] eq {} &&
+                            [$transaction get response_bytes] == 0} {
+                        $transaction set response_body_mode $body_mode
+                    } else {
+                        my abort_application_response $transaction_id $transaction \
+                            "application output body mode changed from [$transaction get response_body_mode] to $body_mode"
+                        return
+                    }
                 }
-                if {[catch {set chunked [my chunked_response $transaction]}]} {
-                    my abort_application_response $transaction_id $transaction
+                if {[catch {set chunked [my chunked_response $transaction]} message options]} {
+                    my abort_application_response $transaction_id $transaction \
+                        $message $options
                     return
                 }
                 if {$chunked} {
                     if {[catch {
                         my write_chunked_response_body \
                             $transaction [dict get $event data] $body_mode
-                    }]} {
-                        my abort_application_response $transaction_id $transaction
+                    } message options]} {
+                        my abort_application_response $transaction_id $transaction \
+                            $message $options
                         return
                     }
                 } else {
@@ -572,7 +634,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
             }
             no_body {
                 if {[$transaction get response_bytes] > 0} {
-                    my abort_application_response $transaction_id $transaction
+                    my abort_application_response $transaction_id $transaction \
+                        "no_body event arrived after response bytes were sent"
                     return
                 }
                 set response_headers {}
@@ -607,14 +670,16 @@ oo::class create ::tclwire::HttpConnectionAgent {
                             error "failed to flush HTTP response"
                         }
                     }
-                }]} {
-                    my abort_application_response $transaction_id $transaction
+                } message options]} {
+                    my abort_application_response $transaction_id $transaction \
+                        $message $options
                     return
                 }
             }
             complete {
-                if {[catch {set chunked [my chunked_response $transaction]}]} {
-                    my abort_application_response $transaction_id $transaction
+                if {[catch {set chunked [my chunked_response $transaction]} message options]} {
+                    my abort_application_response $transaction_id $transaction \
+                        $message $options
                     return
                 }
                 if {$chunked} {
@@ -628,8 +693,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
                                 [$protocol_session chunk_terminator] 1]} {
                             error "failed to terminate HTTP chunks"
                         }
-                    }]} {
-                        my abort_application_response $transaction_id $transaction
+                    } message options]} {
+                        my abort_application_response $transaction_id $transaction \
+                            $message $options
                         return
                     }
                     $transaction set response_state complete
@@ -683,10 +749,12 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 return
             }
             error {
-                my abort_application_response $transaction_id $transaction
+                my abort_application_response $transaction_id $transaction \
+                    [dict get $event data]
             }
             default {
-                my abort_application_response $transaction_id $transaction
+                my abort_application_response $transaction_id $transaction \
+                    "unknown application output event type: [dict get $event type]"
             }
         }
         return
@@ -756,7 +824,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         dispatch_request_descriptor dump_multipart_descriptor \
         enable_chunked_response_for_flush \
         handle_request_descriptor head_only header_name header_value \
-        log_request request_host response_header_values \
+        log_application_response_abort log_request request_host response_header_values \
         send_continue_response_if_needed write_chunked_response_body
 }
 
