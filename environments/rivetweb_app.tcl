@@ -90,8 +90,6 @@ oo::class create ::tclwire::envs::app::Rivetweb {
                 # al problema della determinazione ed pre-elaborazione degli argomenti 
                 # nella URL. E' più corretto che questa determinazione venga fatta qui
                 #
-                #::erice set_workshop_code [::rivet::var_qs get conference "ccsem"]
-
                 # still have to figure out what to do, but I guess
                 # the error handler below must be triggered
 
@@ -147,10 +145,6 @@ oo::class create ::tclwire::envs::app::Rivetweb {
                 ::try {
                     ::Rivet::finish_request $script "" "" AfterEveryScript
                 } finally {
-                    if {[catch {::erice close_db_connection} cleanup_error cleanup_opts]} {
-                        ::rivet::apache_log_error err \
-                            "RivetWeb request cleanup failed: [dict get $cleanup_opts -errorinfo]"
-                    }
                     ::Rivet::cleanup_request
                 }
             }
