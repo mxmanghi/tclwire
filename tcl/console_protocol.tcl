@@ -489,11 +489,11 @@ namespace eval ::tclwire::console {
                 }
                 return [table_message $command $service_columns [service_rows]]
             }
-            CONF {
+            SERVERCONF {
                 variable conf_columns
                 if {[llength $args] != 0} {
                     return [error_message $command bad_arguments \
-                        "CONF accepts no arguments"]
+                        "SERVERCONF accepts no arguments"]
                 }
                 return [table_message $command $conf_columns [conf_rows] \
                     [dict create] [dict create configuration [configuration_metadata]]]

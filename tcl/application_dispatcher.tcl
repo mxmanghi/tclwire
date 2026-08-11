@@ -52,7 +52,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
         }
         set server_defaults [dict create hostname    {} \
                                          admin       {} \
-                                         errorlog    {} \
+                                         logfile     {} \
+                                         logerr      {} \
                                          server_path {}]
         if {[dict exists $application_config host]} {
             dict set server_defaults hostname [dict get $application_config host]
@@ -60,8 +61,8 @@ oo::class create ::tclwire::ApplicationDispatcher {
         foreach {target source} {
             hostname    hostname
             admin       admin
-            errorlog    errorlog
-            errorlog    logerr
+            logfile     logfile
+            logerr      logerr
             server_path server_path
         } {
             if {[dict exists $application_config $source]} {

@@ -9,8 +9,35 @@ namespace eval ::tclwire {}
 
 namespace eval ::tclwire::http::multipart {
 
+    # Multipart part classification
+    #
+    # TclWire parses multipart bodies into neutral part dictionaries first.
+    # Convenience helpers then project those parts into "form fields" and
+    # "uploaded files" using the common multipart/form-data convention:
+    #
+    #   - parts with a Content-Disposition name parameter and no filename
+    #     parameter are exposed as ordinary form values;
+    #   - parts with a filename parameter are exposed as uploaded files and,
+    #     when an upload area is active, are spooled to temporary files.
+    #
+    # This is intentionally a convention, not a standards-level guarantee.  In
+    # RFC 7578, every multipart/form-data part is form data and has a field
+    # name.  For file content, the sender SHOULD provide a filename parameter,
+    # but the filename is not mandatory when it is unavailable, meaningless, or
+    # private.  Therefore, a part without filename is usually a regular form
+    # value, but it could still carry file-like content in a standards-compliant
+    # message.  Content-Type is only a weak hint: text fields may declare one,
+    # and file uploads may omit one or use a generic media type.
+    #
+    # The only authoritative schema is application knowledge: which field names
+    # the application expects to be scalar values, repeated values, single
+    # files, or repeated files.  These helpers provide browser-compatible
+    # defaults while multipart_parts remains available for applications that
+    # need to apply their own schema or validation.
+
     # -- parse_part_headers
 
+    # Parse a CRLF-delimited part header block into a lowercase header dict.
     proc parse_part_headers {header_block} {
         set headers [dict create]
         foreach line [split $header_block "\r\n"] {
@@ -25,6 +52,8 @@ namespace eval ::tclwire::http::multipart {
         return $headers
     }
 
+    # Parse a Content-Disposition field into its disposition type and
+    # unquoted, lowercase parameter dictionary.
     proc parse_content_disposition {value} {
         if {$value eq {}} {
             return [dict create type {} parameters [dict create]]
@@ -49,6 +78,7 @@ namespace eval ::tclwire::http::multipart {
         return [dict create type $disposition_type parameters $parameters]
     }
 
+    # Find the next valid boundary delimiter at or after start.
     proc delimiter_at {body boundary start} {
         set delimiter "--$boundary"
         set delimiter_length [string length $delimiter]
@@ -79,6 +109,7 @@ namespace eval ::tclwire::http::multipart {
         }
     }
 
+    # Parse one complete multipart part into a neutral part dictionary.
     proc parse_part {part_body} {
         set header_end [string first "\r\n\r\n" $part_body]
         if {$header_end < 0} {
@@ -105,6 +136,7 @@ namespace eval ::tclwire::http::multipart {
         return $result
     }
 
+    # Parse a complete multipart body into part dictionaries.
     proc parse {content_type body} {
         set content_info [::tclwire::http::message parse_content_type $content_type]
         set media_type [dict get $content_info media_type]
@@ -149,6 +181,7 @@ namespace eval ::tclwire::http::multipart {
         }
     }
 
+    # Return last-value wins form fields, excluding filename-bearing parts.
     proc form_fields {parts} {
         set fields [dict create]
         foreach part $parts {
@@ -159,6 +192,7 @@ namespace eval ::tclwire::http::multipart {
         return $fields
     }
 
+    # Return all ordinary form values for one field name in request order.
     proc field_values {parts name} {
         set values {}
         foreach part $parts {
@@ -171,6 +205,7 @@ namespace eval ::tclwire::http::multipart {
         return $values
     }
 
+    # Return filename-bearing parts, optionally restricted to one field name.
     proc files {parts {name {}}} {
         set files {}
         foreach part $parts {
@@ -186,6 +221,7 @@ namespace eval ::tclwire::http::multipart {
         return $files
     }
 
+    # Spool filename-bearing part bodies to files in upload_area.
     proc store_files {parts upload_area} {
         if {$upload_area eq {}} {
             error "multipart upload area must not be empty"
@@ -228,6 +264,7 @@ namespace eval ::tclwire::http::multipart {
         return $stored
     }
 
+    # Delete spooled multipart files that still exist.
     proc cleanup_files {parts} {
         set failures {}
         foreach part $parts {

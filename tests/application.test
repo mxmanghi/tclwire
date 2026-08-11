@@ -1,5 +1,6 @@
 package require tcltest
 namespace import ::tcltest::*
+package require fileutil
 
 set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
@@ -18,6 +19,7 @@ package require tclwire::application_dispatcher 0.1
 package require tclwire::content_generator_agent 0.1
 package require tclwire::connection_agent 0.1
 package require tclwire::http::errors 0.1
+package require tclwire::logger 0.1
 
 namespace eval ::tclwire::application_test {
     variable events {}
@@ -595,6 +597,28 @@ test application-configuration-1.1f {
     1000 \
     {}]
 
+test application-configuration-1.1fa {
+    application configuration exposes property existence checks
+} -body {
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            package example::application \
+            hosts example.test \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths [list /tmp]]]
+    try {
+        list \
+            [$configuration exists docroot] \
+            [$configuration exists missing] \
+            [catch {$configuration get missing} message] \
+            $message
+    } finally {
+        $configuration destroy
+    }
+} -result {1 0 1 {unknown application configuration property: missing}}
+
 test application-configuration-1.1g {
     construction rejects empty environment configuration names
 } -body {
@@ -871,6 +895,77 @@ test application-configuration-1.4aa {
     [dict create capture_stderr 1] \
     1]
 
+test application-configuration-1.4ab {
+    CGA passes application-scoped configuration to environment install
+} -body {
+    namespace eval ::tclwire::envs::configuredtest {
+        variable installed_config {}
+        variable installed_application_id {}
+        variable installed_docroot {}
+        variable environment_object {}
+    }
+    oo::class create ::tclwire::envs::ConfiguredTestEnvironment {
+        superclass ::tclwire::ApplicationEnvironment
+
+        method name {} {
+            return configuredtest
+        }
+
+        method do_install {} {
+            set ::tclwire::envs::configuredtest::installed_config \
+                [my configuration]
+            set application_configuration [my application_configuration]
+            set ::tclwire::envs::configuredtest::installed_application_id \
+                [$application_configuration id]
+            set ::tclwire::envs::configuredtest::installed_docroot \
+                [$application_configuration docroot]
+            return
+        }
+    }
+    set ::tclwire::envs::configuredtest::environment_object \
+        [::tclwire::envs::ConfiguredTestEnvironment new]
+    proc ::tclwire::envs::configuredtest::object {} {
+        variable environment_object
+        return $environment_object
+    }
+
+    set configuration [::tclwire::ApplicationConfiguration new env-config-install \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {::tclwire::envs::configuredtest} \
+            environment_config [dict create \
+                configuredtest [dict create option value]]]]
+    try {
+        ::tclwire::cga::initialize app:env-config-install \
+            [$configuration serialize]
+        set object [::tclwire::envs::configuredtest::object]
+        list \
+            $::tclwire::envs::configuredtest::installed_application_id \
+            $::tclwire::envs::configuredtest::installed_docroot \
+            $::tclwire::envs::configuredtest::installed_config \
+            [$object configuration] \
+            [[$object application_configuration] id] \
+            [$object configuration option]
+    } finally {
+        catch {::tclwire::cga::shutdown}
+        catch {$configuration destroy}
+        catch {$::tclwire::envs::configuredtest::environment_object destroy}
+        catch {::tclwire::envs::ConfiguredTestEnvironment destroy}
+        catch {namespace delete ::tclwire::envs::configuredtest}
+    }
+} -result [list \
+    env-config-install \
+    [temporaryDirectory] \
+    [dict create option value] \
+    [dict create option value] \
+    env-config-install \
+    value]
+
 test application-configuration-1.4b {
     CGA applies environment namespace path to request-time application objects
 } -setup {
@@ -995,6 +1090,70 @@ test application-configuration-1.4ba {
     1 1 \
     "1 1 1 1 /context context-test app:context-test 1\n" \
     1 0 1 {no TclWire request context is active} 1]
+
+test application-configuration-1.4baa {
+    CGA exposes one logger instance to application code
+} -setup {
+    oo::class create ::tclwire::application_test::LoggerApplication {
+        superclass ::tclwire::CApplication
+
+        method handle_request {request} {
+            set logger [::tclwire::logger::getlogger]
+            set app_logger [::tclwire::app::logger]
+            set snapshot_logger [dict get [::tclwire::app::application_snapshot] logger]
+            ::tclwire::logger::log_error application from-public-call warn
+            puts [list \
+                [expr {$logger eq $app_logger}] \
+                [expr {$logger eq $snapshot_logger}] \
+                [$logger id]]
+        }
+    }
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set logfile [file join [temporaryDirectory] tclwire-cga-logger-[pid].log]
+    set logerr [file join [temporaryDirectory] tclwire-cga-logger-[pid].err]
+    catch {file delete -force $logfile $logerr}
+    set configuration [::tclwire::ApplicationConfiguration new logger-test \
+        [dict create \
+            class ::tclwire::application_test::LoggerApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {stdchans}]]
+} -body {
+    ::tclwire::logger start [dict create logfile $logfile logerr $logerr]
+    ::tclwire::cga::initialize app:logger-test [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id logger-test \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 922 \
+            method GET \
+            path /logger]
+    update
+    ::tclwire::cga::shutdown
+    ::tclwire::logger stop
+    set output_event [lindex [lindex $::tclwire::application_test::events 0] 1]
+    list \
+        [dict get $output_event data] \
+        [string match {*application level=warn from-public-call*} \
+            [::fileutil::cat $logerr]]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {::tclwire::logger stop}
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::application_test::LoggerApplication destroy}
+    catch {::tclwire::io end}
+    catch {file delete -force $logfile $logerr}
+} -result [list "1 1 logger-test\n" 1]
 
 test application-configuration-1.4bab {
     CGA context construction rejects partial structural state

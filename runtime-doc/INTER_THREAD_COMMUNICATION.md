@@ -386,7 +386,7 @@ stale owned-thread entry.
 ```text
 producer thread
     |
-    | ::tclwire::logger log / log_error / log_connection_closed
+    | logger client method call
     v
 logger client
     |
@@ -394,6 +394,11 @@ logger client
     v
 Logging Agent thread
 ```
+
+Content Generator Agents create one `::tclwire::logger::Client` during worker
+initialization and expose it to application code through
+`::tclwire::logger::getlogger`. The compatibility application call
+`::tclwire::logger::log_error` delegates to that active CGA logger.
 
 Log writes are fire-and-forget. Log level configuration is read from shared
 state before the asynchronous write is enqueued.

@@ -171,7 +171,7 @@ test proxy-connection-1.1 {
         [string match "HTTP/1.1 200 OK*" $headers] \
         [expr {$body eq $expected}] \
         $proxy_pool \
-        [regexp {proxy method=GET target=/ status=200 bytes=[0-9]+ remote=127\.0\.0\.1} $log]
+        [regexp {proxy:8992 method=GET target=/ status=200 bytes=[0-9]+ remote=127\.0\.0\.1} $log]
 } -cleanup {
     ::tclwire::proxy_connection_test::cleanup
 } -result {1 1 connection:proxy:8992 1}

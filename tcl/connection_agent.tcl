@@ -16,11 +16,13 @@ oo::class create ::tclwire::ConnectionAgent {
     variable channel connection_id connection_key peer_host peer_port input_buffer timeout_id
     variable initial_read_id
     variable transaction_state closed
+    variable close_logger
 
     constructor {conn_channel id host port key} {
         if {![string length $key]} {
             error "connection agent requires connection key"
         }
+        set service_id [lindex [split $key #] 0]
         set channel         $conn_channel
         set connection_id   $id
         set connection_key  $key
@@ -31,6 +33,7 @@ oo::class create ::tclwire::ConnectionAgent {
         set initial_read_id {}
         set transaction_state {}
         set closed          0
+        set close_logger    [::tclwire::logger::Client new $service_id]
 
         chan configure $channel -blocking 0 -buffering none -translation binary
     }
@@ -38,6 +41,9 @@ oo::class create ::tclwire::ConnectionAgent {
     destructor {
         my clear_transaction
         my close
+        if {[info object isa object $close_logger]} {
+            catch {$close_logger destroy}
+        }
     }
 
     method start {} {
@@ -191,7 +197,7 @@ oo::class create ::tclwire::ConnectionAgent {
                 set close_record [::tclwire::accounting record_connection_closed $connection_key \
                     [dict create status failed close_reason write_failed \
                                   transport_error write_failed]]
-                ::tclwire::logger log_connection_closed $close_record
+                $close_logger log_connection_closed $close_record
             }
             my close
             return 0
@@ -226,7 +232,7 @@ oo::class create ::tclwire::ConnectionAgent {
         catch {
             set close_record [::tclwire::accounting record_connection_closed $connection_key \
                 [dict create close_reason closed]]
-            ::tclwire::logger log_connection_closed $close_record
+            $close_logger log_connection_closed $close_record
         }
         ::tclwire::connection_agent_closed [self]
         after 0 [list ::tclwire::destroy_connection_agent [self]]
@@ -417,7 +423,13 @@ namespace eval ::tclwire {
 
                 set close_rec [dict create status failed close_reason startup_failed transport_error $message]
                 set close_record [::tclwire::accounting record_connection_closed $connection_key $close_rec]
-                ::tclwire::logger log_connection_closed $close_record
+                set logger [::tclwire::logger::Client new \
+                    [dict get $close_record service_id]]
+                try {
+                    $logger log_connection_closed $close_record
+                } finally {
+                    $logger destroy
+                }
 
             }
             if {$finished_thread ne {} && [::thread::exists $finished_thread]} {

@@ -144,8 +144,9 @@ puts [::tclwire::configuration tree $configuration]
 ::tclwire::configuration tree $configuration \
     [list puts stderr]
 
+set logger [::tclwire::logger::Client new chore]
 ::tclwire::configuration tree $configuration \
-    [list ::tclwire::logger log_error chore %s info]
+    [list $logger log_error chore %s info]
 
 ::tclwire::configuration tree $configuration \
     [list ::tclwire::io out "%s\n"]
@@ -323,8 +324,10 @@ oo::class create FiveMinuteLogChore {
         set every_ms 300000
         set last_run_ms 0
         catch {
+            set logger [::tclwire::logger::Client new chore]
             ::tclwire::configuration tree [my server_config] \
-                [list ::tclwire::logger log_error chore %s info]
+                [list $logger log_error chore %s info]
+            $logger destroy
         }
     }
 
@@ -335,9 +338,14 @@ oo::class create FiveMinuteLogChore {
 
     method run {wakeup} {
         set last_run_ms [dict get $wakeup now_ms]
-        ::tclwire::logger log_error chore \
-            "five_minute_chore name=[my name] sequence=[dict get $wakeup sequence]" \
-            info
+        set logger [::tclwire::logger::Client new chore]
+        try {
+            $logger log_error chore \
+                "five_minute_chore name=[my name] sequence=[dict get $wakeup sequence]" \
+                info
+        } finally {
+            $logger destroy
+        }
         return [dict create logged 1 at_ms $last_run_ms]
     }
 }

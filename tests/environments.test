@@ -40,6 +40,12 @@ test stdchans-1.1 {stdchans environment exposes lifecycle metadata} -body {
             [info class superclasses [info object class $object]]}]
 } -result [list stdchans {} ::tclwire::envs::stdchans 0 1 1]
 
+test environment-1.1a {environment configuration requires CGA application configuration} -body {
+    set object [::tclwire::envs::stdchans object]
+    catch {$object configuration capture_stderr} message
+    set message
+} -result {no CGA environment application configuration is active}
+
 test stdchans-1.2 {stdchans captures app-namespace stdout during active output transaction} -body {
     set ::tclwire::environment_test::events {}
     set receiver [::tclwire::environment_test::OutputReceiver new]
@@ -202,6 +208,8 @@ test stdchans-1.3a {stdchans delegates malformed puts calls to native command} -
 test stdchans-1.4 {stdchans install is idempotent and uninstall restores commands} -body {
     set original_puts [info command ::puts]
     set original_flush [info command ::flush]
+    set original_fconfigure [info command ::fconfigure]
+    set original_chan [info command ::chan]
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::envs::stdchans install
@@ -211,11 +219,13 @@ test stdchans-1.4 {stdchans install is idempotent and uninstall restores command
             $installed \
             [::tclwire::envs::stdchans enabled] \
             [expr {[info command ::puts] eq $original_puts}] \
-            [expr {[info command ::flush] eq $original_flush}]
+            [expr {[info command ::flush] eq $original_flush}] \
+            [expr {[info command ::fconfigure] eq $original_fconfigure}] \
+            [expr {[info command ::chan] eq $original_chan}]
     } finally {
         catch {::tclwire::envs::stdchans uninstall}
     }
-} -result {1 0 1 1}
+} -result {1 0 1 1 1 1}
 
 test stdchans-1.5 {stdchans keeps app stdout virtualized after response completion} -body {
     set ::tclwire::environment_test::events {}
@@ -258,6 +268,92 @@ test stdchans-1.5 {stdchans keeps app stdout virtualized after response completi
         $receiver destroy
     }
 } -result [list {} {output complete} "alpha\n"]
+
+test stdchans-1.6 {stdchans preserves virtual stdout channel configuration} -body {
+    try {
+        ::tclwire::envs::stdchans install
+        fconfigure stdout -encoding iso8859-1 -buffering none -buffersize 8192
+        set first [list \
+            [fconfigure stdout -encoding] \
+            [chan configure stdout -buffering] \
+            [fconfigure stdout -buffersize] \
+            [::tclwire::envs::stdchans::stdout_body_mode]]
+        chan configure stdout -translation binary
+        set binary [list \
+            [fconfigure stdout -translation] \
+            [::tclwire::envs::stdchans::stdout_body_mode]]
+        fconfigure stdout -translation lf -encoding utf-8
+        set text [list \
+            [chan configure stdout -translation] \
+            [fconfigure stdout -encoding] \
+            [::tclwire::envs::stdchans::stdout_body_mode]]
+        list $first $binary $text
+    } finally {
+        catch {fconfigure stdout -translation lf -encoding utf-8 \
+            -buffering line -buffersize 4096}
+        catch {::tclwire::envs::stdchans uninstall}
+    }
+} -result [list \
+    [list iso8859-1 none 8192 text] \
+    [list binary binary] \
+    [list lf utf-8 text]]
+
+test stdchans-1.7 {stdchans chan puts and flush stdout use TclWire I/O} -body {
+    set ::tclwire::environment_test::events {}
+    set receiver [::tclwire::environment_test::OutputReceiver new]
+    try {
+        ::tclwire::envs::stdchans install
+        ::tclwire::io begin [::thread::id] $receiver 26
+        chan puts stdout alpha
+        chan puts -nonewline stdout beta
+        chan flush stdout
+        chan puts gamma
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set output_events [lmap item $::tclwire::environment_test::events {
+            set event [lindex $item 1]
+            if {[dict get $event type] eq "output"} {
+                dict get $event data
+            } else {
+                continue
+            }
+        }]
+        list \
+            $output_events \
+            [lmap item $::tclwire::environment_test::events {
+                dict get [lindex $item 1] type
+            }]
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::envs::stdchans uninstall}
+        $receiver destroy
+    }
+} -result [list [list "alpha\nbeta" "gamma\n"] {output flush output complete}]
+
+test stdchans-1.8 {stdchans delegates fconfigure and chan for non-stdout channels} -body {
+    set path [file join [temporaryDirectory] tclwire-stdchans-channel-[pid].txt]
+    set channel {}
+    try {
+        ::tclwire::envs::stdchans install
+        set channel [open $path w]
+        fconfigure $channel -encoding utf-8 -buffering none
+        chan puts $channel "caf\u00e8"
+        chan flush $channel
+        close $channel
+        set channel {}
+        list \
+            [file size $path] \
+            [::fileutil::cat -encoding utf-8 $path]
+    } finally {
+        if {$channel ne {}} {
+            catch {close $channel}
+        }
+        catch {::tclwire::envs::stdchans uninstall}
+        file delete -force $path
+    }
+} -result [list 6 "caf\u00e8\n"]
 
 test rivet-1.1 {rivet environment exposes lifecycle metadata} -body {
     set object [::tclwire::envs::rivet object]
@@ -404,6 +500,24 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
         catch {namespace delete ::rivet}
     }
 } -result {1 {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1} 1 1 1 1 1 1 1 1 1 1 0 0 0}
+
+test rivet-1.2a0 {rivet apache_log_error maps Apache levels and preserves error context} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        set ::errorInfo preserved-error-info
+        set ::errorCode {PRESERVED CODE}
+        set result [catch {::rivet::apache_log_error err "mapped error"} message]
+        list $result $message $::errorInfo $::errorCode
+    } finally {
+        unset -nocomplain ::errorInfo ::errorCode
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list 0 {} preserved-error-info {PRESERVED CODE}]
 
 test rivet-1.2a {rivet abort_page records abort state and raises abort errorcode} -body {
     catch {::tclwire::envs::rivet uninstall}

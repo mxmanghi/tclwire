@@ -16,19 +16,21 @@ oo::class create ::tclwire::HttpConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
     variable protocol_session application_dispatcher closed channel connection_key
-    variable next_transaction_id default_encoding log_protocol
+    variable next_transaction_id default_encoding log_protocol log_service_id
     variable upload_area max_request_bytes max_header_bytes
     variable dump_multipart_requests
     variable request_memory_threshold request_bytes
     variable request_head
     variable request_prefix
     variable continue_response_sent
+    variable loggers
 
     constructor {conn_channel id host port args} {
         array set options {
             -applicationconfig          {}
             -connectionkey              {}
             -protocol                   http
+            -serviceid                  {}
             -uploadarea                 /tmp
             -maxrequestbytes            16777216
             -maxheaderbytes             65536
@@ -64,6 +66,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
         set log_protocol $options(-protocol)
+        set log_service_id [expr {
+            $options(-serviceid) eq {} ? $options(-protocol) : $options(-serviceid)
+        }]
+        set loggers [dict create \
+            $log_service_id [::tclwire::logger::Client new $log_service_id]]
         set upload_area $options(-uploadarea)
         if {![string is boolean -strict $options(-dumpmultipartrequests)]} {
             error "-dumpmultipartrequests must be a boolean"
@@ -95,7 +102,17 @@ oo::class create ::tclwire::HttpConnectionAgent {
     destructor {
         catch {$application_dispatcher destroy}
         catch {$protocol_session destroy}
+        dict for {client logger} $loggers {
+            catch {$logger destroy}
+        }
         next
+    }
+
+    method logger_for_client {client} {
+        if {![dict exists $loggers $client]} {
+            dict set loggers $client [::tclwire::logger::Client new $client]
+        }
+        return [dict get $loggers $client]
     }
 
     method readable {} {
@@ -708,13 +725,24 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
             }
         }
+        set client $log_service_id
+        set context [dict create service_id $log_service_id]
+        if {$descriptor ne {} && [dict exists $descriptor application_id]} {
+            set client [dict get $descriptor application_id]
+            dict set context application_id $client
+        }
+        if {$descriptor ne {} && [dict exists $descriptor headers host]} {
+            dict set context host [dict get $descriptor headers host]
+        }
         catch {
-            ::tclwire::logger log $log_protocol [join \
-                [list "method=[::tclwire::logger log_value $method]"  \
-                      "path=[::tclwire::logger log_value $path]"      \
+            set logger [my logger_for_client $client]
+            $logger log [join \
+                [list "method=[::tclwire::logger::log_value $method]"  \
+                      "path=[::tclwire::logger::log_value $path]"      \
                       "status=$status" \
                       "bytes=$bytes"   \
-                      "remote=[::tclwire::logger log_value $remote_host]"] " "]
+                      "remote=[::tclwire::logger::log_value $remote_host]"] " "] \
+                info $context
         }
         return
     }

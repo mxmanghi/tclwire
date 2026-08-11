@@ -32,7 +32,11 @@ namespace eval ::tclwire::configuration {
         application_configs applications configure pool_policy values
     }
     variable list_fields {
-        aliases application_paths args environment hosts paths server_chores services startservers
+        aliases application_paths args directory_index environment hosts paths
+        server_chores services startservers
+    }
+    variable structured_configure_fields {
+        directory_index
     }
 
     proc tree {configuration {sink {}}} {
@@ -78,7 +82,7 @@ namespace eval ::tclwire::configuration {
             set child_prefix {}
         }
 
-        if {[should_render_dict $field $value]} {
+        if {[should_render_dict $field $value $path]} {
             set lines [list "${line_prefix}${label}"]
             set keys [dict keys $value]
             set count [llength $keys]
@@ -92,7 +96,7 @@ namespace eval ::tclwire::configuration {
             return $lines
         }
 
-        if {[should_render_list $field $value]} {
+        if {[should_render_list $field $value $path]} {
             set lines [list "${line_prefix}${label}"]
             set count [llength $value]
             for {set index 0} {$index < $count} {incr index} {
@@ -120,19 +124,25 @@ namespace eval ::tclwire::configuration {
         return "${prefix}|   "
     }
 
-    proc should_render_dict {field value} {
+    proc should_render_dict {field value path} {
         variable dict_fields
+        if {[is_configure_parameter $path] && ![is_structured_configure_field $field]} {
+            return 0
+        }
         if {$field in $dict_fields} {
             return [is_dict $value]
         }
-        if {[is_dict $value] && ![should_render_list $field $value]} {
+        if {[is_dict $value] && ![should_render_list $field $value $path]} {
             return 1
         }
         return 0
     }
 
-    proc should_render_list {field value} {
+    proc should_render_list {field value path} {
         variable list_fields
+        if {[is_configure_parameter $path] && ![is_structured_configure_field $field]} {
+            return 0
+        }
         if {[catch {llength $value}]} {
             return 0
         }
@@ -143,6 +153,18 @@ namespace eval ::tclwire::configuration {
             return 1
         }
         return 0
+    }
+
+    proc is_configure_parameter {path} {
+        if {[llength $path] < 3} {
+            return 0
+        }
+        return [expr {[lindex $path end-2] eq "configure"}]
+    }
+
+    proc is_structured_configure_field {field} {
+        variable structured_configure_fields
+        return [expr {$field in $structured_configure_fields}]
     }
 
     proc is_dict {value} {

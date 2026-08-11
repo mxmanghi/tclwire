@@ -13,6 +13,50 @@ namespace eval ::tclwire::logger {
     ::tclwire::define_constant agent_script_path \
         [file normalize [file join [file dirname [info script]] logger_agent.tcl]]
 
+    proc service_logfile_map {config} {
+        set access_log [dict get $config logfile]
+        set error_log [dict get $config logerr]
+        set logfiles [dict create default [list $access_log $error_log]]
+
+        if {[dict exists $config services]} {
+            foreach service [dict get $config services] {
+                if {![dict exists $service id]} {
+                    continue
+                }
+                set service_access $access_log
+                set service_error $error_log
+                if {[dict exists $service logfile]} {
+                    set service_access [dict get $service logfile]
+                }
+                if {[dict exists $service logerr]} {
+                    set service_error [dict get $service logerr]
+                }
+                dict set logfiles [dict get $service id] \
+                    [list $service_access $service_error]
+                if {[dict exists $service protocol]} {
+                    dict set logfiles [dict get $service protocol] \
+                        [list $service_access $service_error]
+                }
+            }
+        }
+
+        if {[dict exists $config applications]} {
+            dict for {application_id descriptor} [dict get $config applications] {
+                set application_access $access_log
+                set application_error $error_log
+                if {[dict exists $descriptor logfile]} {
+                    set application_access [dict get $descriptor logfile]
+                }
+                if {[dict exists $descriptor logerr]} {
+                    set application_error [dict get $descriptor logerr]
+                }
+                dict set logfiles $application_id \
+                    [list $application_access $application_error]
+            }
+        }
+        return $logfiles
+    }
+
     proc normalize_config {config} {
         if {[catch {dict size $config}]} {
             error "logger configuration must be a dictionary"
@@ -35,6 +79,32 @@ namespace eval ::tclwire::logger {
 
         dict set config logfile [file normalize $path]
         dict set config logerr [file normalize $error_path]
+        set logfiles [dict create]
+        if {[dict exists $config logfiles]} {
+            set logfiles [dict get $config logfiles]
+        } else {
+            set logfiles [service_logfile_map $config]
+        }
+        set normalized_logfiles [dict create]
+        dict for {client paths} $logfiles {
+            if {[llength $paths] != 2} {
+                error "logger paths for '$client' must be a two-element list"
+            }
+            lassign $paths access_log error_log
+            if {[string trim $access_log] eq {}} {
+                set access_log [dict get $config logfile]
+            }
+            if {[string trim $error_log] eq {}} {
+                set error_log [dict get $config logerr]
+            }
+            dict set normalized_logfiles $client \
+                [list [file normalize $access_log] [file normalize $error_log]]
+        }
+        if {![dict exists $normalized_logfiles default]} {
+            dict set normalized_logfiles default \
+                [list [dict get $config logfile] [dict get $config logerr]]
+        }
+        dict set config logfiles $normalized_logfiles
         return $config
     }
 
@@ -57,7 +127,8 @@ namespace eval ::tclwire::logger {
         try {
             ::thread::send $tid [list source $agent_script_path]
             ::thread::send $tid [list ::tclwire::logger::agent_initialize \
-                [dict get $config logfile] [dict get $config logerr]]
+                [dict get $config logfile] [dict get $config logerr] \
+                [dict get $config logfiles]]
         } on error {message options} {
             catch {
                 ::thread::send -async $tid [list ::thread::release $tid]

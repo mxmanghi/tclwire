@@ -14,7 +14,7 @@ oo::class create ::tclwire::ProxyConnectionAgent {
     superclass ::tclwire::ConnectionAgent
 
     variable channel closed protocol_session upstream_channel connection_key
-    variable tunnel_active tunnel_pending
+    variable tunnel_active tunnel_pending log_client logger
 
     constructor {conn_channel id host port args} {
         array set options {
@@ -36,12 +36,24 @@ oo::class create ::tclwire::ProxyConnectionAgent {
         set upstream_channel {}
         set tunnel_active 0
         set tunnel_pending 0
+        set log_client proxy
+        if {$options(-config) ne {}} {
+            if {[dict exists $options(-config) id]} {
+                set log_client [dict get $options(-config) id]
+            } elseif {[dict exists $options(-config) protocol]} {
+                set log_client [dict get $options(-config) protocol]
+            }
+        }
+        set logger [::tclwire::logger::Client new $log_client]
         my start
     }
 
     destructor {
         my close_upstream
         catch {$protocol_session destroy}
+        if {[info object isa object $logger]} {
+            catch {$logger destroy}
+        }
         next
     }
 
@@ -261,8 +273,9 @@ oo::class create ::tclwire::ProxyConnectionAgent {
     method log_request {method target status bytes} {
         set remote_host [dict get [my peer] host]
         catch {
-            ::tclwire::logger log proxy \
-                "method=[::tclwire::logger log_value $method] target=[::tclwire::logger log_value $target] status=$status bytes=$bytes remote=[::tclwire::logger log_value $remote_host]"
+            $logger log \
+                "method=[::tclwire::logger::log_value $method] target=[::tclwire::logger::log_value $target] status=$status bytes=$bytes remote=[::tclwire::logger::log_value $remote_host]" \
+                info [dict create service_id $log_client]
         }
         return
     }

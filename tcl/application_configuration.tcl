@@ -146,7 +146,8 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   log_level   {} \
                                   hostname    {} \
                                   admin       {} \
-                                  errorlog    {} \
+                                  logfile     {} \
+                                  logerr      {} \
                                   server_path {} \
                                   aliases     {} \
                                   reload_on_request 0 \
@@ -256,6 +257,10 @@ oo::class create ::tclwire::ApplicationConfiguration {
         return [dict get $values $property]
     }
 
+    method exists {property} {
+        return [dict exists $values $property]
+    }
+
     method snapshot {} {
         return $values
     }
@@ -321,7 +326,8 @@ oo::class create ::tclwire::ApplicationConfiguration {
 
     foreach property {
         class hosts docroot encoding application_paths aliases package file chore chore_class libdir
-        environment environment_config log_level reload_on_request retain_uploaded_files pool_policy
+        environment environment_config log_level logfile logerr reload_on_request
+        retain_uploaded_files pool_policy
     } {
         method $property {} [format {my get %s} [list $property]]
     }

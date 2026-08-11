@@ -279,18 +279,18 @@ oo::class create ::tclwire::CApplication {
             dict set context host [$request header host]
         }
 
-        set fields [list "method=[::tclwire::logger log_value [$request method]]" \
-                         "path=[::tclwire::logger log_value [$request path]]" \
+        set fields [list "method=[::tclwire::logger::log_value [$request method]]" \
+                         "path=[::tclwire::logger::log_value [$request path]]" \
                          "status=$status"]
 
         if {$resolved_path ne {}} {
             lappend fields \
-                "resolved_path=[::tclwire::logger log_value $resolved_path]"
+                "resolved_path=[::tclwire::logger::log_value $resolved_path]"
         }
 
         catch {
-            ::tclwire::logger log_error static_file \
-                [join $fields " "] $level $context
+            set logger [::tclwire::logger::getlogger]
+            $logger log_error static_file [join $fields " "] $level $context
         }
         return
     }

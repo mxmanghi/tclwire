@@ -99,7 +99,7 @@ namespace eval ::tclwire::cli {
                                                --service $port]]
 
         foreach field [lrange $fields 1 end] {
-            if {![regexp {^(certfile|keyfile)=(.+)$|^(upload_area)=(.*)$} \
+            if {![regexp {^(certfile|keyfile|logfile|logerr)=(.+)$|^(upload_area)=(.*)$} \
                     $field -> tls_name tls_value upload_name upload_value]} {
                 ::tclwire::config::usage_error "invalid service option: $field"
             }
@@ -252,7 +252,6 @@ namespace eval ::tclwire::cli {
                     set logerr [file normalize \
                         [value $argv [incr i] $option]]
                     dict set cli overrides logerr $logerr
-                    dict set cli overrides errorlog $logerr
                 }
                 --log-level {
                     dict set cli overrides log_level \

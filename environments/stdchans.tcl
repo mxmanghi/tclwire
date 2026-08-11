@@ -34,7 +34,10 @@ namespace eval ::tclwire::envs::stdchans {
     variable environment_object [::tclwire::envs::StdchansEnvironment new]
     variable native_puts_command ::tclwire::envs::stdchans::__native_puts
     variable native_flush_command ::tclwire::envs::stdchans::__native_flush
+    variable native_fconfigure_command ::tclwire::envs::stdchans::__native_fconfigure
+    variable native_chan_command ::tclwire::envs::stdchans::__native_chan
     variable stdout_body_mode text
+    variable stdout_configuration [::fconfigure stdout]
 
     proc object {} {
         variable environment_object
@@ -57,6 +60,14 @@ namespace eval ::tclwire::envs::stdchans {
         tailcall [object] enabled
     }
 
+    proc configuration {args} {
+        tailcall [object] configuration {*}$args
+    }
+
+    proc application_configuration {} {
+        tailcall [object] application_configuration
+    }
+
     proc install {} {
         tailcall [object] install
     }
@@ -73,6 +84,8 @@ namespace eval ::tclwire::envs::stdchans {
     proc install_channel_wrappers {} {
         variable native_puts_command
         variable native_flush_command
+        variable native_fconfigure_command
+        variable native_chan_command
 
         if {[info commands $native_puts_command] eq {}} {
             rename ::puts $native_puts_command
@@ -86,12 +99,26 @@ namespace eval ::tclwire::envs::stdchans {
                 tailcall ::tclwire::envs::stdchans::flush {*}$args
             }
         }
+        if {[info commands $native_fconfigure_command] eq {}} {
+            rename ::fconfigure $native_fconfigure_command
+            proc ::fconfigure {args} {
+                tailcall ::tclwire::envs::stdchans::fconfigure {*}$args
+            }
+        }
+        if {[info commands $native_chan_command] eq {}} {
+            rename ::chan $native_chan_command
+            proc ::chan {args} {
+                tailcall ::tclwire::envs::stdchans::chan {*}$args
+            }
+        }
         return
     }
 
     proc uninstall_channel_wrappers {} {
         variable native_puts_command
         variable native_flush_command
+        variable native_fconfigure_command
+        variable native_chan_command
 
         if {[info commands $native_puts_command] ne {}} {
             rename ::puts {}
@@ -100,6 +127,14 @@ namespace eval ::tclwire::envs::stdchans {
         if {[info commands $native_flush_command] ne {}} {
             rename ::flush {}
             rename $native_flush_command ::flush
+        }
+        if {[info commands $native_fconfigure_command] ne {}} {
+            rename ::fconfigure {}
+            rename $native_fconfigure_command ::fconfigure
+        }
+        if {[info commands $native_chan_command] ne {}} {
+            rename ::chan {}
+            rename $native_chan_command ::chan
         }
         return
     }
@@ -130,6 +165,32 @@ namespace eval ::tclwire::envs::stdchans {
         tailcall ::flush {*}$args
     }
 
+    proc native_fconfigure {args} {
+        variable native_fconfigure_command
+        if {[info commands $native_fconfigure_command] ne {}} {
+            if {[catch {uplevel 1 [list $native_fconfigure_command {*}$args]} \
+                    message options]} {
+                return -options $options \
+                    [string map [list $native_fconfigure_command ::fconfigure] $message]
+            }
+            return $message
+        }
+        tailcall ::fconfigure {*}$args
+    }
+
+    proc native_chan {args} {
+        variable native_chan_command
+        if {[info commands $native_chan_command] ne {}} {
+            if {[catch {uplevel 1 [list $native_chan_command {*}$args]} \
+                    message options]} {
+                return -options $options \
+                    [string map [list $native_chan_command ::chan] $message]
+            }
+            return $message
+        }
+        tailcall ::chan {*}$args
+    }
+
     proc stdout_body_mode {} {
         variable stdout_body_mode
         return $stdout_body_mode
@@ -156,6 +217,115 @@ namespace eval ::tclwire::envs::stdchans {
             return 0
         }
         return [expr {[dict get $options auto_chunked_on_flush] ? 1 : 0}]
+    }
+
+    proc stdout_option_names {} {
+        variable stdout_configuration
+        return [dict keys $stdout_configuration]
+    }
+
+    proc stdout_configure_error_message {option} {
+        return "bad option \"$option\": should be one of [join [stdout_option_names] {, }]"
+    }
+
+    proc validate_stdout_configuration {option value} {
+        switch -exact -- $option {
+            -blocking {
+                if {![string is boolean -strict $value]} {
+                    return -code error -errorcode {TCL VALUE BOOLEAN} \
+                        "expected boolean value but got \"$value\""
+                }
+                return [expr {!!$value}]
+            }
+            -buffering {
+                if {$value ni {full line none}} {
+                    error "bad value for -buffering: must be one of full, line, or none"
+                }
+                return $value
+            }
+            -buffersize {
+                if {![string is integer -strict $value]} {
+                    return -code error -errorcode {TCL VALUE INTEGER} \
+                        "expected integer but got \"$value\""
+                }
+                return $value
+            }
+            -encoding {
+                if {$value ne "binary" && $value ni [encoding names]} {
+                    return -code error -errorcode [list TCL LOOKUP ENCODING $value] \
+                        "unknown encoding \"$value\""
+                }
+                return $value
+            }
+            -eofchar {
+                if {[llength $value] > 2} {
+                    error "bad value for -eofchar: should be a list of zero, one, or two elements"
+                }
+                return $value
+            }
+            -translation {
+                set translations {auto binary cr lf crlf platform}
+                if {[llength $value] < 1 || [llength $value] > 2} {
+                    error "bad value for -translation: must be a one or two element list"
+                }
+                foreach item $value {
+                    if {$item ni $translations} {
+                        error "bad value for -translation: must be one of auto, binary, cr, lf, crlf, or platform"
+                    }
+                }
+                return $value
+            }
+            default {
+                error [stdout_configure_error_message $option]
+            }
+        }
+    }
+
+    proc update_stdout_body_mode_from_configuration {} {
+        variable stdout_configuration
+
+        if {[dict get $stdout_configuration -encoding] eq "binary"} {
+            set_stdout_body_mode binary
+            return
+        }
+        set translation [dict get $stdout_configuration -translation]
+        if {[lindex $translation end] eq "binary"} {
+            set_stdout_body_mode binary
+            return
+        }
+        set_stdout_body_mode text
+        return
+    }
+
+    proc stdout_fconfigure {args} {
+        variable stdout_configuration
+
+        switch -exact -- [llength $args] {
+            0 {
+                return $stdout_configuration
+            }
+            1 {
+                set option [lindex $args 0]
+                if {![dict exists $stdout_configuration $option]} {
+                    error [stdout_configure_error_message $option]
+                }
+                return [dict get $stdout_configuration $option]
+            }
+            default {
+                if {[llength $args] % 2 != 0} {
+                    return -code error -errorcode {TCL WRONGARGS} \
+                        {wrong # args: should be "fconfigure channelId ?-option value ...?"}
+                }
+                set updated $stdout_configuration
+                foreach {option value} $args {
+                    dict set updated $option \
+                        [validate_stdout_configuration $option $value]
+                }
+                set stdout_configuration $updated
+                update_stdout_body_mode_from_configuration
+                return
+            }
+        }
     }
 
     proc puts {args} {
@@ -210,8 +380,84 @@ namespace eval ::tclwire::envs::stdchans {
         tailcall native_flush {*}$args
     }
 
+    proc fconfigure {args} {
+        if {[llength $args] == 0} {
+            tailcall native_fconfigure {*}$args
+        }
+        set channel [lindex $args 0]
+        if {$channel eq "stdout"} {
+            tailcall stdout_fconfigure {*}[lrange $args 1 end]
+        }
+        tailcall native_fconfigure {*}$args
+    }
+
+    proc chan_puts_channel {args} {
+        if {[llength $args] > 0 && [lindex $args 0] eq "-nonewline"} {
+            set args [lrange $args 1 end]
+        }
+
+        switch -exact -- [llength $args] {
+            1 {
+                return stdout
+            }
+            2 {
+                return [lindex $args 0]
+            }
+            default {
+                return {}
+            }
+        }
+    }
+
+    proc chan {args} {
+        if {[llength $args] == 0} {
+            tailcall native_chan {*}$args
+        }
+
+        set subcommand [lindex $args 0]
+        set subargs [lrange $args 1 end]
+        switch -exact -- $subcommand {
+            configure {
+                if {[llength $subargs] == 0} {
+                    tailcall native_chan {*}$args
+                }
+                set channel [lindex $subargs 0]
+                if {$channel ne "stdout"} {
+                    tailcall native_chan {*}$args
+                }
+                tailcall stdout_fconfigure {*}[lrange $subargs 1 end]
+            }
+            flush {
+                if {[llength $subargs] != 1} {
+                    tailcall native_chan {*}$args
+                }
+                set channel [lindex $subargs 0]
+                if {$channel ne "stdout"} {
+                    tailcall native_chan {*}$args
+                }
+                if {[transaction_active]} {
+                    tailcall flush stdout
+                }
+                tailcall native_chan {*}$args
+            }
+            puts {
+                set puts_args $subargs
+                set channel [chan_puts_channel {*}$puts_args]
+                if {$channel eq {}} {
+                    tailcall native_chan {*}$args
+                }
+                if {$channel ne "stdout"} {
+                    tailcall native_chan {*}$args
+                }
+                tailcall puts {*}$puts_args
+            }
+        }
+        tailcall native_chan {*}$args
+    }
+
     namespace export object name requires path_namespaces \
-                     enabled install uninstall puts flush \
+                     application_configuration configuration \
+                     enabled install uninstall puts flush fconfigure chan \
                      stdout_body_mode set_stdout_body_mode \
                      auto_chunked_on_flush
     namespace ensemble create

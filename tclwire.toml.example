@@ -93,6 +93,8 @@ default_application = "default"
 enabled = true
 port = 8990
 log_level = "info"
+# logfile = "/var/log/tclwire/http-access.log"
+# logerr = "/var/log/tclwire/http-error.log"
 
 # Optional default for applications configured under this service. This
 # overrides [tclwire].libdir and is overridden by an application's libdir.
@@ -114,6 +116,8 @@ class = "::tclwire::CApplication"
 # run directory, application docroot, effective libdir, TclWire installation
 # directory.
 file = "tcl/application.tcl"
+# logfile = "/var/log/tclwire/default-access.log"
+# logerr = "/var/log/tclwire/default-error.log"
 
 # Optional scheduler chore for this application. Loading it must define a
 # concrete TclOO class inheriting from ::tclwire::ApplicationChore when it
@@ -218,6 +222,8 @@ enabled = false
 port = 8991
 root = "/tmp/tclwire"
 user_check = true
+# logfile = "/var/log/tclwire/ftp-access.log"
+# logerr = "/var/log/tclwire/ftp-error.log"
 
 [ftps]
 enabled = false
@@ -230,3 +236,5 @@ keyfile = ""
 [proxy]
 enabled = false
 port = 8993
+# logfile = "/var/log/tclwire/proxy-access.log"
+# logerr = "/var/log/tclwire/proxy-error.log"

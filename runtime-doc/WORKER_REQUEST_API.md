@@ -104,6 +104,94 @@ application state through caller frames. `::tclwire::cga::context` remains as a
 compatibility wrapper for request-time callers, but new code should not depend
 on it.
 
+### Application Configuration Object
+
+`::tclwire::ApplicationConfiguration` is the immutable, validated
+representation of the effective descriptor for one configured application.
+Inside a worker, the current application configuration is available as a
+worker-local object:
+
+```tcl
+set configuration [::tclwire::app::configuration]
+```
+
+Application methods can also get the same object from the current application
+instance:
+
+```tcl
+set configuration [my configuration_object]
+```
+
+The object is stable for the worker. It is not rebuilt for each request, and
+applications should treat every value returned from it as read-only runtime
+configuration.
+
+The public object methods are:
+
+| Method | Result |
+| --- | --- |
+| `id` | Application identifier from the runtime configuration, such as `default` or `hello`. |
+| `get property` | One validated property value. Raises an error for an unknown property. |
+| `snapshot` | Dictionary containing all validated effective descriptor values. Mutating the returned dictionary does not mutate the object. |
+| `configure ?class_name?` | The complete class-keyed `configure` dictionary, or the block for one TclOO class. Missing class blocks return an empty dictionary. |
+| `class_configuration class_name` | Alias-style semantic wrapper for `configure class_name`. |
+| `environment_configuration ?environment_name? ?key?` | The complete environment configuration dictionary, one environment block, or one key from that environment block. Missing environments return an empty dictionary; missing keys raise an error. |
+| `serialize` | Versioned dictionary envelope used internally when configuration crosses Tcl thread boundaries. |
+| `class` | Resolved TclOO application class. Bare configured names are qualified under `::tclwire::app`. |
+| `hosts` | List of host names that select the application. |
+| `docroot` | Normalized application document root. |
+| `encoding` | Application text encoding. |
+| `application_paths` | Normalized path list used for application lookup and host/path selection. |
+| `aliases` | List of static-resource alias dictionaries. |
+| `package` | Package name required by package-backed applications, or empty. |
+| `file` | Application source file for file-backed applications, or empty. |
+| `chore` | Application chore source file, or empty. |
+| `chore_class` | Application chore class name, or empty. |
+| `libdir` | Application library directory added to worker `auto_path`, or empty. |
+| `environment` | List of enabled application environment adapters. |
+| `environment_config` | Dictionary of environment-specific option dictionaries. |
+| `log_level` | Application log-level override, or empty. |
+| `reload_on_request` | Boolean flag that retires a file-backed worker after each request. |
+| `retain_uploaded_files` | Boolean flag controlling whether uploaded-file spool paths are retained after request cleanup. |
+| `pool_policy` | Dictionary containing worker-pool limits, including `minimum_workers` and `maximum_workers`. |
+
+`::tclwire::ApplicationConfiguration` also has the class method:
+
+```tcl
+set configuration [::tclwire::ApplicationConfiguration deserialize $envelope]
+```
+
+`deserialize` reconstructs a new object from the versioned dictionary returned
+by `serialize`. This is primarily for runtime internals, chores, and thread
+boundaries. Request handlers normally use `::tclwire::app::configuration` or
+`my configuration_object` instead.
+
+A request handler can read basic information about the running configuration
+like this:
+
+```tcl
+method handle_request {request} {
+    set configuration [::tclwire::app::configuration]
+
+    set application_id      [$configuration id]
+    set application_class   [$configuration class]
+    set docroot             [$configuration docroot]
+    set hosts               [$configuration hosts]
+    set pool_policy         [$configuration pool_policy]
+
+    set options [$configuration class_configuration [info object class [self]]]
+
+    ::tclwire::io response 200 OK \
+        [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+    ::tclwire::io out [join [list   "application: $application_id" \
+                                    "class: $application_class" \
+                                    "docroot: $docroot" \
+                                    "hosts: [join $hosts {, }]" \
+                                    "maximum workers: [dict get $pool_policy maximum_workers]" \
+                                    "class options: $options"] \n]
+}
+```
+
 Application descriptors may include a `configure` dictionary. Direct values in
 the TOML `configure` table apply to the resolved application class. Child
 tables keyed by TclOO class name target that class explicitly. This is

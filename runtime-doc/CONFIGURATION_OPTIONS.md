@@ -86,6 +86,8 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
 
 `--logerr <path>` / `tclwire.logerr`
 : Error log path. Defaults to `/tmp/tclwire-err.log`.
+  Service and application `logfile`/`logerr` values default to these global
+  paths when they are not configured explicitly.
 
 `--log-level <level>` / `tclwire.log_level`
 : Global logging threshold. Defaults to `info`. Supported levels are
@@ -168,6 +170,14 @@ Service-specific TOML options live under protocol tables: `[http]`,
 : Service-level logging threshold for the protocol endpoint. Currently
   supported by `http` and `https` TOML tables.
 
+`logfile`
+: Service access log path. If omitted, the service uses `tclwire.logfile`.
+  This is most useful for `ftp`, `ftps`, and `proxy`, whose access records are
+  routed by service id such as `ftp:2121` or `proxy:8992`.
+
+`logerr`
+: Service error log path. If omitted, the service uses `tclwire.logerr`.
+
 `certfile`
 : TLS certificate file for `https` or `ftps`. Overrides `tclwire.certfile` for
   that service.
@@ -231,6 +241,14 @@ Environment configuration lives under tables such as `[env.stdchans]` or
 `[env.rivet]`. Each table is an environment-owned key/value dictionary. TclWire
 does not inherit global `[tclwire]` values into these dictionaries, and it does
 not validate environment-specific option names.
+
+An application can override or provide environment options under its own
+descriptor with `[http.<application>.env.<environment>]` or
+`[https.<application>.env.<environment>]`. The effective environment
+configuration is the global `[env.<environment>]` dictionary, when present,
+merged with the application-local dictionary. Application-local values override
+global values. If the global table does not exist, the application-local table
+is the complete configuration for that environment.
 
 `parent`
 : Optional environment configuration name to inherit from. The parent table
@@ -342,6 +360,15 @@ then from global runtime defaults.
 
 `log_level`
 : Application or host-specific logging threshold.
+
+`logfile`
+: Application access log path. HTTP and HTTPS request access records are
+  routed by the selected application id after host dispatch. If omitted, the
+  application uses `tclwire.logfile`.
+
+`logerr`
+: Application error log path. If omitted, the application uses
+  `tclwire.logerr`.
 
 `reload_on_request`
 : Replaces the application worker after each request so the next worker sources

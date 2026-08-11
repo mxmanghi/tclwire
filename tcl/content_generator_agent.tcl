@@ -97,6 +97,10 @@ namespace eval ::tclwire::app {
         tailcall application_get configuration
     }
 
+    proc logger {} {
+        tailcall application_get logger
+    }
+
     proc environment_configuration {args} {
         if {[llength $args] > 2} {
             error {wrong # args: should be "::tclwire::app::environment_configuration ?environment? ?key?"}
@@ -187,6 +191,7 @@ namespace eval ::tclwire::cga {
     variable application_class {}
     variable application_descriptor {}
     variable configuration {}
+    variable logger {}
     variable native_exit_command ::tcl::exit_process
     variable exit_command {}
     variable thread_exit_command {}
@@ -209,7 +214,7 @@ namespace eval ::tclwire::cga {
             set application_values [dict create]
             foreach field {
                 application application_class application_descriptor
-                configuration pool_key
+                configuration logger pool_key
             } {
                 if {[dict exists $context_values $field]} {
                     dict set application_values $field \
@@ -219,7 +224,7 @@ namespace eval ::tclwire::cga {
             if {[dict size $application_values]} {
                 require_fields application $application_values {
                     application application_class application_descriptor
-                    configuration pool_key
+                    configuration logger pool_key
                 }
             }
             set request_values [dict create]
@@ -279,7 +284,7 @@ namespace eval ::tclwire::cga {
 
         foreach field {
             application application_class application_descriptor configuration
-            pool_key request request_descriptor
+            logger pool_key request request_descriptor
         } {
             proc $field {} [format {get %s} [list $field]]
         }
@@ -375,6 +380,7 @@ namespace eval ::tclwire::cga {
         variable application_class
         variable application_descriptor
         variable configuration
+        variable logger
 
         set worker_pool_key [string trim $worker_pool_key]
         if {![string length $worker_pool_key]} {
@@ -394,6 +400,8 @@ namespace eval ::tclwire::cga {
 
         install_exit_interceptor
         set configuration [::tclwire::ApplicationConfiguration deserialize $serialized_configuration]
+        set logger [::tclwire::logger::Client new [$configuration id]]
+        envs::configure_application $configuration
         envs::install [$configuration environment]
 
         set pool_key $worker_pool_key
@@ -426,6 +434,7 @@ namespace eval ::tclwire::cga {
         variable path_namespaces {}
         variable application_namespace_path {}
         variable application_namespace_path_saved 0
+        variable application_configuration {}
 
     proc command {environment} {
         if {[string match ::* $environment]} {
@@ -542,7 +551,22 @@ namespace eval ::tclwire::cga {
         return
     }
 
-    proc install_one {environment} {
+    proc configure_application {configuration} {
+        variable application_configuration
+
+        if {$configuration ne {} && ![info object isa object $configuration]} {
+            error "CGA environment application configuration must be a TclOO object"
+        }
+        set application_configuration $configuration
+        return
+    }
+
+    proc application_configuration {} {
+        variable application_configuration
+        return $application_configuration
+    }
+
+    proc install_environment {environment} {
         variable installed
         variable installed_names
         variable installing
@@ -562,7 +586,7 @@ namespace eval ::tclwire::cga {
             set environment_object [object $command]
             set required_environments [$environment_object requires]
             foreach required $required_environments {
-                install_one $required
+                install_environment $required
             }
 
             $environment_object install
@@ -598,7 +622,7 @@ namespace eval ::tclwire::cga {
             [namespace eval ::tclwire::app {namespace path}]
         set application_namespace_path_saved 1
         foreach environment $environments {
-            install_one $environment
+            install_environment $environment
         }
         return
     }
@@ -610,6 +634,7 @@ namespace eval ::tclwire::cga {
         variable path_namespaces
         variable application_namespace_path
         variable application_namespace_path_saved
+        variable application_configuration
 
         if {$application_namespace_path_saved} {
             catch {
@@ -627,6 +652,7 @@ namespace eval ::tclwire::cga {
         set path_namespaces {}
         set application_namespace_path {}
         set application_namespace_path_saved 0
+        set application_configuration {}
         return
     }
     }
@@ -665,6 +691,7 @@ namespace eval ::tclwire::cga {
         variable application_class
         variable application_descriptor
         variable configuration
+        variable logger
         variable exit_command
         variable thread_exit_command
         variable thread_exit_requested
@@ -676,16 +703,20 @@ namespace eval ::tclwire::cga {
         }
         set application {}
         catch {::tclwire::app::end_application}
+        envs::shutdown
         if {[info object isa object $configuration]} {
             catch {$configuration destroy}
         }
-        envs::shutdown
+        if {[info object isa object $logger]} {
+            catch {$logger destroy}
+        }
         set initialized 0
         set pool_key {}
         set application_class {}
         set application_descriptor {}
         set application {}
         set configuration {}
+        set logger {}
         set exit_command {}
         set thread_exit_command {}
         set thread_exit_requested 0
@@ -703,8 +734,15 @@ namespace eval ::tclwire::cga {
 
             set path [dict get $request_descriptor body_path]
             if {[catch {file delete $path} message options] && [file exists $path]} {
-                catch {::tclwire::logger log_error upload_cleanup \
-                    "path=$path error=$message" warn}
+                set context [dict create]
+                if {[dict exists $request_descriptor application_id]} {
+                    dict set context application_id [dict get $request_descriptor application_id]
+                }
+                catch {
+                    set logger [::tclwire::logger::getlogger]
+                    $logger log_error upload_cleanup \
+                        "path=$path error=$message" warn $context
+                }
             }
 
         }
@@ -717,7 +755,13 @@ namespace eval ::tclwire::cga {
             set details [join [list "path=[::tclwire::logger::log_value [dict get $failure path]]" \
                                     "error=[::tclwire::logger::log_value [dict get $failure message]]"] " "]
             if {[catch {
-                ::tclwire::logger log_error upload_cleanup $details warn
+                set context [dict create]
+                if {[dict exists $request_descriptor application_id]} {
+                    dict set context application_id \
+                        [dict get $request_descriptor application_id]
+                }
+                set logger [::tclwire::logger::getlogger]
+                $logger log_error upload_cleanup $details warn $context
             }]} {
                 catch {puts stderr "upload_cleanup level=warn $details"}
             }
@@ -744,6 +788,7 @@ namespace eval ::tclwire::cga {
         variable application_class
         variable application_descriptor
         variable configuration
+        variable logger
 
         destroy_application_object
         if {[info commands $application_class] eq {} ||
@@ -758,6 +803,7 @@ namespace eval ::tclwire::cga {
                                      application_class      $application_class \
                                      application_descriptor $application_descriptor \
                                      configuration          $configuration \
+                                     logger                 $logger \
                                      pool_key               $pool_key]
 
         try {
@@ -797,7 +843,8 @@ namespace eval ::tclwire::cga {
         set details [join $fields " "]
 
         if {[catch {
-            ::tclwire::logger log_error application $details error $context
+            set logger [::tclwire::logger::getlogger]
+            $logger log_error application $details error $context
         }]} {
             # Keep a last-resort diagnostic when the asynchronous logger is
             # unavailable during startup or shutdown.

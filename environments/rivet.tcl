@@ -11,7 +11,8 @@ namespace eval ::tclwire::envs {}
 
 oo::class create ::tclwire::envs::RivetEnvironment {
     superclass ::tclwire::ApplicationEnvironment
-    variable application_file_path previous_exit_command
+    variable application_file_path
+    variable previous_exit_command
 
     constructor {path} {
         next
@@ -50,8 +51,8 @@ oo::class create ::tclwire::envs::RivetEnvironment {
 
         namespace eval ::Rivet {}
         ::tclwire::envs::rivet::install_commands
-        set previous_exit_command [::tclwire::cga::configure_exit_command \
-            [list ::tclwire::envs::rivet::exit_request]]
+        set previous_exit_command \
+            [::tclwire::cga::configure_exit_command [list ::tclwire::envs::rivet::exit_request]]
         return
     }
 
@@ -99,6 +100,14 @@ namespace eval ::tclwire::envs::rivet {
         tailcall [object] enabled
     }
 
+    proc configuration {args} {
+        tailcall [object] configuration {*}$args
+    }
+
+    proc application_configuration {} {
+        tailcall [object] application_configuration
+    }
+
     proc install {} {
         tailcall [object] install
     }
@@ -109,7 +118,7 @@ namespace eval ::tclwire::envs::rivet {
 
     namespace export object name requires \
                      path_namespaces application_class application_file \
-                     enabled install uninstall
+                     application_configuration configuration enabled install uninstall
     namespace ensemble create
 }
 

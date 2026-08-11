@@ -207,7 +207,7 @@ namespace eval ::tclwire::config {
     # and must not be interpreted as application ids.
     proc protocol_application_option {field} {
         return [expr {$field in {
-            enabled port certfile keyfile libdir log_level upload_area
+            enabled port certfile keyfile libdir log_level logfile logerr upload_area
             max_request_bytes max_header_bytes request_memory_threshold
         }}]
     }
@@ -219,7 +219,7 @@ namespace eval ::tclwire::config {
         return [expr {$field in {
             class package hosts encoding log_level reload_on_request
             retain_uploaded_files configure docroot libdir file environment
-            hostname admin errorlog server_path
+            hostname admin logfile logerr server_path env
             aliases minimum_workers maximum_workers
         }}]
     }
@@ -472,14 +472,34 @@ namespace eval ::tclwire::config {
         }
 
         set configuration [application_environment_default_config $environments]
-        foreach environment_id [application_environment_config_names $environments] {
-            if {[dict exists $repository $environment_id]} {
-                set inherited {}
-                if {[dict exists $configuration $environment_id]} {
-                    set inherited [dict get $configuration $environment_id]
+        set local_repository [dict create]
+        if {[dict exists $descriptor env]} {
+            if {[catch {dict size [dict get $descriptor env]}]} {
+                error "application '$application_id' env must be a dictionary"
+            }
+            dict for {environment_id options} [dict get $descriptor env] {
+                set environment_id [environment_config_name $environment_id]
+                if {$environment_id eq {}} {
+                    error "application '$application_id' env names must not be empty"
                 }
-                dict set configuration $environment_id \
-                    [dict merge $inherited [dict get $repository $environment_id]]
+                dict set local_repository $environment_id \
+                    [environment_config_options $environment_id $options]
+            }
+        }
+        foreach environment_id [application_environment_config_names $environments] {
+            set options [dict create]
+            if {[dict exists $configuration $environment_id]} {
+                set options [dict get $configuration $environment_id]
+            }
+            if {[dict exists $repository $environment_id]} {
+                set options [dict merge $options [dict get $repository $environment_id]]
+            }
+            if {[dict exists $local_repository $environment_id]} {
+                set options [dict merge $options \
+                    [dict get $local_repository $environment_id]]
+            }
+            if {[dict size $options]} {
+                dict set configuration $environment_id $options
             }
         }
         return $configuration
@@ -536,6 +556,9 @@ namespace eval ::tclwire::config {
                                                                     hosts      {localhost 127.0.0.1}   \
                                                                     docroot    $docroot                \
                                                                     encoding   $default_encoding       \
+                                                                    configure  [dict create \
+                                                                        ::tclwire::CApplication \
+                                                                        [dict create directory_index [list index.html]]] \
                                                                     pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
 
         return [dict create help                $help \
@@ -559,7 +582,6 @@ namespace eval ::tclwire::config {
                             logerr              $logerr \
                             hostname            $hostname \
                             admin               $admin \
-                            errorlog            $logerr \
                             server_path         $server_path \
                             aliases             $aliases \
                             log_level           $log_level \
@@ -637,10 +659,6 @@ namespace eval ::tclwire::config {
                 dict set config aliases \
                     [parse_application_aliases tclwire.aliases [dict get $global aliases]]
             }
-            if {[dict exists $global errorlog]} {
-                dict set config errorlog \
-                            [resolve_config_path $config_dir [dict get $global errorlog]]
-            }
             foreach alias {listen_address bind_address} {
                 if {[dict exists $global $alias]} {
                     dict set config host [dict get $global $alias]
@@ -676,9 +694,6 @@ namespace eval ::tclwire::config {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
-            if {![dict exists $global errorlog] && [dict exists $paths logerr]} {
-                dict set config errorlog [dict get $paths logerr]
-            }
             foreach {field minimum} {
                 conn_max_wait 0
                 conn_max_workers 1
@@ -789,6 +804,12 @@ namespace eval ::tclwire::config {
                         [dict get $protocol_config log_level]]
             }
 
+            set log_paths [dict filter $protocol_config key logfile logerr]
+            set log_paths [dict map {field value} $log_paths {
+                resolve_config_path $config_dir $value
+            }]
+            set service [dict merge $service $log_paths]
+
             # The script form is useful here because inclusion depends on
             # both the key and its value. It still preserves original values;
             # dict map performs the subsequent path transformation.
@@ -854,6 +875,9 @@ namespace eval ::tclwire::config {
                 if {[dict exists $descriptor configure]} {
                     dict set application configure [dict get $descriptor configure]
                 }
+                if {[dict exists $descriptor env]} {
+                    dict set application env [dict get $descriptor env]
+                }
                 if {[dict exists $application log_level]} {
                     dict set application log_level \
                         [normalize_log_level "$protocol.$application_id.log_level" \
@@ -875,7 +899,7 @@ namespace eval ::tclwire::config {
                     dict set application hosts [list $application_id]
                 }
                 set application_paths [dict map {field value} \
-                        [dict filter $descriptor key docroot libdir errorlog] {
+                        [dict filter $descriptor key docroot libdir logfile logerr] {
                     resolve_config_path $config_dir $value
                 }]
                 set application [dict merge $application $application_paths]
@@ -982,6 +1006,9 @@ namespace eval ::tclwire::config {
                     dict set descriptor environment_config $environment_config
                 } elseif {[dict exists $descriptor environment_config]} {
                     dict unset descriptor environment_config
+                }
+                if {[dict exists $descriptor env]} {
+                    dict unset descriptor env
                 }
                 dict set merged_applications $application_id $descriptor
             }
@@ -1108,7 +1135,8 @@ namespace eval ::tclwire::config {
                 hostname [expr {[dict get $config hostname] ne {} ? \
                     [dict get $config hostname] : [dict get $config host]}] \
                 admin [dict get $config admin] \
-                errorlog [dict get $config errorlog] \
+                logfile [dict get $config logfile] \
+                logerr [dict get $config logerr] \
                 server_path [dict get $config server_path] \
                 aliases [dict get $config aliases]]
             set inherited [merge_application_aliases \

@@ -59,6 +59,12 @@ package ifneeded tclwire::rivet 0.1 [subst {
     source [list [file join $dir environments rivet.tcl]]
 }]
 
+package ifneeded tclwire::rivetweb 0.1 [subst {
+    package require tclwire::rivet 0.1
+    package require tclwire::environment 0.1
+    source [list [file join $dir environments rivetweb.tcl]]
+}]
+
 package ifneeded rivetparser 1.0 \
     [list source [file join $dir environments rivet_parser.tcl]]
 

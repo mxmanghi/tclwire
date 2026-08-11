@@ -112,7 +112,7 @@ oo::class create ::tclwire::TpbaProbe {
 oo::class create ::tclwire::DiagnosticChore {
     superclass ::tclwire::ServerChore
 
-    variable max_age_ms last_alert_sequence last_ok_sequence probes
+    variable max_age_ms last_alert_sequence last_ok_sequence probes logger
 
     constructor args {
         array set options {
@@ -137,11 +137,15 @@ oo::class create ::tclwire::DiagnosticChore {
         set probes [list [::tclwire::EventLoopProbe new]    \
                          [::tclwire::AccountingProbe new]   \
                          [::tclwire::TpbaProbe new]]
+        set logger [::tclwire::logger::Client new default]
     }
 
     destructor {
         foreach probe $probes {
             catch {$probe destroy}
+        }
+        if {[info object isa object $logger]} {
+            catch {$logger destroy}
         }
     }
 
@@ -213,7 +217,7 @@ oo::class create ::tclwire::DiagnosticChore {
             lappend fields "$key=[my log_value $value]"
         }
         catch {
-            ::tclwire::logger log_error diagnostic [join $fields " "] crit
+            $logger log_error diagnostic [join $fields " "] crit
         }
         return [dict merge [dict create ok 0 alerted 1] $details]
     }

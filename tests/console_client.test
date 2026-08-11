@@ -15,6 +15,170 @@ test console-client-1.1 {--command captures a one-shot console command} -body {
         $::tclwire::console_client::socket_path
 } -result [list {CONN -port 8990} [file normalize /tmp/tclwire-test.sock]]
 
+test console-client-1.1a {--config and --application select local configuration} -body {
+    set old_config_file $::tclwire::console_client::config_file
+    set old_config_file_explicit $::tclwire::console_client::config_file_explicit
+    set old_application_id $::tclwire::console_client::application_id
+    try {
+        set command [::tclwire::console_client::parse_args \
+            [list --config tclwire.toml.example --application hello \
+                --command CONF]]
+        set serialized \
+            [::tclwire::console_client::load_application_configuration]
+        list \
+            $command \
+            [dict get $serialized application_id] \
+            [dict get $serialized values class] \
+            [file tail [dict get $serialized values file]]
+    } finally {
+        set ::tclwire::console_client::config_file $old_config_file
+        set ::tclwire::console_client::config_file_explicit \
+            $old_config_file_explicit
+        set ::tclwire::console_client::application_id $old_application_id
+    }
+} -result {CONF hello ::tclwire::app::Hello hello.tcl}
+
+test console-client-1.1b {CONF argument selects application configuration} -body {
+    set old_config_file $::tclwire::console_client::config_file
+    set old_config_file_explicit $::tclwire::console_client::config_file_explicit
+    set old_application_id $::tclwire::console_client::application_id
+    try {
+        set ::tclwire::console_client::config_file tclwire.toml.example
+        set ::tclwire::console_client::config_file_explicit 1
+        set ::tclwire::console_client::application_id {}
+        set serialized [::tclwire::console_client::load_configuration_tree hello]
+        list \
+            [dict get $serialized application_id] \
+            [dict get $serialized values class] \
+            [file tail [dict get $serialized values file]]
+    } finally {
+        set ::tclwire::console_client::config_file $old_config_file
+        set ::tclwire::console_client::config_file_explicit \
+            $old_config_file_explicit
+        set ::tclwire::console_client::application_id $old_application_id
+    }
+} -result {hello ::tclwire::app::Hello hello.tcl}
+
+test console-client-1.1c {CONF argument selects environment configuration} -body {
+    set old_config_file $::tclwire::console_client::config_file
+    set old_config_file_explicit $::tclwire::console_client::config_file_explicit
+    set old_application_id $::tclwire::console_client::application_id
+    set config_file [file join \
+        [temporaryDirectory] tclwire-console-conf-[pid].toml]
+    set channel [open $config_file w]
+    try {
+        chan configure $channel -encoding utf-8 -translation lf
+        puts $channel {
+[env.stdchans]
+capture_stderr = true
+
+[env.rivet]
+parent = "stdchans"
+UploadMaxSize = 1000
+}
+    } finally {
+        close $channel
+    }
+    try {
+        set ::tclwire::console_client::config_file $config_file
+        set ::tclwire::console_client::config_file_explicit 1
+        set ::tclwire::console_client::application_id {}
+        set serialized [::tclwire::console_client::load_configuration_tree rivet]
+        list \
+            [dict get $serialized type] \
+            [dict get $serialized environment_id] \
+            [dict get $serialized values UploadMaxSize] \
+            [dict get $serialized values capture_stderr]
+    } finally {
+        set ::tclwire::console_client::config_file $old_config_file
+        set ::tclwire::console_client::config_file_explicit \
+            $old_config_file_explicit
+        set ::tclwire::console_client::application_id $old_application_id
+        catch {file delete -force $config_file}
+    }
+} -result {tclwire.environment_configuration rivet 1000 true}
+
+test console-client-1.1d {local config can be derived from SERVERCONF} -body {
+    set response [dict create \
+        ok true \
+        type table \
+        command SERVERCONF \
+        columns {scope name value} \
+        rows [list \
+            [dict create scope global name host value 127.0.0.1] \
+            [dict create scope global name config_file value /tmp/server.toml]]]
+    ::tclwire::console_client::config_file_from_serverconf $response
+} -result /tmp/server.toml
+
+test console-client-1.1e {explicit --config prevents server config derivation} -body {
+    set old_channel $::tclwire::console_client::channel
+    set old_config_file $::tclwire::console_client::config_file
+    set old_config_file_explicit $::tclwire::console_client::config_file_explicit
+    proc test_send_command {channel command} {
+        error "unexpected server query: $command"
+    }
+    rename ::tclwire::console_client::send_command \
+        ::tclwire::console_client::send_command.real
+    rename test_send_command ::tclwire::console_client::send_command
+    try {
+        set ::tclwire::console_client::channel fake-channel
+        set ::tclwire::console_client::config_file explicit.toml
+        set ::tclwire::console_client::config_file_explicit 1
+        ::tclwire::console_client::derive_config_file_from_server
+        set ::tclwire::console_client::config_file
+    } finally {
+        rename ::tclwire::console_client::send_command {}
+        rename ::tclwire::console_client::send_command.real \
+            ::tclwire::console_client::send_command
+        set ::tclwire::console_client::channel $old_channel
+        set ::tclwire::console_client::config_file $old_config_file
+        set ::tclwire::console_client::config_file_explicit \
+            $old_config_file_explicit
+    }
+} -result explicit.toml
+
+test console-client-1.1f {connected server supplies default config file} -body {
+    set old_channel $::tclwire::console_client::channel
+    set old_config_file $::tclwire::console_client::config_file
+    set old_config_file_explicit $::tclwire::console_client::config_file_explicit
+    namespace eval ::tclwire::console_client_test {
+        variable sent {}
+    }
+    proc test_send_command {channel command} {
+        variable ::tclwire::console_client_test::sent
+        lappend sent $channel $command
+        return [dict create \
+            ok true \
+            type table \
+            command SERVERCONF \
+            columns {scope name value} \
+            rows [list \
+                [dict create scope global name config_file \
+                    value /tmp/from-server.toml]]]
+    }
+    rename ::tclwire::console_client::send_command \
+        ::tclwire::console_client::send_command.real
+    rename test_send_command ::tclwire::console_client::send_command
+    try {
+        set ::tclwire::console_client::channel fake-channel
+        set ::tclwire::console_client::config_file tclwire.toml.example
+        set ::tclwire::console_client::config_file_explicit 0
+        ::tclwire::console_client::derive_config_file_from_server
+        list \
+            $::tclwire::console_client::config_file \
+            $::tclwire::console_client_test::sent
+    } finally {
+        rename ::tclwire::console_client::send_command {}
+        rename ::tclwire::console_client::send_command.real \
+            ::tclwire::console_client::send_command
+        set ::tclwire::console_client::channel $old_channel
+        set ::tclwire::console_client::config_file $old_config_file
+        set ::tclwire::console_client::config_file_explicit \
+            $old_config_file_explicit
+        namespace delete ::tclwire::console_client_test
+    }
+} -result [list /tmp/from-server.toml {fake-channel SERVERCONF}]
+
 test console-client-1.2 {EXIT is recognized as a local console command} -body {
     list \
         [::tclwire::console_client::is_exit_command EXIT] \
@@ -27,10 +191,10 @@ test console-client-1.2a {HELP is recognized and describes all commands} -body {
     list \
         [::tclwire::console_client::is_help_command { help }] \
         [::tclwire::console_client::is_help_command PS] \
-        [lmap command {PS SERVICES CONN CWORK CONF LOGROTATE SHUT RECONNECT HELP EXIT} {
+        [lmap command {PS SERVICES CONN CWORK CONF SERVERCONF LOGROTATE SHUT RECONNECT HELP EXIT} {
             regexp -line "^  $command +\\S" $help
         }]
-} -result {1 0 {1 1 1 1 1 1 1 1 1 1}}
+} -result {1 0 {1 1 1 1 1 1 1 1 1 1 1}}
 
 test console-client-1.2b {RECONNECT is recognized as a local console command} -body {
     list \

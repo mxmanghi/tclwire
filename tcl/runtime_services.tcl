@@ -21,22 +21,19 @@ namespace eval ::tclwire::runtime {
         variable application_dispatcher
 
         if {![info object isa object $application_dispatcher]} {
-            set prepared_docroots {}
-            dict for {application_id descriptor} [dict get $config applications] {
-                set docroot [dict get $descriptor docroot]
-                if {$docroot ni $prepared_docroots} {
-                    ::tclwire::support prepare_doc_root $docroot \
-                        [::tclwire::support runtime_doc_source] \
-                        [dict get $config force_docroot_seeding]
-                    lappend prepared_docroots $docroot
-                }
-            }
+            set default_application [dict get $config default_application]
+            set descriptor [dict get $config applications $default_application]
+            ::tclwire::support prepare_doc_root \
+                [dict get $descriptor docroot] \
+                [::tclwire::support runtime_doc_source] \
+                [dict get $config force_docroot_seeding]
             set application_dispatcher \
                 [::tclwire::ApplicationDispatcher new $config]
             $application_dispatcher start
         }
         return $application_dispatcher
     }
+
     proc http_service_agent_args {config service} {
         ensure_application_dispatcher $config
         set dump_multipart_requests 0
@@ -46,11 +43,12 @@ namespace eval ::tclwire::runtime {
         }
         return [list -applicationconfig $config \
                      -protocol [dict get $service protocol] \
+                     -serviceid [dict get $service id] \
                      -uploadarea [dict get $service upload_area] \
                      -maxrequestbytes [dict get $service max_request_bytes] \
                      -maxheaderbytes [dict get $service max_header_bytes] \
                      -requestmemorythreshold \
-                         [dict get $service request_memory_threshold] \
+                                [dict get $service request_memory_threshold] \
                      -dumpmultipartrequests $dump_multipart_requests]
     }
 
@@ -60,7 +58,7 @@ namespace eval ::tclwire::runtime {
     }
 
     proc proxy_service_agent_args {config service} {
-        return [list -config $config]
+        return [list -config [dict merge $config $service]]
     }
 
     proc create_transport_reactor {config service} {

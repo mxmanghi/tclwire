@@ -199,9 +199,9 @@ test ftp-connection-1.1 {
             [file join $ftp_root tcl9.png]] eq $expected}] \
         $reactor_keys \
         $pool_key \
-        [regexp {ftp command=PASS argument=<redacted> status=230} $log] \
+        [regexp {ftp:8991 command=PASS argument=<redacted> status=230} $log] \
         [expr {![string match {*test@example.invalid*} $log]}] \
-        [regexp "ftp transfer=RETR path=tcl9.png status=226 bytes=[string length $expected]" $log]
+        [regexp "ftp:8991 transfer=RETR path=tcl9.png status=226 bytes=[string length $expected]" $log]
 } -cleanup {
     ::tclwire::ftp_connection_test::cleanup
     catch {file delete -force $ftp_root}
@@ -248,7 +248,7 @@ test ftp-connection-1.2 {
         [string match "226 *" $transfer_end] \
         [string match "221 *" $quit_reply] \
         [expr {$stored eq $payload}] \
-        [regexp "ftp transfer=STOR path=incoming.bin status=226 bytes=[string length $payload]" $log]
+        [regexp "ftp:8991 transfer=STOR path=incoming.bin status=226 bytes=[string length $payload]" $log]
 } -cleanup {
     ::tclwire::ftp_connection_test::cleanup
     catch {file delete -force $ftp_root}

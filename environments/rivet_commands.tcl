@@ -125,12 +125,36 @@ namespace eval ::tclwire::envs::rivet {
         return [dict create \
             hostname    [$configuration get hostname] \
             admin       [$configuration get admin] \
-            errorlog    [$configuration get errorlog] \
+            errorlog    [$configuration get logerr] \
             server_path [$configuration get server_path]]
     }
 
     proc configured_script {script} {
         return [expr {$script ne {} && $script ne "undefined"}]
+    }
+
+    proc apache_log_level {level} {
+        switch -exact -- [string tolower [string trim $level]] {
+            error -
+            err {
+                return error
+            }
+            warn -
+            warning {
+                return warn
+            }
+            emerg -
+            alert -
+            crit -
+            notice -
+            info -
+            debug {
+                return [string tolower [string trim $level]]
+            }
+            default {
+                return error
+            }
+        }
     }
 
     proc reset_abort_state {} {
@@ -1649,9 +1673,31 @@ namespace eval ::tclwire::envs::rivet {
                 }
             }
 
+            set level [::tclwire::envs::rivet::apache_log_level $level]
+            set saved_error_info {}
+            set had_error_info [info exists ::errorInfo]
+            if {$had_error_info} {
+                set saved_error_info $::errorInfo
+            }
+            set saved_error_code {}
+            set had_error_code [info exists ::errorCode]
+            if {$had_error_code} {
+                set saved_error_code $::errorCode
+            }
             catch {
-                ::tclwire::logger log_error rivet \
+                set logger [::tclwire::logger::getlogger]
+                $logger log_error rivet \
                     [::tclwire::logger::log_value $message] $level
+            }
+            if {$had_error_info} {
+                set ::errorInfo $saved_error_info
+            } else {
+                unset -nocomplain ::errorInfo
+            }
+            if {$had_error_code} {
+                set ::errorCode $saved_error_code
+            } else {
+                unset -nocomplain ::errorCode
             }
             return
         }
