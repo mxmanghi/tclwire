@@ -259,6 +259,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         $transaction set response_reason    OK
         $transaction set response_headers   {}
         $transaction set response_body_mode text
+        # Implicit responses start as text, but the first output event may
+        # switch this to binary before any metadata or body bytes are committed.
         $transaction set response_body_mode_explicit 0
         $transaction set response_state     preparing
         $transaction set response_bytes     0
@@ -487,6 +489,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return
     }
 
+    # Preserve the reason for an application-output abort before it is converted
+    # into a generic HTTP 500 or connection close.
     method log_application_response_abort {transaction reason options} {
         if {$reason eq {}} {
             return
