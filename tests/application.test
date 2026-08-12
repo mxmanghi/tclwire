@@ -108,6 +108,50 @@ test http-request-1.1 {HTTP request exposes a read-only semantic interface} -bod
     }
 } -result {GET /search {q Tcl} Tcl yes accepted payload 1}
 
+test http-request-1.1rewrite {HTTP request rewrites URL-derived metadata atomically} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET \
+        target /legacy?old=value \
+        path /legacy \
+        query old=value \
+        query_dict [dict create old value] \
+        version 1.1 \
+        headers [dict create host localhost] \
+        local_path /tmp/previously-mapped-file \
+        body_media raw \
+        body_storage in_memory \
+        body {} \
+        body_size 0 \
+        transaction_id 3]]
+    try {
+        $request rewrite /current?name=Tcl+Wire&tag=one&tag=two
+        $request rewrite /final?mode=done
+        list \
+            [$request original_target] \
+            [$request target] \
+            [$request url_path] \
+            [$request path] \
+            [$request query] \
+            [$request query_dict] \
+            [$request query_parameters] \
+            [$request local_path]
+    } finally {
+        $request destroy
+    }
+} -result [list /legacy?old=value /final?mode=done /final /final mode=done \
+    [dict create mode done] [dict create mode done] {}]
+
+test http-request-1.1rewritea {HTTP request rejects non-origin rewrite targets} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET target / path / query {} version 1.1 headers [dict create] \
+        body_media raw body_storage in_memory body {} body_size 0 transaction_id 3]]
+    try {
+        list [catch {$request rewrite https://example.test/} message] $message
+    } finally {
+        $request destroy
+    }
+} -result {1 {rewritten HTTP target must be an absolute path}}
+
 test http-request-1.1a {HTTP request exposes origin and absolute URL helpers} -body {
     set request [::tclwire::HttpRequest new [dict create \
         method GET \
@@ -1375,6 +1419,75 @@ puts $message
     catch {::tclwire::io end}
     removeDirectory $docroot
 } -result "https://rivet.example.test:9443/docs/links.tcl?current=yes\nhttps://rivet.example.test:9443/docs/sibling.tcl\nhttps://rivet.example.test:9443/assets/site.css\nhttps://rivet.example.test:9443/docs/search.tcl?q=hello+world&plus=a%2bb&unicode=caff%c3%a8\nhttps://rivet.example.test:9443/existing?x=1&y=2\nhttps://cdn.example.test/file.css?v=1\n1\nwrong # args: should be \"::rivet::makeurl ?path? ?name value ...?\"\n"
+
+test application-configuration-1.4e02 {
+    rivet hooks rewrite requests before script resolution
+} -setup {
+    set docroot [makeDirectory rivet-hooks-docroot]
+    file mkdir [file join $docroot rivet]
+    ::fileutil::writeFile [file join $docroot rivet hooks.tcl] {
+proc url_rewrite {request} {
+    if {[$request target] eq "/legacy"} {
+        $request rewrite /current.tcl?source=hook
+    }
+}
+}
+    ::fileutil::writeFile [file join $docroot current.tcl] {
+set request [::tclwire::app::request]
+puts "[$request original_target]|[$request target]|[$request path]|[$request query]|[$request query_parameter source]"
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet} \
+                environment_config [dict create rivet [dict create hooks rivet/hooks.tcl]]]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 108 \
+            method GET \
+            target /legacy \
+            path /legacy \
+            query {} \
+            headers [dict create host rivet.example.test]]
+    update
+
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result "/legacy|/current.tcl?source=hook|/current.tcl|source=hook|hook\n"
 
 test application-configuration-1.4ea {
     rivet default application parses requested Rivet templates

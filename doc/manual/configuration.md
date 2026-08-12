@@ -41,6 +41,7 @@ capture_stderr = true
 [env.rivet]
 UploadMaxSize = 10485760
 BeforeScript = "rivet/before.tcl"
+hooks = "rivet/hooks.tcl"
 ```
 
 Each `[env.<name>]` table is an environment-owned dictionary. TclWire does not
@@ -65,3 +66,23 @@ environment configuration repository. Passing an environment name returns that
 environment's effective dictionary. Passing an environment name and key returns
 one value from that dictionary. Missing environment names return an empty
 dictionary; missing keys in an existing environment configuration are errors.
+
+### Rivet request hooks
+
+The optional `hooks` setting in `[env.rivet]` names a Tcl file relative to the
+application document root. It is loaded into a private Rivet hook namespace
+when each application worker initializes. If that file defines `url_rewrite`,
+Rivet calls it with the current `HttpRequest` before resolving the request to a
+script. The hook can inspect the incoming target with `$request original_target`
+and transform it with `$request rewrite /new/path?query=value`. Rewriting keeps
+`target`, `url_path`, `path`, `query`, `query_dict`, and `query_parameters` in
+sync.
+
+```tcl
+# <docroot>/rivet/hooks.tcl
+proc url_rewrite {request} {
+    if {[$request target] eq "/old-page"} {
+        $request rewrite /current-page.tcl?source=legacy
+    }
+}
+```

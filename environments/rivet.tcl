@@ -55,6 +55,7 @@ oo::class create ::tclwire::envs::RivetEnvironment {
 
         ::tclwire::cga::configure_exit_command $previous_exit_command
         set previous_exit_command {}
+        catch {namespace delete ::tclwire::envs::rivet::hooks}
         catch {namespace delete ::rivet}
         catch {namespace delete ::Rivet}
         return
@@ -102,8 +103,8 @@ namespace eval ::tclwire::envs::rivet {
         tailcall [object] uninstall
     }
 
-    namespace export object name requires \
-                     path_namespaces application_class application_file \
+    namespace export object name requires path_namespaces \
+                     application_class application_file \
                      enabled install uninstall
     namespace ensemble create
 }
