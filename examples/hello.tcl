@@ -19,10 +19,8 @@ oo::class create Hello {
     }
 
     method handle_request {request} {
-        ::tclwire::io response  200 OK \
-                                [list "Content-Type: text/html; charset=[my encoding]"] \
-                                text    \
-                                [my encoding]
+        ::tclwire::io response 200 OK [list "Content-Type: text/html; charset=[my encoding]"] \
+                               text [my encoding]
 
         ::tclwire::io out "<html><head><title>Hello from Tclwire</title></head>"
         ::tclwire::io out "<div>$message</div>\n"
@@ -43,8 +41,9 @@ oo::class create Hello {
                 flush stdout
                 after 500
             }
+        } else {
+            puts "<pre>We are not running within the stdchans environment</pre>"
         }
-
         ::tclwire::io out "</html>"
 
         return

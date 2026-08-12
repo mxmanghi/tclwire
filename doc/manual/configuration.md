@@ -65,3 +65,20 @@ environment configuration repository. Passing an environment name returns that
 environment's effective dictionary. Passing an environment name and key returns
 one value from that dictionary. Missing environment names return an empty
 dictionary; missing keys in an existing environment configuration are errors.
+
+## Console Socket Access
+
+The console socket normally retains the ownership and mode created under the
+runtime process umask. For a systemd service whose operators belong to `adm`,
+set its group and permissions explicitly:
+
+```toml
+[tclwire]
+unix_socket = "/run/tclwire/console.sock"
+unix_socket_group = "adm"
+unix_socket_permissions = "0660"
+```
+
+The account in the unit must be permitted to change a file's group to `adm`.
+For a non-root service, add `SupplementaryGroups=adm` to the unit. Ensure the
+socket directory is traversable by the intended users as well.

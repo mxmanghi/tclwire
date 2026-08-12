@@ -3,6 +3,10 @@
 TclWire starts a Unix-domain console socket for runtime inspection and control.
 The global configuration key is `unix_socket`; it defaults to
 `/tmp/tclwire.sock`.
+Use `unix_socket_group` and `unix_socket_permissions` to override the socket's
+group and mode after it is created. For a systemd service, setting these to
+`adm` and `0660` respectively allows members of `adm` to connect, provided the
+service account belongs to that group and the socket directory is traversable.
 The global configuration key `debug_connection` defaults to `false`. When it
 is `true`, closed connection records are retained in the shared accounting
 store for diagnostic console output.

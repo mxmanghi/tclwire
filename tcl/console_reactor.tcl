@@ -11,11 +11,13 @@ package require tclwire::logger::client 0.1
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ConsoleReactor {
-    variable socket_path listener next_connection_id connections shutdown_command logger
+    variable socket_path socket_group socket_permissions listener next_connection_id connections shutdown_command logger
 
     constructor args {
         array set options {
             -path /tmp/tclwire.sock
+            -group {}
+            -permissions {}
             -shutdowncommand {}
         }
         foreach {name value} $args {
@@ -32,6 +34,8 @@ oo::class create ::tclwire::ConsoleReactor {
         }
 
         set socket_path [file normalize $options(-path)]
+        set socket_group $options(-group)
+        set socket_permissions $options(-permissions)
         set shutdown_command $options(-shutdowncommand)
         set listener {}
         set next_connection_id 0
@@ -58,6 +62,12 @@ oo::class create ::tclwire::ConsoleReactor {
             file delete -force $socket_path
         }
         set listener [::unix_sockets::listen $socket_path [list [self] accept]]
+        if {$socket_group ne {}} {
+            file attributes $socket_path -group $socket_group
+        }
+        if {$socket_permissions ne {}} {
+            file attributes $socket_path -permissions $socket_permissions
+        }
         return $listener
     }
 

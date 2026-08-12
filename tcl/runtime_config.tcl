@@ -55,6 +55,18 @@ namespace eval ::tclwire::config {
         }
     }
 
+    # Normalize an octal filesystem mode for file attributes. An empty value
+    # leaves the mode selected by the process umask unchanged.
+    proc parse_file_permissions {name value} {
+        if {$value eq {}} {
+            return {}
+        }
+        if {![regexp {^[0-7]{3,4}$} $value] || [scan $value %o mode] != 1} {
+            usage_error "invalid permissions for $name: $value"
+        }
+        return [format %04o $mode]
+    }
+
     # Normalize a log-level spelling through the logger package.  The name
     # argument is kept for parity with other validators and future diagnostics.
     proc normalize_log_level {name value} {
@@ -483,6 +495,8 @@ namespace eval ::tclwire::config {
         set diagnostics_interval_ms 5000
         set diagnostics_watchdog_max_age_ms 10000
         set unix_socket         [file normalize /tmp/tclwire.sock]
+        set unix_socket_group   {}
+        set unix_socket_permissions {}
         set ftp_user_check      1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
         set startservers        [::tclwire::runtime::default_protocols]
@@ -538,6 +552,8 @@ namespace eval ::tclwire::config {
                             diagnostics_interval_ms         $diagnostics_interval_ms \
                             diagnostics_watchdog_max_age_ms $diagnostics_watchdog_max_age_ms \
                             unix_socket         $unix_socket \
+                            unix_socket_group   $unix_socket_group \
+                            unix_socket_permissions $unix_socket_permissions \
                             startservers        $startservers \
                             services            $services \
                             custom_services     $custom_services \
@@ -595,7 +611,7 @@ namespace eval ::tclwire::config {
             # unrelated TOML keys out while letting file values replace the
             # built-in defaults in one dictionary operation.
 
-            set config_keys {host encoding default_application hostname admin server_path aliases}
+            set config_keys {host encoding default_application hostname admin server_path aliases unix_socket_group}
 
             set config [dict merge $config [dict filter $global key {*}$config_keys]]
             if {[dict exists $global aliases]} {
@@ -637,6 +653,11 @@ namespace eval ::tclwire::config {
                 resolve_config_path $config_dir $value
             }]
             set config [dict merge $config $booleans $paths]
+            if {[dict exists $global unix_socket_permissions]} {
+                dict set config unix_socket_permissions [parse_file_permissions \
+                    tclwire.unix_socket_permissions \
+                    [dict get $global unix_socket_permissions]]
+            }
             foreach {field minimum} {
                 conn_max_wait 0
                 conn_max_workers 1

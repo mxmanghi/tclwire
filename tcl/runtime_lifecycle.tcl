@@ -78,8 +78,11 @@ namespace eval ::tclwire::runtime {
                 $reactor start
             }
 
-            set console_reactor [::tclwire::ConsoleReactor new -path            [dict get $config unix_socket] \
-                                                               -shutdowncommand [list ::tclwire::runtime::request_shutdown]]
+            set console_reactor [::tclwire::ConsoleReactor new \
+                -path               [dict get $config unix_socket] \
+                -group              [dict get $config unix_socket_group] \
+                -permissions        [dict get $config unix_socket_permissions] \
+                -shutdowncommand    [list ::tclwire::runtime::request_shutdown]]
             $console_reactor start
 
         } on error {message options} {

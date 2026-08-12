@@ -26,6 +26,12 @@ oo::class create ::tclwire::envs::app::Rivet {
         if {[::tclwire::envs::rivet::configured_script $script]} {
             namespace eval :: $script
         }
+
+        # Rivet application by default have the docroot as working directory
+        # Method handle_request is quite smart in restoring this assumptio
+        # at the end of every request
+
+        cd [[my configuration_object] get docroot]
         return
     }
 

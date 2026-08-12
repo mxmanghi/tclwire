@@ -110,6 +110,17 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
 `--unix-socket <path>` / `tclwire.unix_socket`
 : Unix-domain console socket path. Defaults to `/tmp/tclwire.sock`.
 
+`tclwire.unix_socket_group`
+: Optional group owner for the Unix-domain console socket. The service account
+  must be allowed to change the socket group, for example through systemd's
+  `SupplementaryGroups=adm` setting.
+
+`tclwire.unix_socket_permissions`
+: Optional three- or four-digit octal mode for the Unix-domain console socket.
+  Set this to `0660` with `unix_socket_group = "adm"` to allow members of
+  `adm` to use the console socket. By default, TclWire preserves the mode
+  created under the process umask.
+
 `--quiet` / `tclwire.quiet`
 : Suppresses normal runtime chatter where components observe the quiet flag.
   Disabled by default.

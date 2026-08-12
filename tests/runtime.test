@@ -115,6 +115,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config logfile] \
         [dict get $config logerr] \
         [dict get $config unix_socket] \
+        [dict get $config unix_socket_group] \
+        [dict get $config unix_socket_permissions] \
         [dict get $config conn_max_wait] \
         [dict get $config conn_max_workers] \
         [dict get $config conn_max_per_thread] \
@@ -142,6 +144,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     [file normalize /tmp/tclwire.log] \
     [file normalize /tmp/tclwire-err.log] \
     [file normalize /tmp/tclwire.sock] \
+    {} \
+    {} \
     1000 \
     100 \
     5 \
@@ -469,6 +473,52 @@ upload_area = ""
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result {}
+
+test runtime-1.2f {console socket group and permissions are loaded from TOML} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+unix_socket_group = "adm"
+unix_socket_permissions = "0660"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    list [dict get $config unix_socket_group] \
+         [dict get $config unix_socket_permissions]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {adm 0660}
+
+test runtime-1.2g {console socket permissions must be octal} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+unix_socket_permissions = "0668"
+}]
+    catch {
+        ::tclwire::runtime prepare_config [list --config $config_file]
+    } message options
+    list $message [dict get $options -errorcode]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {{invalid permissions for tclwire.unix_socket_permissions: 0668} {TCLWIRE USAGE}}
+
+test runtime-1.2h {console reactor applies configured group and permissions} -body {
+    set socket_path [file join [temporaryDirectory] tclwire-console-[pid].sock]
+    set group [file attributes [temporaryDirectory] -group]
+    set reactor {}
+    try {
+        set reactor [::tclwire::ConsoleReactor new \
+            -path $socket_path -group $group -permissions 0660 \
+            -shutdowncommand {return}]
+        $reactor start
+        list \
+            [expr {[file attributes $socket_path -group] eq $group}] \
+            [string match {*660} [file attributes $socket_path -permissions]]
+    } finally {
+        if {$reactor ne {}} {
+            catch {$reactor destroy}
+        }
+        catch {file delete -force $socket_path}
+    }
+} -result {1 1}
 
 test runtime-1.3 {invalid arguments fail before internal agents start} -body {
     set status [catch {
