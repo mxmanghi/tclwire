@@ -1098,14 +1098,14 @@ test http-connection-1.8a {debug logging includes resolved static file path} -bo
     list \
         [string match "HTTP/1.1 200 OK*" $response] \
         [string match \
-            "*static_file level=debug method=GET path=/index.html status=200 resolved_path=$file_path*" \
+            "*static_file level=debug method=GET path=/index.html original_path=/index.html status=200 resolved_path=$file_path*" \
             $log]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
     catch {file delete -force $docroot}
 } -result {1 1}
 
-test http-connection-1.8b {error logging includes resolved missing static file path} -body {
+test http-connection-1.8b {error logging includes original and resolved missing static file paths} -body {
     set docroot [file join [temporaryDirectory] tclwire-error-path-[pid]]
     file mkdir $docroot
     set file_path [file normalize [file join $docroot missing.txt]]
@@ -1123,7 +1123,7 @@ test http-connection-1.8b {error logging includes resolved missing static file p
     list \
         [string match "HTTP/1.1 404 Not Found*" $response] \
         [string match \
-            "*static_file level=error method=GET path=/missing.txt status=404 resolved_path=$file_path*" \
+            "*static_file level=error method=GET path=/missing.txt original_path=/missing.txt status=404 resolved_path=$file_path*" \
             $log]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
