@@ -1,6 +1,6 @@
 # http_request.tcl --
 #
-# Read-only application view of a transported HTTP request descriptor.
+# Application view of a transported HTTP request descriptor.
 #
 # Class boundary:
 #
@@ -17,9 +17,9 @@
 #   request-scoped conveniences such as CookieJar and multipart helpers.
 #
 # Most fields are read-only accessors over the request dictionary.  The small
-# writable surface, path and local_path, is intentionally application-local
-# metadata used by path-mapping code; changing it does not mutate the
-# connection agent's authoritative transaction state.
+# writable surface, rewrite, path and local_path, is intentionally limited to
+# application request processing.  `rewrite` atomically updates URL-derived
+# metadata while retaining the original request target for diagnostics.
 #
 # The comments below call out "pivots": points where the object deliberately
 # changes representation, such as descriptor dictionary to method API, Cookie
@@ -29,6 +29,7 @@
 package require TclOO
 package require tclwire::http::message 0.1
 package require tclwire::http::multipart 0.1
+package require tclwire::http::query 0.1
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::http::cookie {
@@ -252,6 +253,41 @@ oo::class create ::tclwire::HttpRequest {
 
     method target {} {
         return [my required target]
+    }
+
+    method original_target {} {
+        return [my optional original_target [my target]]
+    }
+
+    method rewrite {target} {
+        # Request rewrites are deliberately restricted to origin-form targets.
+        # They update every URL-derived field together so later routing and
+        # compatibility layers cannot observe stale query or path metadata.
+        if {![string match "/*" $target] ||
+                [regexp {[\x00-\x20\x7f#]} $target]} {
+            error "rewritten HTTP target must be an absolute path"
+        }
+
+        set query_start [string first ? $target]
+        set path $target
+        set query {}
+        if {$query_start >= 0} {
+            set path [string range $target 0 $query_start-1]
+            set query [string range $target $query_start+1 end]
+        }
+
+        if {![dict exists $request original_target]} {
+            dict set request original_target [my target]
+        }
+        dict set request target $target
+        dict set request url_path $path
+        dict set request path $path
+        dict set request query $query
+        dict set request query_dict [::tclwire::http::query decode $query]
+        if {[dict exists $request local_path]} {
+            dict unset request local_path
+        }
+        return $target
     }
 
     method url_path {} {

@@ -294,6 +294,12 @@ With two arguments, it returns one value from that environment dictionary.
 Missing environment names return an empty dictionary; missing keys in an
 existing environment configuration are errors.
 
+For the Rivet environment, `hooks` may name a Tcl file relative to the
+application document root. TclWire loads it into a private Rivet hook namespace
+when a worker initializes. A `url_rewrite` procedure in that file receives the
+request before script resolution and can call `$request rewrite /new/path`.
+The original wire target remains available through `$request original_target`.
+
 ## HTTP Application Options
 
 HTTP and HTTPS application options live under application tables such as
