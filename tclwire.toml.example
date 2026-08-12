@@ -79,6 +79,7 @@ default_application = "default"
 #
 # [env.stdchans]
 # capture_stderr = true
+# auto_chunked_on_flush = true
 #
 # [env.rivet]
 # parent = "stdchans"

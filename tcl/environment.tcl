@@ -37,6 +37,10 @@ oo::class create ::tclwire::ApplicationEnvironment {
         return {}
     }
 
+    method environment_configuration_defaults {} {
+        return {}
+    }
+
     method enabled {} {
         return $installed
     }

@@ -794,6 +794,133 @@ The following commands inspect or clear worker-local pending output:
 ::tclwire::io discard_buffer
 ```
 
+## Standard Channel Compatibility
+
+Applications that enable the `stdchans` environment can use Tcl's standard
+channel commands for `stdout` response output:
+
+```toml
+[http.legacy]
+class = "::example::LegacyApplication"
+file = "legacy.tcl"
+environment = "stdchans"
+```
+
+When a TclWire output transaction is active, `stdchans` shadows these global
+commands:
+
+```tcl
+puts ?-nonewline? ?stdout? $string
+flush stdout
+fconfigure stdout ?-option? ?-option value ...?
+chan configure stdout ?-option? ?-option value ...?
+chan puts ?-nonewline? ?stdout? $string
+chan flush stdout
+```
+
+Only `stdout` is virtualized. Operations on other channels are delegated to
+Tcl's native `puts`, `flush`, `fconfigure`, and `chan` implementations.
+
+For normal text output:
+
+```tcl
+method handle_request {request} {
+    puts "hello"
+    puts stdout "world"
+}
+```
+
+This is equivalent to writing text through `::tclwire::io puts`; the CGA
+completes the response when `handle_request` returns.
+
+For binary output through standard-channel syntax, configure virtual `stdout`
+before writing bytes:
+
+```tcl
+method handle_request {request} {
+    fconfigure stdout -translation binary
+    puts -nonewline stdout [binary format H* 0080ff]
+}
+```
+
+`chan configure` is equivalent:
+
+```tcl
+method handle_request {request} {
+    chan configure stdout -translation binary
+    chan puts -nonewline stdout [binary format H* 89504e470d0a]
+}
+```
+
+A first binary stdout write may establish the implicit response body mode as
+`binary` when no explicit response metadata has been sent and no response body
+has started. If the application declares response metadata itself, the declared
+`body_mode` must match later output:
+
+```tcl
+method handle_request {request} {
+    ::tclwire::io response 200 OK \
+        [list "Content-Type: application/octet-stream"] binary
+    fconfigure stdout -translation binary
+    puts -nonewline stdout $payload
+}
+```
+
+Changing virtual `stdout` back to text affects subsequent `puts stdout` calls:
+
+```tcl
+fconfigure stdout -translation lf -encoding utf-8
+puts stdout "text again"
+```
+
+Do not mix text and binary data in one pending worker buffer. Flush between
+mode changes when both forms are needed:
+
+```tcl
+fconfigure stdout -translation binary
+puts -nonewline stdout $binary_prefix
+flush stdout
+
+fconfigure stdout -translation lf -encoding utf-8
+puts stdout "text suffix"
+```
+
+With HTTP/1.1, `flush stdout` may also promote an eligible response to chunked
+streaming when the effective `stdchans` environment configuration has
+`auto_chunked_on_flush = true`. The `rivet` environment enables this default
+for its `stdchans` dependency; direct `stdchans` applications can configure it
+explicitly:
+
+```toml
+[env.stdchans]
+auto_chunked_on_flush = true
+```
+
+```tcl
+method handle_request {request} {
+    puts -nonewline stdout "first"
+    flush stdout
+    after 1000
+    puts -nonewline stdout "second"
+}
+```
+
+Non-`stdout` channels still behave like ordinary Tcl channels:
+
+```tcl
+method handle_request {request} {
+    set channel [open [file join [my document_root] data.txt] r]
+    try {
+        fconfigure $channel -encoding utf-8
+        set data [read $channel]
+    } finally {
+        close $channel
+    }
+
+    puts stdout $data
+}
+```
+
 ## Flush and Completion
 
 `::tclwire::io flush` first sends pending output as an `output` event and then

@@ -1098,14 +1098,14 @@ test http-connection-1.8a {debug logging includes resolved static file path} -bo
     list \
         [string match "HTTP/1.1 200 OK*" $response] \
         [string match \
-            "*static_file level=debug method=GET path=/index.html status=200 resolved_path=$file_path*" \
+            "*static_file level=debug method=GET path=/index.html original_path=/index.html status=200 resolved_path=$file_path*" \
             $log]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
     catch {file delete -force $docroot}
 } -result {1 1}
 
-test http-connection-1.8b {error logging includes resolved missing static file path} -body {
+test http-connection-1.8b {error logging includes original and resolved missing static file paths} -body {
     set docroot [file join [temporaryDirectory] tclwire-error-path-[pid]]
     file mkdir $docroot
     set file_path [file normalize [file join $docroot missing.txt]]
@@ -1123,7 +1123,7 @@ test http-connection-1.8b {error logging includes resolved missing static file p
     list \
         [string match "HTTP/1.1 404 Not Found*" $response] \
         [string match \
-            "*static_file level=error method=GET path=/missing.txt status=404 resolved_path=$file_path*" \
+            "*static_file level=error method=GET path=/missing.txt original_path=/missing.txt status=404 resolved_path=$file_path*" \
             $log]
 } -cleanup {
     ::tclwire::http_connection_test::cleanup
@@ -1340,6 +1340,146 @@ encoding = "utf-8"
     removeFile $streaming_application
     removeFile $streaming_status
 } -result {1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a running}
+
+test http-connection-1.12aa {
+    stdchans flush can promote a response to chunked streaming
+} -setup {
+    set stdchans_streaming_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::StdchansStreamingApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request} {
+        puts -nonewline stdout alpha
+        flush stdout
+        after 1500
+        puts -nonewline stdout beta
+    }
+}
+} stdchans-streaming-application.tcl]
+    set stdchans_streaming_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+
+[env.stdchans]
+auto_chunked_on_flush = true
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::StdchansStreamingApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+environment = "stdchans"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $stdchans_streaming_application \
+   $project_root] stdchans-streaming-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $stdchans_streaming_config]
+
+    set channel [socket 127.0.0.1 8990]
+    chan configure $channel -blocking 0 -buffering none -translation binary
+    puts -nonewline $channel \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    flush $channel
+
+    set response {}
+    set first_deadline [expr {[clock milliseconds] + 1000}]
+    while {[clock milliseconds] < $first_deadline} {
+        update
+        append response [read $channel]
+        if {[string first "5\r\nalpha\r\n" $response] >= 0} {
+            break
+        }
+        after 10
+    }
+    set streamed [expr {[string first "5\r\nalpha\r\n" $response] >= 0}]
+
+    set deadline [expr {[clock milliseconds] + 3000}]
+    while {[clock milliseconds] < $deadline} {
+        update
+        append response [read $channel]
+        if {[eof $channel]} {
+            close $channel
+            break
+        }
+        after 10
+    }
+    catch {close $channel}
+
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 $separator-1]
+    set body [string range $response $separator+4 end]
+    list \
+        $streamed \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        [regexp -nocase {Transfer-Encoding: chunked} $headers] \
+        [expr {![regexp -nocase {Content-Length:} $headers]}] \
+        [binary encode hex $body]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $stdchans_streaming_config
+    removeFile $stdchans_streaming_application
+} -result {1 1 1 1 350d0a616c7068610d0a340d0a626574610d0a300d0a0d0a}
+
+test http-connection-1.12ab {
+    stdchans binary stdout can establish implicit binary response mode
+} -setup {
+    set stdchans_binary_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::StdchansBinaryApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request} {
+        fconfigure stdout -translation binary
+        puts -nonewline stdout [binary format H* 0080ff]
+    }
+}
+} stdchans-binary-application.tcl]
+    set stdchans_binary_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+
+[http]
+enabled = true
+port = 8990
+
+[http.localhost]
+class = "::tclwire::http_connection_test::StdchansBinaryApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+environment = "stdchans"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $stdchans_binary_application \
+   $project_root] stdchans-binary-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $stdchans_binary_config]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    set separator [string first "\r\n\r\n" $response]
+    set headers [string range $response 0 $separator-1]
+    set body [string range $response $separator+4 end]
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        [regexp -nocase {Content-Length:\s*3} $headers] \
+        [binary encode hex $body]
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $stdchans_binary_config
+    removeFile $stdchans_binary_application
+} -result {1 1 0080ff}
 
 test http-connection-1.12a {applications can close a connection without response} -setup {
     set close_application [makeFile {

@@ -6,7 +6,9 @@ lappend auto_path $project_root
 
 package require Thread
 package require fileutil
+package require tclwire::application_configuration 0.1
 package require tclwire::application::io 0.1
+package require tclwire::content_generator_agent 0.1
 package require tclwire::stdchans 0.1
 package require tclwire::rivet 0.1
 
@@ -69,10 +71,13 @@ test stdchans-1.2 {stdchans captures app-namespace stdout during active output t
 
         set output_event \
             [lindex [lindex $::tclwire::environment_test::events 0] 1]
+        set flush_event \
+            [lindex [lindex $::tclwire::environment_test::events 1] 1]
         list \
             $buffered \
             [dict get $output_event type] \
             [dict get $output_event data] \
+            [dict get $flush_event flags auto_chunked_on_flush] \
             [lmap item $::tclwire::environment_test::events {
                 dict get [lindex $item 1] type
             }]
@@ -87,7 +92,57 @@ test stdchans-1.2 {stdchans captures app-namespace stdout during active output t
         catch {::tclwire::envs::stdchans uninstall}
         $receiver destroy
     }
-} -result [list "alpha\nbetagamma\n" output "alpha\nbetagamma\n" {output flush complete}]
+} -result [list "alpha\nbetagamma\n" output "alpha\nbetagamma\n" 0 {output flush complete}]
+
+test stdchans-1.2a {
+    stdchans marks flush events when auto chunking is configured
+} -body {
+    set ::tclwire::environment_test::events {}
+    set receiver [::tclwire::environment_test::OutputReceiver new]
+    set configuration [::tclwire::ApplicationConfiguration new example \
+        [dict create \
+            class ::example::Application \
+            hosts localhost \
+            docroot /tmp \
+            encoding utf-8 \
+            application_paths /tmp \
+            environment stdchans \
+            environment_config [dict create \
+                stdchans [dict create auto_chunked_on_flush 1]]]]
+    namespace eval ::tclwire::app {
+        variable saved_path [namespace path]
+        namespace path [list ::tclwire::envs::stdchans]
+    }
+    try {
+        ::tclwire::app::begin_application \
+            [dict create configuration $configuration]
+        ::tclwire::envs::stdchans install
+        ::tclwire::io begin [::thread::id] $receiver 22
+        namespace eval ::tclwire::app {
+            puts -nonewline stdout alpha
+            flush stdout
+        }
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set flush_event \
+            [lindex [lindex $::tclwire::environment_test::events 1] 1]
+        dict get $flush_event flags auto_chunked_on_flush
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::app::end_application}
+        catch {
+            namespace eval ::tclwire::app {
+                namespace path $saved_path
+                unset saved_path
+            }
+        }
+        catch {::tclwire::envs::stdchans uninstall}
+        catch {$configuration destroy}
+        $receiver destroy
+    }
+} -result 1
 
 test stdchans-1.3 {stdchans delegates non-stdout puts to native channels} -body {
     set path [file join [temporaryDirectory] tclwire-stdchans-[pid].txt]
@@ -153,6 +208,8 @@ test stdchans-1.3a {stdchans delegates malformed puts calls to native command} -
 test stdchans-1.4 {stdchans install is idempotent and uninstall restores commands} -body {
     set original_puts [info command ::puts]
     set original_flush [info command ::flush]
+    set original_fconfigure [info command ::fconfigure]
+    set original_chan [info command ::chan]
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::envs::stdchans install
@@ -162,11 +219,13 @@ test stdchans-1.4 {stdchans install is idempotent and uninstall restores command
             $installed \
             [::tclwire::envs::stdchans enabled] \
             [expr {[info command ::puts] eq $original_puts}] \
-            [expr {[info command ::flush] eq $original_flush}]
+            [expr {[info command ::flush] eq $original_flush}] \
+            [expr {[info command ::fconfigure] eq $original_fconfigure}] \
+            [expr {[info command ::chan] eq $original_chan}]
     } finally {
         catch {::tclwire::envs::stdchans uninstall}
     }
-} -result {1 0 1 1}
+} -result {1 0 1 1 1 1}
 
 test stdchans-1.5 {stdchans keeps app stdout virtualized after response completion} -body {
     set ::tclwire::environment_test::events {}
@@ -209,6 +268,92 @@ test stdchans-1.5 {stdchans keeps app stdout virtualized after response completi
         $receiver destroy
     }
 } -result [list {} {output complete} "alpha\n"]
+
+test stdchans-1.6 {stdchans preserves virtual stdout channel configuration} -body {
+    try {
+        ::tclwire::envs::stdchans install
+        fconfigure stdout -encoding iso8859-1 -buffering none -buffersize 8192
+        set first [list \
+            [fconfigure stdout -encoding] \
+            [chan configure stdout -buffering] \
+            [fconfigure stdout -buffersize] \
+            [::tclwire::envs::stdchans::stdout_body_mode]]
+        chan configure stdout -translation binary
+        set binary [list \
+            [fconfigure stdout -translation] \
+            [::tclwire::envs::stdchans::stdout_body_mode]]
+        fconfigure stdout -translation lf -encoding utf-8
+        set text [list \
+            [chan configure stdout -translation] \
+            [fconfigure stdout -encoding] \
+            [::tclwire::envs::stdchans::stdout_body_mode]]
+        list $first $binary $text
+    } finally {
+        catch {fconfigure stdout -translation lf -encoding utf-8 \
+            -buffering line -buffersize 4096}
+        catch {::tclwire::envs::stdchans uninstall}
+    }
+} -result [list \
+    [list iso8859-1 none 8192 text] \
+    [list binary binary] \
+    [list lf utf-8 text]]
+
+test stdchans-1.7 {stdchans chan puts and flush stdout use TclWire I/O} -body {
+    set ::tclwire::environment_test::events {}
+    set receiver [::tclwire::environment_test::OutputReceiver new]
+    try {
+        ::tclwire::envs::stdchans install
+        ::tclwire::io begin [::thread::id] $receiver 26
+        chan puts stdout alpha
+        chan puts -nonewline stdout beta
+        chan flush stdout
+        chan puts gamma
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+
+        set output_events [lmap item $::tclwire::environment_test::events {
+            set event [lindex $item 1]
+            if {[dict get $event type] eq "output"} {
+                dict get $event data
+            } else {
+                continue
+            }
+        }]
+        list \
+            $output_events \
+            [lmap item $::tclwire::environment_test::events {
+                dict get [lindex $item 1] type
+            }]
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::envs::stdchans uninstall}
+        $receiver destroy
+    }
+} -result [list [list "alpha\nbeta" "gamma\n"] {output flush output complete}]
+
+test stdchans-1.8 {stdchans delegates fconfigure and chan for non-stdout channels} -body {
+    set path [file join [temporaryDirectory] tclwire-stdchans-channel-[pid].txt]
+    set channel {}
+    try {
+        ::tclwire::envs::stdchans install
+        set channel [open $path w]
+        fconfigure $channel -encoding utf-8 -buffering none
+        chan puts $channel "caf\u00e8"
+        chan flush $channel
+        close $channel
+        set channel {}
+        list \
+            [file size $path] \
+            [::fileutil::cat -encoding utf-8 $path]
+    } finally {
+        if {$channel ne {}} {
+            catch {close $channel}
+        }
+        catch {::tclwire::envs::stdchans uninstall}
+        file delete -force $path
+    }
+} -result [list 6 "caf\u00e8\n"]
 
 test rivet-1.1 {rivet environment exposes lifecycle metadata} -body {
     set object [::tclwire::envs::rivet object]

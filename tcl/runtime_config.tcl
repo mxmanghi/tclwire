@@ -417,6 +417,60 @@ namespace eval ::tclwire::config {
         return $names
     }
 
+    proc application_environment_default_config {environments} {
+        set configuration [dict create]
+        set seen {}
+        set pending $environments
+        while {[llength $pending]} {
+            set environment [lindex $pending 0]
+            set pending [lrange $pending 1 end]
+
+            set name [environment_config_name $environment]
+            if {$name eq {} || $name in $seen} {
+                continue
+            }
+            lappend seen $name
+
+            if {[catch {
+                set command [::tclwire::environment load $environment]
+                set environment_object [::tclwire::environment object $command]
+                set required_environments [$environment_object requires]
+            }]} {
+                continue
+            }
+            set defaults {}
+            if {[catch {
+                set defaults [$environment_object environment_configuration_defaults]
+            }]} {
+                set defaults {}
+            }
+            if {[catch {dict size $defaults}]} {
+                error "application environment '$name' configuration defaults must be a dictionary"
+            }
+            dict for {target_environment options} $defaults {
+                set target_environment [environment_config_name $target_environment]
+                if {$target_environment eq {}} {
+                    error "application environment '$name' configuration default target must not be empty"
+                }
+                if {[catch {dict size $options}]} {
+                    error "application environment '$name' configuration default for $target_environment must be a dictionary"
+                }
+                set inherited {}
+                if {[dict exists $configuration $target_environment]} {
+                    set inherited [dict get $configuration $target_environment]
+                }
+                dict set configuration $target_environment \
+                    [dict merge $inherited $options]
+            }
+            foreach required $required_environments {
+                if {[environment_config_name $required] ni $seen} {
+                    lappend pending $required
+                }
+            }
+        }
+        return $configuration
+    }
+
     # Select the subset of the resolved environment repository relevant to one
     # application descriptor.  The selected map becomes the descriptor's
     # environment_config field and is serialized into worker-pool configuration.
@@ -429,7 +483,7 @@ namespace eval ::tclwire::config {
             error "application '$application_id' environment must be a list"
         }
 
-        set configuration [dict create]
+        set configuration [application_environment_default_config $environments]
         set local_repository [dict create]
         if {[dict exists $descriptor env]} {
             if {[catch {dict size [dict get $descriptor env]}]} {
@@ -446,8 +500,11 @@ namespace eval ::tclwire::config {
         }
         foreach environment_id [application_environment_config_names $environments] {
             set options [dict create]
+            if {[dict exists $configuration $environment_id]} {
+                set options [dict get $configuration $environment_id]
+            }
             if {[dict exists $repository $environment_id]} {
-                set options [dict get $repository $environment_id]
+                set options [dict merge $options [dict get $repository $environment_id]]
             }
             if {[dict exists $local_repository $environment_id]} {
                 set options [dict merge $options \

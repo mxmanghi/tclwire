@@ -281,12 +281,9 @@ oo::class create ::tclwire::CApplication {
 
         set fields [list "method=[::tclwire::logger::log_value [$request method]]" \
                          "path=[::tclwire::logger::log_value [$request path]]" \
-                         "status=$status"]
-
-        if {$resolved_path ne {}} {
-            lappend fields \
-                "resolved_path=[::tclwire::logger::log_value $resolved_path]"
-        }
+                         "original_path=[::tclwire::logger::log_value [$request url_path]]" \
+                         "status=$status" \
+                         "resolved_path=[::tclwire::logger::log_value $resolved_path]"]
 
         catch {
             set logger [::tclwire::logger::getlogger]
