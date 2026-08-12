@@ -219,7 +219,7 @@ namespace eval ::tclwire::config {
         return [expr {$field in {
             class package hosts encoding log_level reload_on_request
             retain_uploaded_files configure docroot libdir file environment
-            hostname admin errorlog server_path
+            hostname admin errorlog server_path env
             aliases minimum_workers maximum_workers
         }}]
     }
@@ -418,10 +418,31 @@ namespace eval ::tclwire::config {
         }
 
         set configuration [dict create]
+        set local_repository [dict create]
+        if {[dict exists $descriptor env]} {
+            if {[catch {dict size [dict get $descriptor env]}]} {
+                error "application '$application_id' env must be a dictionary"
+            }
+            dict for {environment_id options} [dict get $descriptor env] {
+                set environment_id [environment_config_name $environment_id]
+                if {$environment_id eq {}} {
+                    error "application '$application_id' env names must not be empty"
+                }
+                dict set local_repository $environment_id \
+                    [environment_config_options $environment_id $options]
+            }
+        }
         foreach environment_id [application_environment_config_names $environments] {
+            set options [dict create]
             if {[dict exists $repository $environment_id]} {
-                dict set configuration $environment_id \
-                    [dict get $repository $environment_id]
+                set options [dict get $repository $environment_id]
+            }
+            if {[dict exists $local_repository $environment_id]} {
+                set options [dict merge $options \
+                    [dict get $local_repository $environment_id]]
+            }
+            if {[dict size $options]} {
+                dict set configuration $environment_id $options
             }
         }
         return $configuration
@@ -478,6 +499,9 @@ namespace eval ::tclwire::config {
                                                                     hosts      {localhost 127.0.0.1}   \
                                                                     docroot    $docroot                \
                                                                     encoding   $default_encoding       \
+                                                                    configure  [dict create \
+                                                                        ::tclwire::CApplication \
+                                                                        [dict create directory_index [list index.html]]] \
                                                                     pool_policy [dict create minimum_workers 0 maximum_workers 20]]]
 
         return [dict create help                $help \
@@ -796,6 +820,9 @@ namespace eval ::tclwire::config {
                 if {[dict exists $descriptor configure]} {
                     dict set application configure [dict get $descriptor configure]
                 }
+                if {[dict exists $descriptor env]} {
+                    dict set application env [dict get $descriptor env]
+                }
                 if {[dict exists $application log_level]} {
                     dict set application log_level \
                         [normalize_log_level "$protocol.$application_id.log_level" \
@@ -924,6 +951,9 @@ namespace eval ::tclwire::config {
                     dict set descriptor environment_config $environment_config
                 } elseif {[dict exists $descriptor environment_config]} {
                     dict unset descriptor environment_config
+                }
+                if {[dict exists $descriptor env]} {
+                    dict unset descriptor env
                 }
                 dict set merged_applications $application_id $descriptor
             }

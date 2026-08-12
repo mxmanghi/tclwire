@@ -22,7 +22,23 @@ receives one newline-terminated JSON response.
 
 Returns thread accounting data from the shared accounting store.
 
-Arguments: none.
+Arguments:
+
+- none: return all thread records;
+- `-family <family>`: return only one thread family.
+
+The console client renders the PS columns with shorter labels:
+
+- `Thread`: thread id;
+- `Status`: current state;
+- `Family`: protocol or execution family;
+- `Workload`: current running workload;
+- `Cumulative WL`: historical workload;
+- `Run ms`: last completed run duration in milliseconds;
+- `Last Run`: last run start time;
+- `Created`: accounting record creation time;
+- `Command`: current or most recent command;
+- `Host`: current or most recent HTTP Host value.
 
 ### `SERVICES`
 
@@ -43,6 +59,23 @@ Arguments:
 - none: return all connection records;
 - `-port <portn>`: return connections for a listener port;
 - `-remote <remote-ip>`: return connections for a remote address.
+
+The console client renders the CONN columns with shorter labels:
+
+- `Connection`: connection accounting key;
+- `Status`: current connection state;
+- `Protocol`: protocol family;
+- `Service`: service id;
+- `Port`: listener port;
+- `Host`: remote peer host;
+- `Remote Port`: remote peer port;
+- `Worker`: assigned worker thread id;
+- `Last Transaction`: current or most recent transaction id;
+- `Command`: current or most recent protocol command;
+- `Count`: request count;
+- `Input`: bytes received;
+- `Output`: bytes sent;
+- `Started`: connection open time.
 
 When `debug_connection` is enabled by configuration, the response includes
 retained closed or failed rows and the close diagnostics `closed_at`,
@@ -71,6 +104,42 @@ Columns:
   connections.
 
 ### `CONF`
+
+Client-local command. Loads the configured TOML file and prints a configuration
+as an ASCII tree.
+
+Arguments:
+
+- none: construct and print the selected `::tclwire::ApplicationConfiguration`;
+  the selected application is `--application <id>` when supplied, otherwise the
+  configured `default_application`;
+- `<name>`: print the application configuration for application id `<name>`;
+  if no application with that id exists, print the environment configuration
+  named `<name>`.
+
+The client accepts these options for local configuration inspection:
+
+- `--config <path>`: TOML configuration file to load; when omitted, the client
+  uses the connected server's `config_file` value when available, otherwise it
+  falls back to `tclwire.toml.example`;
+- `--application <id>`: application id to inspect; defaults to the configured
+  `default_application`.
+
+This command does not require a live server connection. If the client can
+connect to the console socket and `--config` was not supplied, it asks the
+server for `SERVERCONF` and derives the local TOML path from the server's
+`global config_file` row. If the client cannot connect, it reports the
+connection error and continues so `CONF`, `HELP`, and `EXIT` remain available.
+
+Examples:
+
+```sh
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command CONF
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --application hello --command CONF
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command "CONF hello"
+```
+
+### `SERVERCONF`
 
 Returns the effective runtime configuration as a table. Rows use `scope` to
 separate global values from `service:<id>` and `host:<host>` values.
@@ -158,9 +227,12 @@ Single commands can be sent non-interactively:
 tclsh utils/tclwire_console.tcl --command PS
 tclsh utils/tclwire_console.tcl --command "CONN -port 8990"
 tclsh utils/tclwire_console.tcl --command CWORK
+tclsh utils/tclwire_console.tcl --command SERVERCONF
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command CONF
 tclsh utils/tclwire_console.tcl PS
 tclsh utils/tclwire_console.tcl CONN -port 8990
 tclsh utils/tclwire_console.tcl CWORK
+tclsh utils/tclwire_console.tcl SERVERCONF
 tclsh utils/tclwire_console.tcl LOGROTATE
 tclsh utils/tclwire_console.tcl SHUT
 ```

@@ -38,6 +38,12 @@ test stdchans-1.1 {stdchans environment exposes lifecycle metadata} -body {
             [info class superclasses [info object class $object]]}]
 } -result [list stdchans {} ::tclwire::envs::stdchans 0 1 1]
 
+test environment-1.1a {environment configuration requires CGA application configuration} -body {
+    set object [::tclwire::envs::stdchans object]
+    catch {$object configuration capture_stderr} message
+    set message
+} -result {no CGA environment application configuration is active}
+
 test stdchans-1.2 {stdchans captures app-namespace stdout during active output transaction} -body {
     set ::tclwire::environment_test::events {}
     set receiver [::tclwire::environment_test::OutputReceiver new]
@@ -349,6 +355,24 @@ test rivet-1.2 {rivet install creates Rivet namespaces and uninstall removes own
         catch {namespace delete ::rivet}
     }
 } -result {1 {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1} 1 1 1 1 1 1 1 1 1 1 0 0 0}
+
+test rivet-1.2a0 {rivet apache_log_error maps Apache levels and preserves error context} -body {
+    catch {::tclwire::envs::rivet uninstall}
+    catch {namespace delete ::Rivet}
+    catch {namespace delete ::rivet}
+    try {
+        ::tclwire::envs::rivet install
+        set ::errorInfo preserved-error-info
+        set ::errorCode {PRESERVED CODE}
+        set result [catch {::rivet::apache_log_error err "mapped error"} message]
+        list $result $message $::errorInfo $::errorCode
+    } finally {
+        unset -nocomplain ::errorInfo ::errorCode
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+    }
+} -result [list 0 {} preserved-error-info {PRESERVED CODE}]
 
 test rivet-1.2a {rivet abort_page records abort state and raises abort errorcode} -body {
     catch {::tclwire::envs::rivet uninstall}

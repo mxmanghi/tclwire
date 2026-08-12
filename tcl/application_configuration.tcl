@@ -256,6 +256,10 @@ oo::class create ::tclwire::ApplicationConfiguration {
         return [dict get $values $property]
     }
 
+    method exists {property} {
+        return [dict exists $values $property]
+    }
+
     method snapshot {} {
         return $values
     }

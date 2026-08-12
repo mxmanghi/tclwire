@@ -57,6 +57,14 @@ namespace eval ::tclwire::envs::stdchans {
         tailcall [object] enabled
     }
 
+    proc configuration {args} {
+        tailcall [object] configuration {*}$args
+    }
+
+    proc application_configuration {} {
+        tailcall [object] application_configuration
+    }
+
     proc install {} {
         tailcall [object] install
     }
@@ -195,6 +203,7 @@ namespace eval ::tclwire::envs::stdchans {
     }
 
     namespace export object name requires path_namespaces \
+                     application_configuration configuration \
                      enabled install uninstall puts flush \
                      stdout_body_mode set_stdout_body_mode
     namespace ensemble create

@@ -164,11 +164,11 @@ namespace eval ::tclwire::accounting {
                 set status $newstatus
                 switch $newstatus {
                     running {
-                        set last_run_start [clock seconds]
+                        set last_run_start [clock milliseconds]
                         set command        $tcl_command
                     }
                     idle {
-                        set last_run_end [clock seconds]
+                        set last_run_end [clock milliseconds]
                     }
                 }
             }

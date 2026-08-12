@@ -394,6 +394,7 @@ namespace eval ::tclwire::cga {
 
         install_exit_interceptor
         set configuration [::tclwire::ApplicationConfiguration deserialize $serialized_configuration]
+        envs::configure_application $configuration
         envs::install [$configuration environment]
 
         set pool_key $worker_pool_key
@@ -426,6 +427,7 @@ namespace eval ::tclwire::cga {
         variable path_namespaces {}
         variable application_namespace_path {}
         variable application_namespace_path_saved 0
+        variable application_configuration {}
 
     proc command {environment} {
         if {[string match ::* $environment]} {
@@ -542,7 +544,22 @@ namespace eval ::tclwire::cga {
         return
     }
 
-    proc install_one {environment} {
+    proc configure_application {configuration} {
+        variable application_configuration
+
+        if {$configuration ne {} && ![info object isa object $configuration]} {
+            error "CGA environment application configuration must be a TclOO object"
+        }
+        set application_configuration $configuration
+        return
+    }
+
+    proc application_configuration {} {
+        variable application_configuration
+        return $application_configuration
+    }
+
+    proc install_environment {environment} {
         variable installed
         variable installed_names
         variable installing
@@ -562,7 +579,7 @@ namespace eval ::tclwire::cga {
             set environment_object [object $command]
             set required_environments [$environment_object requires]
             foreach required $required_environments {
-                install_one $required
+                install_environment $required
             }
 
             $environment_object install
@@ -598,7 +615,7 @@ namespace eval ::tclwire::cga {
             [namespace eval ::tclwire::app {namespace path}]
         set application_namespace_path_saved 1
         foreach environment $environments {
-            install_one $environment
+            install_environment $environment
         }
         return
     }
@@ -610,6 +627,7 @@ namespace eval ::tclwire::cga {
         variable path_namespaces
         variable application_namespace_path
         variable application_namespace_path_saved
+        variable application_configuration
 
         if {$application_namespace_path_saved} {
             catch {
@@ -627,6 +645,7 @@ namespace eval ::tclwire::cga {
         set path_namespaces {}
         set application_namespace_path {}
         set application_namespace_path_saved 0
+        set application_configuration {}
         return
     }
     }
@@ -676,10 +695,10 @@ namespace eval ::tclwire::cga {
         }
         set application {}
         catch {::tclwire::app::end_application}
+        envs::shutdown
         if {[info object isa object $configuration]} {
             catch {$configuration destroy}
         }
-        envs::shutdown
         set initialized 0
         set pool_key {}
         set application_class {}

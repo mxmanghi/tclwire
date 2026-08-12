@@ -12,10 +12,15 @@ if {$project_root ni $::auto_path} {
 package require unix_sockets
 package require json
 package require tclreadline
+package require tclwire::runtime 0.1
+package require tclwire::configuration_tree 0.1
 
 namespace eval ::tclwire::console_client {
     variable socket_path [file normalize /tmp/tclwire.sock]
     variable channel      {}
+    variable config_file  tclwire.toml.example
+    variable config_file_explicit 0
+    variable application_id {}
     variable cmdcount    0
     variable history_file [file normalize ~/.tclwire-history]
     variable history_limit 200
@@ -25,7 +30,8 @@ namespace eval ::tclwire::console_client {
         SERVICES  {List running services with ports and descriptions.}
         CONN      {List connections; optionally filter by -port or -remote.}
         CWORK     {List connection worker workloads.}
-        CONF      {Show the effective runtime configuration.}
+        CONF      {Show the effective local application configuration.}
+        SERVERCONF {Show the server-provided runtime configuration table.}
         LOGROTATE {Reopen the access and error log files.}
         SHUT      {Request an orderly server shutdown.}
         RECONNECT {Reconnect to the console socket.}
@@ -35,8 +41,33 @@ namespace eval ::tclwire::console_client {
     variable timestamp_columns {
         last_run_start last_run_end created_on opened_at closed_at
     }
+    variable column_labels {
+        thread_id Thread
+        status Status
+        family Family
+        running_workload Workload
+        cumulative_workload {Cumulative WL}
+        run_time_ms {Run ms}
+        last_run_start {Last Run}
+        created_on Created
+        command Command
+        http_host Host
+        connection_key Connection
+        protocol Protocol
+        service_id Service
+        listener_port Port
+        peer_host Host
+        peer_port {Remote Port}
+        worker_thread_id Worker
+        current_transaction_id {Last Transaction}
+        current_command Command
+        request_count Count
+        bytes_in Input
+        bytes_out Output
+        opened_at Started
+    }
     proc usage {{channel stdout}} {
-        puts $channel "Usage: tclsh utils/tclwire_console.tcl ?--unix-socket path? ?--command command? ?command ...?"
+        puts $channel "Usage: tclsh utils/tclwire_console.tcl ?--config path? ?--application id? ?--unix-socket path? ?--command command? ?command ...?"
         puts $channel ""
         print_help $channel
     }
@@ -56,6 +87,9 @@ namespace eval ::tclwire::console_client {
 
     proc parse_args {argv} {
         variable socket_path
+        variable config_file
+        variable config_file_explicit
+        variable application_id
         set command {}
         for {set i 0} {$i < [llength $argv]} {incr i} {
             set arg [lindex $argv $i]
@@ -70,6 +104,21 @@ namespace eval ::tclwire::console_client {
                         error "missing value after --unix-socket"
                     }
                     set socket_path [file normalize [lindex $argv $i]]
+                }
+                --config {
+                    incr i
+                    if {$i >= [llength $argv]} {
+                        error "missing value after --config"
+                    }
+                    set config_file [lindex $argv $i]
+                    set config_file_explicit 1
+                }
+                --application {
+                    incr i
+                    if {$i >= [llength $argv]} {
+                        error "missing value after --application"
+                    }
+                    set application_id [lindex $argv $i]
                 }
                 --command {
                     incr i
@@ -132,6 +181,152 @@ namespace eval ::tclwire::console_client {
         return [expr {[string toupper [string trim $command]] eq "RECONNECT"}]
     }
 
+    proc command_name {command} {
+        set words [regexp -all -inline {\S+} [string trim $command]]
+        if {[llength $words] == 0} {
+            return {}
+        }
+        return [string toupper [lindex $words 0]]
+    }
+
+    proc is_local_command {command} {
+        return [expr {[command_name $command] in {CONF HELP EXIT RECONNECT}}]
+    }
+
+    proc config_file_from_serverconf {response} {
+        if {![dict get $response ok] ||
+                [dict get $response type] ne "table"} {
+            return {}
+        }
+        foreach row [dict get $response rows] {
+            if {[dict get $row scope] eq "global" &&
+                    [dict get $row name] eq "config_file"} {
+                return [dict get $row value]
+            }
+        }
+        return {}
+    }
+
+    proc derive_config_file_from_server {} {
+        variable channel
+        variable config_file
+        variable config_file_explicit
+
+        if {$config_file_explicit || $channel eq {}} {
+            return
+        }
+        if {[catch {
+            set response [send_command $channel SERVERCONF]
+            set server_config_file [config_file_from_serverconf $response]
+        } message]} {
+            puts stderr "could not derive configuration file from server: $message"
+            return
+        }
+        if {$server_config_file ne {}} {
+            set config_file $server_config_file
+        }
+        return
+    }
+
+    proc config_argv {} {
+        variable config_file
+        if {$config_file eq "."} {
+            return {}
+        }
+        return [list --config $config_file]
+    }
+
+    proc load_runtime_configuration {} {
+        derive_config_file_from_server
+        set config [::tclwire::runtime prepare_config [config_argv]]
+        return $config
+    }
+
+    proc application_configuration_tree {config selected_application} {
+        set dispatcher [::tclwire::ApplicationDispatcher new $config]
+        try {
+            set application_config \
+                [$dispatcher application_configuration $selected_application]
+            return [$application_config serialize]
+        } finally {
+            $dispatcher destroy
+        }
+    }
+
+    proc environment_configuration_tree {config environment_name} {
+        return [dict create \
+            type tclwire.environment_configuration \
+            version 1 \
+            environment_id $environment_name \
+            values [dict get $config environment_configs $environment_name]]
+    }
+
+    proc load_configuration_tree {{target {}}} {
+        variable application_id
+
+        set config [load_runtime_configuration]
+        if {$target eq {}} {
+            set target $application_id
+            if {$target eq {}} {
+                set target [dict get $config default_application]
+            }
+        }
+
+        if {[dict exists $config applications $target]} {
+            return [application_configuration_tree $config $target]
+        }
+        if {[dict exists $config environment_configs $target]} {
+            return [environment_configuration_tree $config $target]
+        }
+        error "unknown application or environment: $target"
+    }
+
+    proc load_application_configuration {} {
+        tailcall load_configuration_tree
+    }
+
+    proc print_local_conf {command} {
+        set words [regexp -all -inline {\S+} [string trim $command]]
+        if {[llength $words] > 2} {
+            puts stderr "CONF accepts zero or one argument"
+            return 1
+        }
+        set target {}
+        if {[llength $words] == 2} {
+            set target [lindex $words 1]
+        }
+        if {[catch {load_configuration_tree $target} configuration]} {
+            puts stderr $configuration
+            return 1
+        }
+        puts [::tclwire::configuration tree $configuration]
+        return 0
+    }
+
+    proc print_local_command {command} {
+        switch -exact -- [command_name $command] {
+            CONF {
+                return [print_local_conf $command]
+            }
+            HELP {
+                print_help
+                return 0
+            }
+            EXIT {
+                return 0
+            }
+            RECONNECT {
+                if {[catch {reconnect} message]} {
+                    puts stderr $message
+                    return 1
+                }
+                puts "reconnected"
+                return 0
+            }
+        }
+        error "unknown local command: $command"
+    }
+
     proc send_command {channel command} {
         puts $channel $command
         flush $channel
@@ -152,13 +347,24 @@ namespace eval ::tclwire::console_client {
         if {$value eq {}} {
             return {}
         }
-        if {![string is integer -strict $value]} {
+        if {![string is wideinteger -strict $value]} {
             return $value
         }
         if {$value == 0} {
             return {}
         }
+        if {$value > 100000000000} {
+            set value [expr {$value / 1000}]
+        }
         return [clock format $value -format "%d-%m-%Y %H:%M:%S"]
+    }
+
+    proc display_column {column} {
+        variable column_labels
+        if {[dict exists $column_labels $column]} {
+            return [dict get $column_labels $column]
+        }
+        return $column
     }
 
     proc display_value {row column} {
@@ -172,7 +378,9 @@ namespace eval ::tclwire::console_client {
 
     proc matrix_from_response {response} {
         set columns [dict get $response columns]
-        set matrix [list $columns]
+        set matrix [list [lmap column $columns {
+            display_column $column
+        }]]
         foreach row [dict get $response rows] {
             lappend matrix [lmap column $columns {
                 display_value $row $column
@@ -317,16 +525,17 @@ namespace eval ::tclwire::console_client {
                 }
                 ::tclreadline::readline add $line
                 if {[is_help_command $line]} {
-                    print_help
+                    print_local_command $line
                     incr cmdcount
                     continue
                 }
                 if {[is_reconnect_command $line]} {
-                    if {[catch {reconnect} message]} {
-                        puts stderr $message
-                    } else {
-                        puts "reconnected"
-                    }
+                    print_local_command $line
+                    incr cmdcount
+                    continue
+                }
+                if {[command_name $line] eq "CONF"} {
+                    print_local_command $line
                     incr cmdcount
                     continue
                 }
@@ -348,17 +557,27 @@ namespace eval ::tclwire::console_client {
     proc main {argv} {
         set command [parse_args $argv]
         variable channel
-        if {[llength $command] > 0 && [is_exit_command [join $command " "]]} {
+        set command_line [join $command " "]
+        if {[llength $command] > 0 && [is_exit_command $command_line]} {
             exit 0
         }
-        if {[llength $command] > 0 && [is_help_command [join $command " "]]} {
-            print_help
-            exit 0
+        if {[llength $command] > 0 &&
+                [is_local_command $command_line] &&
+                [command_name $command_line] ne "CONF"} {
+            exit [print_local_command $command_line]
         }
-        set channel [connect]
+        if {[catch {connect} connected_channel]} {
+            set channel {}
+            puts stderr "could not connect to TclWire console at $::tclwire::console_client::socket_path: $connected_channel"
+        } else {
+            set channel $connected_channel
+        }
         try {
+            if {[llength $command] > 0 && [is_local_command $command_line]} {
+                exit [print_local_command $command_line]
+            }
             if {[llength $command] > 0} {
-                set response [send_command $channel [join $command " "]]
+                set response [send_command [ensure_connected] $command_line]
                 exit [print_response $response]
             }
             interactive $channel

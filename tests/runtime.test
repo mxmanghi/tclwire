@@ -6,11 +6,13 @@ set project_root [file dirname [file dirname [file normalize [info script]]]]
 lappend auto_path $project_root
 
 package require tclwire::runtime 0.1
+package require tclwire::configuration_tree 0.1
 
 namespace eval ::tclwire::runtime_test {
     variable logfile [file join [temporaryDirectory] tclwire-runtime-[pid].log]
     variable logerr [file join [temporaryDirectory] tclwire-runtime-[pid].err]
     variable config_files {}
+    variable prepared_docroots {}
 
     proc cleanup {} {
         variable logfile
@@ -35,6 +37,43 @@ namespace eval ::tclwire::runtime_test {
         close $channel
         lappend config_files $directory
         return $path
+    }
+
+    proc stub_docroot_preparation {} {
+        variable prepared_docroots
+        set prepared_docroots {}
+        rename ::tclwire::support ::tclwire::runtime_test::original_support
+        proc ::tclwire::support {subcommand args} {
+            if {$subcommand eq "runtime_doc_source"} {
+                return runtime-doc
+            }
+            if {$subcommand eq "prepare_doc_root"} {
+                lappend ::tclwire::runtime_test::prepared_docroots $args
+                return [lindex $args 0]
+            }
+            tailcall ::tclwire::runtime_test::original_support \
+                $subcommand {*}$args
+        }
+        rename ::tclwire::ApplicationDispatcher \
+            ::tclwire::runtime_test::OriginalApplicationDispatcher
+        oo::class create ::tclwire::ApplicationDispatcher {
+            constructor {config} {}
+            method start {} {}
+        }
+    }
+
+    proc restore_docroot_preparation {} {
+        catch {rename ::tclwire::support {}}
+        catch {rename ::tclwire::runtime_test::original_support \
+            ::tclwire::support}
+        catch {rename ::tclwire::ApplicationDispatcher {}}
+        catch {rename ::tclwire::runtime_test::OriginalApplicationDispatcher \
+            ::tclwire::ApplicationDispatcher}
+    }
+
+    proc prepared_docroot_calls {} {
+        variable prepared_docroots
+        return $prepared_docroots
     }
 }
 
@@ -490,13 +529,15 @@ test runtime-1.5a {missing document root is seeded from generated documentation}
         [file isfile [file join $docroot application_configuration.html]] \
         [file isfile [file join $docroot configuration_tree.html]] \
         [file isfile [file join $docroot chores.html]] \
+        [file isfile [file join $docroot environments.html]] \
         [string match {*href="application_configuration.html"*} $index] \
         [string match {*href="configuration_tree.html"*} $index] \
-        [string match {*href="chores.html"*} $index]
+        [string match {*href="chores.html"*} $index] \
+        [string match {*href="environments.html"*} $index]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $docroot}
-} -result {1 1 1 1 1 1 1 1 1}
+} -result {1 1 1 1 1 1 1 1 1 1 1}
 
 test runtime-1.5b {existing document root is not seeded or overwritten} -body {
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
@@ -538,18 +579,87 @@ test runtime-1.5d {forced document root seeding writes existing directory} -body
         [file isfile [file join $docroot application_configuration.html]] \
         [file isfile [file join $docroot configuration_tree.html]] \
         [file isfile [file join $docroot chores.html]] \
+        [file isfile [file join $docroot environments.html]] \
         [string match {*href="application_configuration.html"*} $index] \
         [string match {*href="configuration_tree.html"*} $index] \
-        [string match {*href="chores.html"*} $index]
+        [string match {*href="chores.html"*} $index] \
+        [string match {*href="environments.html"*} $index]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
     catch {file delete -force $docroot}
-} -result {1 1 1 1 1 1 1 1}
+} -result {1 1 1 1 1 1 1 1 1 1}
 
 test runtime-1.5e {force docroot seeding is a global CLI option} -body {
     set config [::tclwire::runtime prepare_config [list --force-docroot-seeding]]
     dict get $config force_docroot_seeding
 } -result 1
+
+test runtime-1.5ea {
+    runtime prepares only the default application docroot
+} -body {
+    set root [file join [temporaryDirectory] tclwire-runtime-docroots-[pid]]
+    set config_file [::tclwire::runtime_test::make_config [format {
+[tclwire]
+default_application = "default"
+
+[http.default]
+hosts = "localhost"
+docroot = "%s"
+
+[http.secondary]
+hosts = "secondary.example.test"
+docroot = "%s"
+} [file join $root default] [file join $root secondary]]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    ::tclwire::runtime_test::stub_docroot_preparation
+    ::tclwire::runtime::ensure_application_dispatcher $config
+    ::tclwire::runtime_test::prepared_docroot_calls
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    ::tclwire::runtime_test::restore_docroot_preparation
+    catch {file delete -force $root}
+} -result [list [list \
+    [file normalize [file join [temporaryDirectory] \
+        tclwire-runtime-docroots-[pid] default]] \
+    runtime-doc \
+    0]]
+
+test runtime-1.5eb {
+    forced docroot seeding applies only to the default application
+} -body {
+    set root [file join [temporaryDirectory] tclwire-runtime-docroots-[pid]]
+    set default_docroot [file join $root default]
+    set secondary_docroot [file join $root secondary]
+    file mkdir $default_docroot
+    file mkdir $secondary_docroot
+    ::fileutil::writeFile -encoding utf-8 \
+        [file join $secondary_docroot index.html] secondary
+    set config_file [::tclwire::runtime_test::make_config [format {
+[tclwire]
+default_application = "default"
+
+[http.default]
+hosts = "localhost"
+docroot = "%s"
+
+[http.secondary]
+hosts = "secondary.example.test"
+docroot = "%s"
+} $default_docroot $secondary_docroot]]
+    set config [::tclwire::runtime prepare_config \
+        [list --config $config_file --force-docroot-seeding]]
+    ::tclwire::runtime_test::stub_docroot_preparation
+    ::tclwire::runtime::ensure_application_dispatcher $config
+    ::tclwire::runtime_test::prepared_docroot_calls
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    ::tclwire::runtime_test::restore_docroot_preparation
+    catch {file delete -force $root}
+} -result [list [list \
+    [file normalize [file join [temporaryDirectory] \
+        tclwire-runtime-docroots-[pid] default]] \
+    runtime-doc \
+    1]]
 
 test runtime-1.5f {manual site pages are copied below manual directory} -body {
     set original_project_root $::tclwire::support::project_root
@@ -997,6 +1107,10 @@ hosts = "localhost"
 hosts = "rivet.rivetweb.org"
 environment = "rivet"
 docroot = "rivet"
+
+[http.rivet.env.rivet]
+UploadMaxSize = 2000
+AfterScript = "after.tcl"
 }]
     set config [::tclwire::runtime prepare_config [list --config $config_file]]
     set descriptor [dict get $config applications rivet]
@@ -1009,10 +1123,41 @@ docroot = "rivet"
         [dict get $descriptor environment_config stdchans capture_stderr] \
         [dict get $descriptor environment_config rivet UploadMaxSize] \
         [dict get $descriptor environment_config rivet capture_stderr] \
+        [dict get $descriptor environment_config rivet BeforeScript] \
+        [dict get $descriptor environment_config rivet AfterScript] \
         [dict exists $descriptor environment_config rivet-dev]
 } -cleanup {
     ::tclwire::runtime_test::cleanup
-} -result {1000 true 100 before.tcl true true 1000 true 0}
+} -result {1000 true 100 before.tcl true true 2000 true before.tcl after.tcl 0}
+
+test runtime-1.12aea {
+    application-local environment configuration works without global table
+} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "default"
+docroot = "www"
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost"
+
+[http.local]
+hosts = "local.example.test"
+environment = "stdchans"
+
+[http.local.env.stdchans]
+capture_stderr = true
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    set descriptor [dict get $config applications local]
+    list \
+        [dict exists $config environment_configs stdchans] \
+        [dict get $descriptor environment_config stdchans capture_stderr]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {0 true}
 
 test runtime-1.12af {
     environment configuration rejects cyclic parent inheritance
@@ -1248,8 +1393,58 @@ message = "Hello from concise config"
     removeFile $application_file
 } -result [list \
     ::tclwire::app::Hello \
-    [dict create ::tclwire::app::Hello \
+    [dict create \
+        ::tclwire::CApplication [dict create directory_index [list index.html]] \
+        ::tclwire::app::Hello \
         [dict create message {Hello from concise config}]]]
+
+test runtime-1.13bac {virtual host configuration tree includes inherited directory_index} -setup {
+    set application_file [makeFile {
+package require tclwire::application 0.1
+oo::class create Hello {
+    superclass ::tclwire::CApplication
+}
+} inherited-directory-index-hello.tcl]
+} -body {
+    set config_file [::tclwire::runtime_test::make_config [format {
+[tclwire]
+docroot = "www"
+default_application = "default"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost 127.0.0.1"
+
+[http.default.configure]
+directory_index = "index.html index.rvt"
+
+[http.hello]
+class = "Hello"
+file = "%s"
+
+[http.hello.configure]
+message = "Hello from concise config"
+} [list $application_file]]]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    try {
+        set configuration [$dispatcher application_configuration hello]
+        set tree [::tclwire::configuration tree [$configuration serialize]]
+        list \
+            [regexp {::tclwire::CApplication\n[ |`-]*directory_index\n[ |`-]*\[0\] = index\.html\n[ |`-]*\[1\] = index\.rvt} $tree] \
+            [regexp {::tclwire::app::Hello\n[ |`-]*message = Hello from concise config} $tree]
+    } finally {
+        $dispatcher destroy
+    }
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+    removeFile $application_file
+} -result {1 1}
 
 test runtime-1.13baa {unquoted dotted application tables are rejected} -body {
     set config_file [::tclwire::runtime_test::make_config {
