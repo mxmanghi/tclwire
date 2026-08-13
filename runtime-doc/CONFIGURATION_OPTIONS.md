@@ -294,11 +294,8 @@ With two arguments, it returns one value from that environment dictionary.
 Missing environment names return an empty dictionary; missing keys in an
 existing environment configuration are errors.
 
-For the Rivet environment, `hooks` may name a Tcl file relative to the
-application document root. TclWire loads it into a private Rivet hook namespace
-when a worker initializes. A `url_rewrite` procedure in that file receives the
-request before script resolution and can call `$request rewrite /new/path`.
-The original wire target remains available through `$request original_target`.
+`env.rivet.hooks` is no longer supported. Use the application-level
+`rewrite_hook` option instead.
 
 ## HTTP Application Options
 
@@ -366,6 +363,16 @@ then from global runtime defaults.
   `::tclwire::CApplication` supports `directory_index`, a space-separated list
   of plain file names searched when a URL maps to a directory. The default is
   `index.html`.
+
+`rewrite_hook`
+: Optional Tcl file relative to the application document root. It must define
+  `url_rewrite {request}`. TclWire invokes it once after application selection
+  and before resource resolution or an environment handler. It can call
+  `$request rewrite /new/path?query=value`, or pass a dictionary as the second
+  argument to have query names and values URL-encoded. Use
+  `$request rewrite_query /new/path a=1&b=2` for a pre-encoded query string.
+  `original_target` retains the wire target. A hook failure uses normal CGA
+  error logging and produces the normal failure response.
 
 `minimum_workers`
 : Minimum number of content-generator workers for the application pool.

@@ -61,7 +61,6 @@ oo::class create ::tclwire::envs::RivetEnvironment {
 
         ::tclwire::cga::configure_exit_command $previous_exit_command
         set previous_exit_command {}
-        catch {namespace delete ::tclwire::envs::rivet::hooks}
         catch {namespace delete ::rivet}
         catch {namespace delete ::Rivet}
         return

@@ -154,6 +154,47 @@ test http-request-1.1rewritea {HTTP request rejects non-origin rewrite targets} 
     }
 } -result {1 {rewritten HTTP target must be an absolute path}}
 
+test http-request-1.1rewriteb {
+    HTTP request rewrite encodes dictionary queries and accepts normalized strings
+} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET target /legacy?old=value path /legacy query old=value \
+        version 1.1 headers [dict create] body_media raw body_storage in_memory \
+        body {} body_size 0 transaction_id 3]]
+    try {
+        $request rewrite /current [dict create \
+            title {Tcl & Rivet} language {caffè}]
+        set dictionary_result [list \
+            [$request target] [$request query] [$request query_dict]]
+        $request rewrite_query /final {a=1&b=two+words}
+        set string_result [list \
+            [$request target] [$request query] [$request query_dict]]
+        list $dictionary_result $string_result [$request original_target]
+    } finally {
+        $request destroy
+    }
+} -result [list \
+    [list /current?title=Tcl+%26+Rivet&language=caff%c3%a8 \
+          title=Tcl+%26+Rivet&language=caff%c3%a8 \
+          [dict create title {Tcl & Rivet} language {caffè}]] \
+    [list /final?a=1&b=two+words a=1&b=two+words \
+          [dict create a 1 b {two words}]] \
+    /legacy?old=value]
+
+test http-request-1.1rewritec {HTTP request rejects malformed separate queries atomically} -body {
+    set request [::tclwire::HttpRequest new [dict create \
+        method GET target /legacy?old=value path /legacy query old=value \
+        version 1.1 headers [dict create] body_media raw body_storage in_memory \
+        body {} body_size 0 transaction_id 3]]
+    try {
+        set failed [catch {$request rewrite_query /current {name=bad value}} message]
+        list $failed $message [$request target] [$request path] [$request query]
+    } finally {
+        $request destroy
+    }
+} -result [list 1 {rewritten HTTP query must be normalized} \
+    /legacy?old=value /legacy old=value]
+
 test http-request-1.1a {HTTP request exposes origin and absolute URL helpers} -body {
     set request [::tclwire::HttpRequest new [dict create \
         method GET \
@@ -1580,7 +1621,7 @@ puts $message
 } -result "https://rivet.example.test:9443/docs/links.tcl?current=yes\nhttps://rivet.example.test:9443/docs/sibling.tcl\nhttps://rivet.example.test:9443/assets/site.css\nhttps://rivet.example.test:9443/docs/search.tcl?q=hello+world&plus=a%2bb&unicode=caff%c3%a8\nhttps://rivet.example.test:9443/existing?x=1&y=2\nhttps://cdn.example.test/file.css?v=1\n1\nwrong # args: should be \"::rivet::makeurl ?path? ?name value ...?\"\n"
 
 test application-configuration-1.4e02 {
-    rivet hooks rewrite requests before script resolution
+    application rewrite_hook rewrites requests before environment handling
 } -setup {
     set docroot [makeDirectory rivet-hooks-docroot]
     file mkdir [file join $docroot rivet]
@@ -1613,7 +1654,7 @@ puts "[$request original_target]|[$request target]|[$request path]|[$request que
                 package tclwire::application \
                 hosts rivet.example.test \
                 environment {rivet} \
-                environment_config [dict create rivet [dict create hooks rivet/hooks.tcl]]]]]
+                rewrite_hook rivet/hooks.tcl]]]
     set dispatcher [::tclwire::ApplicationDispatcher new $config]
     set configuration [$dispatcher application_configuration rivet-app]
 } -body {

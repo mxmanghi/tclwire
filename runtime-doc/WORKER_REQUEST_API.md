@@ -25,7 +25,8 @@ One request follows this path:
    the request descriptor to it asynchronously.
 6. `::tclwire::cga::execute` creates one application instance and one
    `HttpRequest` object.
-7. The application handles the request through
+7. The application framework runs its optional `rewrite_hook`, then the
+   application handles the request through
    `handle_request {request}`.
 8. Application output commands send sequenced events to the connection thread.
 9. `HttpConnectionAgent` validates the events, constructs or streams the HTTP
@@ -150,6 +151,7 @@ The public object methods are:
 | `libdir` | Application library directory added to worker `auto_path`, or empty. |
 | `environment` | List of enabled application environment adapters. |
 | `environment_config` | Dictionary of environment-specific option dictionaries. |
+| `rewrite_hook` | Docroot-relative request-rewrite hook file, or empty. |
 | `log_level` | Application log-level override, or empty. |
 | `reload_on_request` | Boolean flag that retires a file-backed worker after each request. |
 | `retain_uploaded_files` | Boolean flag controlling whether uploaded-file spool paths are retained after request cleanup. |
@@ -230,6 +232,7 @@ initialized. For each request, the CGA invokes:
 ```tcl
 set application [$application_class new $application_descriptor]
 set request [::tclwire::HttpRequest new $request_descriptor]
+$application rewrite_request $request
 $application handle_request $request
 ```
 
@@ -290,7 +293,7 @@ complete files, and byte ranges. Derived applications normally override
 The CGA wraps the transported dictionary in `::tclwire::HttpRequest`.
 Applications do not receive or mutate the Connection Agent's authoritative
 transaction state. Request metadata is read-only except for application-local
-path mapping and the `rewrite` method, which updates the worker's copy before
+path mapping and the rewrite methods, which update the worker's copy before
 application routing.
 
 The request object exposes:
@@ -298,9 +301,10 @@ The request object exposes:
 | Method | Result |
 | --- | --- |
 | `method` | HTTP method. |
-| `target` | Current request target. Initially the wire target; changed by `rewrite`. |
+| `target` | Current request target. Initially the wire target; changed by a rewrite method. |
 | `original_target` | Original wire target, retained after a rewrite. |
-| `rewrite target` | Replace the origin-form target and synchronize `target`, `url_path`, `path`, `query`, and decoded query parameters. |
+| `rewrite target ?query_dict?` | Replace the origin-form target. An optional query dictionary is URL-encoded safely. |
+| `rewrite_query target normalized_query` | Replace the origin-form target using a pre-encoded normalized query string. |
 | `path` | Current application-routing path. It is initially the target path before the first `?`. |
 | `query` | Raw query text without the leading `?`. |
 | `query_dict` | Decoded query parameter dictionary. |
@@ -333,7 +337,48 @@ The request object exposes:
 | `remote_port` | Client port. |
 | `application_id` | Selected application registration name. |
 
-There are no request mutation methods and no channel accessor.
+Apart from application-local path mapping and rewriting, there are no request
+mutation methods and no channel accessor.
+
+### Request Rewriting
+
+Rewriting is application-local: it runs after the `Host` header selected an
+application, so it cannot select another virtual host or application pool. It
+must use an origin-form path beginning with `/`; full URLs are not accepted.
+
+Use the optional dictionary argument to encode query names and values safely:
+
+```tcl
+$request rewrite /index.rvt [dict create \
+    page {home & news} \
+    language it]
+```
+
+This sets the target to:
+
+```text
+/index.rvt?page=home+%26+news&language=it
+```
+
+Use `rewrite_query` only when the query text has already been normalized and
+URL-encoded:
+
+```tcl
+$request rewrite_query /index.rvt {page=home+news&language=it}
+```
+
+For compatibility, a single `rewrite` argument may include the query directly:
+
+```tcl
+$request rewrite /index.rvt?page=home+news
+```
+
+The dictionary and pre-encoded forms keep their arguments separate to avoid
+Tcl ambiguity: some query strings can also be valid Tcl dictionaries. Both
+methods validate the complete replacement before changing the request. A
+successful rewrite synchronizes `target`, `url_path`, `path`, `query`, and
+`query_dict`, clears any previous `local_path`, and preserves the first
+pre-rewrite target in `original_target`.
 
 The cookie jar supports:
 

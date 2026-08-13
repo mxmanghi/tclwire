@@ -882,6 +882,7 @@ namespace eval ::tclwire::cga {
         try {
             ::tclwire::app::begin_request [dict create  request            $request \
                                                         request_descriptor $request_descriptor]
+            $application rewrite_request $request
             $application handle_request $request
             if {[::tclwire::io::accepting_output]} {
                 ::tclwire::io complete

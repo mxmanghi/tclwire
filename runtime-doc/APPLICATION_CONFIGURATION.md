@@ -39,6 +39,7 @@ configure {}
 aliases {}
 log_level {}
 reload_on_request 0
+rewrite_hook {}
 retain_uploaded_files 0
 pool_policy {minimum_workers 0 maximum_workers 20}
 ```

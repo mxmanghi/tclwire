@@ -130,6 +130,11 @@ file = "tcl/application.tcl"
 # chore = "application-maintenance-chore.tcl"
 # chore_class = "ApplicationMaintenanceChore"
 
+# Optional application-wide URL rewrite hook. This file is relative to the
+# application's docroot and must define `url_rewrite {request}`. The hook runs
+# before static-resource or environment-specific handling.
+# rewrite_hook = "rewrite.tcl"
+
 # Optional per-application override for [tclwire].libdir.
 # libdir = "/opt/tclwire-apps/default"
 

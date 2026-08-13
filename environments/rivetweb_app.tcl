@@ -17,15 +17,8 @@ oo::class create ::tclwire::envs::app::Rivetweb {
     superclass ::tclwire::envs::app::Rivet
 
     method handle_request {request} {
-        variable url_rewrite_hook
         set request_directory [pwd]
         try {
-            # Rivetweb overrides Rivet's request handler, so it must run the
-            # inherited hook itself. Do this before checking the entry point:
-            # a hook may rewrite any URL to `/index.rvt`.
-            if {$url_rewrite_hook ne {}} {
-                $url_rewrite_hook $request
-            }
             ::rivet::apache_log_error info "Rivet request script: [$request target]"
             set request_path [$request path]
             # HttpRequest paths are absolute URL paths. A direct request for

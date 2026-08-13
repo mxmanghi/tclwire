@@ -143,6 +143,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
                                   environment {} \
                                   environment_config {} \
                                   configure   {} \
+                                  rewrite_hook {} \
                                   log_level   {} \
                                   hostname    {} \
                                   admin       {} \

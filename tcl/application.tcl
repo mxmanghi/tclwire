@@ -32,6 +32,7 @@ namespace eval ::tclwire {}
 
 oo::class create ::tclwire::CApplication {
     variable configuration_object document_root content_encoding directory_index aliases
+    variable rewrite_hook
 
     constructor {application_descriptor} {
         if {[catch {dict size $application_descriptor}]} {
@@ -63,6 +64,7 @@ oo::class create ::tclwire::CApplication {
         set content_encoding [dict get $application_descriptor encoding]
         set directory_index  [my configured_directory_index]
         set aliases          [dict get $complete_descriptor aliases]
+        set rewrite_hook     [my configured_rewrite_hook]
     }
 
     method configuration_object {} {
@@ -111,6 +113,40 @@ oo::class create ::tclwire::CApplication {
             }
         }
         return $names
+    }
+
+    method configured_rewrite_hook {} {
+        set hook [string trim [$configuration_object get rewrite_hook]]
+        if {$hook eq {}} {
+            return {}
+        }
+        if {[file pathtype $hook] ne "relative"} {
+            error "application rewrite_hook must name a file relative to the document root"
+        }
+
+        set hook_file [file normalize [file join $document_root $hook]]
+        if {($hook_file ne $document_root) &&
+                ![string match "${document_root}[file separator]*" $hook_file]} {
+            error "application rewrite_hook must be within the document root"
+        }
+        if {![file isfile $hook_file] || ![file readable $hook_file]} {
+            error "application rewrite_hook file is not readable: $hook"
+        }
+
+        set hook_namespace [info object namespace [self]]::rewrite_hook
+        namespace eval $hook_namespace [list source $hook_file]
+        set command ${hook_namespace}::url_rewrite
+        if {[info commands $command] eq {}} {
+            error "application rewrite_hook file does not define url_rewrite: $hook"
+        }
+        return $command
+    }
+
+    method rewrite_request {request} {
+        if {$rewrite_hook ne {}} {
+            $rewrite_hook $request
+        }
+        return
     }
 
     method directory_index_candidate {directory {existing_only 0}} {

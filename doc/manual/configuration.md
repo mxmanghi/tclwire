@@ -42,7 +42,6 @@ auto_chunked_on_flush = true
 [env.rivet]
 UploadMaxSize = 10485760
 BeforeScript = "rivet/before.tcl"
-hooks = "rivet/hooks.tcl"
 ```
 
 Each `[env.<name>]` table is an environment-owned dictionary. TclWire does not
@@ -91,22 +90,31 @@ The account in the unit must be permitted to change a file's group to `adm`.
 For a non-root service, add `SupplementaryGroups=adm` to the unit. Ensure the
 socket directory is traversable by the intended users as well.
 
-### Rivet request hooks
+### Application request rewriting
 
-The optional `hooks` setting in `[env.rivet]` names a Tcl file relative to the
-application document root. It is loaded into a private Rivet hook namespace
-when each application worker initializes. If that file defines `url_rewrite`,
-Rivet calls it with the current `HttpRequest` before resolving the request to a
-script. The hook can inspect the incoming target with `$request original_target`
-and transform it with `$request rewrite /new/path?query=value`. Rewriting keeps
+The optional `rewrite_hook` application option names a Tcl file relative to the
+application document root. It must define `url_rewrite`, which receives the
+current `HttpRequest` before static-resource or environment-specific handling.
+The hook can inspect the incoming target with `$request original_target` and
+transform it with `$request rewrite /new/path?query=value`, with a safe
+dictionary query (`$request rewrite /new/path [dict create name {Tcl Wire}]`),
+or with a pre-encoded query string
+(`$request rewrite_query /new/path "name=Tcl+Wire"`). Rewriting keeps
 `target`, `url_path`, `path`, `query`, `query_dict`, and `query_parameters` in
 sync.
 
 ```tcl
-# <docroot>/rivet/hooks.tcl
+# <docroot>/rewrite.tcl
 proc url_rewrite {request} {
     if {[$request target] eq "/old-page"} {
-        $request rewrite /current-page.tcl?source=legacy
+        $request rewrite /current-page.tcl [dict create source legacy]
     }
 }
+```
+
+Configure it in the application table:
+
+```toml
+[http.example]
+rewrite_hook = "rewrite.tcl"
 ```

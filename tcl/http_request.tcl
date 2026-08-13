@@ -259,10 +259,13 @@ oo::class create ::tclwire::HttpRequest {
         return [my optional original_target [my target]]
     }
 
-    method rewrite {target} {
+    method rewrite {target args} {
         # Request rewrites are deliberately restricted to origin-form targets.
         # They update every URL-derived field together so later routing and
         # compatibility layers cannot observe stale query or path metadata.
+        if {[llength $args] > 1} {
+            error {wrong # args: should be "HttpRequest rewrite target ?query?"}
+        }
         if {![string match "/*" $target] ||
                 [regexp {[\x00-\x20\x7f#]} $target]} {
             error "rewritten HTTP target must be an absolute path"
@@ -276,6 +279,27 @@ oo::class create ::tclwire::HttpRequest {
             set query [string range $target $query_start+1 end]
         }
 
+        if {[llength $args]} {
+            if {$query_start >= 0} {
+                error "rewritten HTTP target must not include a query when query is supplied separately"
+            }
+            set supplied_query [lindex $args 0]
+            if {[catch {dict size $supplied_query}]} {
+                error "rewritten HTTP query dictionary is invalid"
+            }
+            # Dictionary input is the safe form: each component is UTF-8
+            # encoded and every non-unreserved byte is escaped.
+            set query [::tclwire::http::query encode $supplied_query]
+            set target $path
+            if {$query ne {}} {
+                append target ? $query
+            }
+        }
+
+        # Validate query encoding before any request fields are changed, so a
+        # rejected rewrite cannot leave partially rewritten request metadata.
+        set query_dict [::tclwire::http::query decode $query]
+
         if {![dict exists $request original_target]} {
             dict set request original_target [my target]
         }
@@ -283,11 +307,24 @@ oo::class create ::tclwire::HttpRequest {
         dict set request url_path $path
         dict set request path $path
         dict set request query $query
-        dict set request query_dict [::tclwire::http::query decode $query]
+        dict set request query_dict $query_dict
         if {[dict exists $request local_path]} {
             dict unset request local_path
         }
         return $target
+    }
+
+    method rewrite_query {target query} {
+        if {[string first ? $target] >= 0} {
+            error "rewritten HTTP target must not include a query when query is supplied separately"
+        }
+        if {[regexp {[\x00-\x20\x7f#?]} $query]} {
+            error "rewritten HTTP query must be normalized"
+        }
+        # The one-argument rewrite form already validates the target and its
+        # encoded query atomically. Keep raw query input in a separate method:
+        # a Tcl string such as `name=one two` can also be a valid dictionary.
+        tailcall my rewrite "${target}?${query}"
     }
 
     method url_path {} {

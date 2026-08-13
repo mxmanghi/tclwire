@@ -20,45 +20,8 @@ if {[info commands ::tclwire::envs::app::Rivet] ne {}} {
 
 oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
-    variable url_rewrite_hook
-
-    method load_hooks {} {
-        set url_rewrite_hook {}
-        set options [[my configuration_object] environment_configuration rivet]
-        if {![dict exists $options hooks]} {
-            return
-        }
-
-        set hooks [dict get $options hooks]
-        if {$hooks eq {} || [file pathtype $hooks] ne "relative"} {
-            error "Rivet hooks must name a file relative to the document root"
-        }
-        set hook_file [file normalize [file join [my document_root] $hooks]]
-        set document_root [my document_root]
-        if {($hook_file ne $document_root) &&
-                ![string match "${document_root}[file separator]*" $hook_file]} {
-            error "Rivet hooks file must be within the document root"
-        }
-        if {![file isfile $hook_file] || ![file readable $hook_file]} {
-            error "Rivet hooks file is not readable: $hooks"
-        }
-
-        # Hooks are environment code rather than application script code, so
-        # keep their commands below the Rivet environment namespace.  Replace
-        # an earlier worker initialization's namespace to avoid stale hooks
-        # when the application is reloaded in the same worker thread.
-        set hook_namespace ::tclwire::envs::rivet::hooks
-        catch {namespace delete $hook_namespace}
-        namespace eval $hook_namespace [list source $hook_file]
-        set candidate "${hook_namespace}::url_rewrite"
-        if {[info commands $candidate] ne {}} {
-            set url_rewrite_hook $candidate
-        }
-        return
-    }
 
     method initialize {} {
-        my load_hooks
         set script [::rivet::inspect ChildInitScript]
         if {[::tclwire::envs::rivet::configured_script $script]} {
             namespace eval :: $script
@@ -87,14 +50,10 @@ oo::class create ::tclwire::envs::app::Rivet {
     }
 
     method handle_request {request} {
-        variable url_rewrite_hook
         set script {}
         set script_path {}
         set previous_directory {}
         set changed_directory 0
-        if {$url_rewrite_hook ne {}} {
-            $url_rewrite_hook $request
-        }
         ::try {
             ::Rivet::initialize_request
         } on error {err} {
