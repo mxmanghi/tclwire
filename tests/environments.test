@@ -700,14 +700,31 @@ test rivetweb-1.1 {
 
         set ::tclwire::environment_test::rivetweb_changed_directory \
             $changed_directory
+        proc ::tclwire::environment_test::rewrite_to_rivetweb_entry {request} {
+            $request rewrite /index.rvt
+        }
         oo::class create ::tclwire::environment_test::RivetwebRequest {
-            method target {} { return /index.rvt }
-            method path {} { return /index.rvt }
+            variable path
+
+            constructor {} {
+                set path /rewritten-by-hook
+            }
+
+            method target {} { return $path }
+
+            method path {} { return $path }
+
+            method rewrite {target} {
+                set path $target
+            }
         }
         set request [::tclwire::environment_test::RivetwebRequest new]
         set application [::tclwire::envs::app::Rivetweb new \
             [dict create docroot $request_directory encoding utf-8 \
                          package tclwire::application hosts localhost]]
+        namespace eval [info object namespace $application] [list \
+            set url_rewrite_hook \
+                ::tclwire::environment_test::rewrite_to_rivetweb_entry]
 
         cd $request_directory
         set failed [catch {$application handle_request $request} message]
@@ -721,6 +738,7 @@ test rivetweb-1.1 {
             catch {$request destroy}
         }
         catch {::tclwire::environment_test::RivetwebRequest destroy}
+        catch {rename ::tclwire::environment_test::rewrite_to_rivetweb_entry {}}
         foreach command {
             ::Rivet::initialize_request
             ::Rivet::finish_request
