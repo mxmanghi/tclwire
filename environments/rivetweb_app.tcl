@@ -21,7 +21,10 @@ oo::class create ::tclwire::envs::app::Rivetweb {
         try {
             ::rivet::apache_log_error info "Rivet request script: [$request target]"
             set request_path [$request path]
-            if {$request_path != "index.rvt" && $request_path != "/"} {
+            # HttpRequest paths are absolute URL paths. A direct request for
+            # the Rivetweb entry point is therefore `/index.rvt`, while a
+            # directory-index request remains `/`.
+            if {$request_path ni {/index.rvt /}} {
                 return [next $request]
             }
 

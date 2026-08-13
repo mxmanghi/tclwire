@@ -702,7 +702,7 @@ test rivetweb-1.1 {
             $changed_directory
         oo::class create ::tclwire::environment_test::RivetwebRequest {
             method target {} { return /index.rvt }
-            method path {} { return index.rvt }
+            method path {} { return /index.rvt }
         }
         set request [::tclwire::environment_test::RivetwebRequest new]
         set application [::tclwire::envs::app::Rivetweb new \
