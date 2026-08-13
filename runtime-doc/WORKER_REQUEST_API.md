@@ -24,7 +24,7 @@ One request follows this path:
 5. The dispatcher acquires a worker from the application's TPBA pool and sends
    the request descriptor to it asynchronously.
 6. `::tclwire::cga::execute` creates one application instance and one
-   read-only `HttpRequest` object.
+   `HttpRequest` object.
 7. The application handles the request through
    `handle_request {request}`.
 8. Application output commands send sequenced events to the connection thread.
@@ -285,19 +285,23 @@ resources and provides extension points for path mapping, resource metadata,
 complete files, and byte ranges. Derived applications normally override
 `handle_request`.
 
-## Read-Only Request Object
+## Request Object
 
 The CGA wraps the transported dictionary in `::tclwire::HttpRequest`.
 Applications do not receive or mutate the Connection Agent's authoritative
-transaction state.
+transaction state. Request metadata is read-only except for application-local
+path mapping and the `rewrite` method, which updates the worker's copy before
+application routing.
 
 The request object exposes:
 
 | Method | Result |
 | --- | --- |
 | `method` | HTTP method. |
-| `target` | Unmodified request target. |
-| `path` | Target path before the first `?`. |
+| `target` | Current request target. Initially the wire target; changed by `rewrite`. |
+| `original_target` | Original wire target, retained after a rewrite. |
+| `rewrite target` | Replace the origin-form target and synchronize `target`, `url_path`, `path`, `query`, and decoded query parameters. |
+| `path` | Current application-routing path. It is initially the target path before the first `?`. |
 | `query` | Raw query text without the leading `?`. |
 | `query_dict` | Decoded query parameter dictionary. |
 | `query_parameters` | Alias for `query_dict`. |
