@@ -17,25 +17,27 @@ oo::class create ::tclwire::envs::app::Rivetweb {
     superclass ::tclwire::envs::app::Rivet
 
     method handle_request {request} {
-
-        ::rivet::apache_log_error info "Rivet request script: [$request target]"
-        set request_path [$request path]
-        if {$request_path != "index.rvt" && $request_path != "/"} {
-            return [next $request]
-        }
-        namespace eval :: {
-
-            ::try {
-                ::Rivet::initialize_request
-            } on error {err} {
-                ::rivet::apache_log_error crit \
-                    "Rivet request initialization failed: $::errorInfo"
+        set request_directory [pwd]
+        try {
+            ::rivet::apache_log_error info "Rivet request script: [$request target]"
+            set request_path [$request path]
+            if {$request_path != "index.rvt" && $request_path != "/"} {
+                return [next $request]
             }
 
+            # Rivetweb and application-provided scripts may change the
+            # process-wide working directory. CGA workers serve more than one
+            # request, so restore it even when request setup or rendering
+            # fails.
             set script {puts [::rivet::xml "Erice Error Handler" pre]}
-
-            ::rivet::apache_log_error debug "running rivetweb request handler ([pwd])"
             ::try {
+                # Rivetweb's legacy site scripts use relative paths. Scope
+                # them to this application's document root rather than
+                # relying on an initialization-time `cd` in the worker.
+                cd [my document_root]
+                ::Rivet::initialize_request
+
+                ::rivet::apache_log_error debug "running rivetweb request handler ([pwd])"
 
                 namespace eval ::rivetweb {
 
@@ -141,6 +143,10 @@ oo::class create ::tclwire::envs::app::Rivetweb {
             } on error {err opts} {
                 ::rivet::apache_log_error err "RivetWeb request failed: $::errorInfo"
                 ::Rivet::finish_request $script $err $opts
+                # Do not turn a failed request into a normal return. The CGA
+                # owns the final error response and logs the complete Tcl
+                # error context, including stack trace, for this application.
+                return -options $opts $err
             } finally {
                 ::try {
                     ::Rivet::finish_request $script "" "" AfterEveryScript
@@ -148,7 +154,10 @@ oo::class create ::tclwire::envs::app::Rivetweb {
                     ::Rivet::cleanup_request
                 }
             }
-
+        } finally {
+            if {[pwd] ne $request_directory} {
+                cd $request_directory
+            }
         }
     }
 }

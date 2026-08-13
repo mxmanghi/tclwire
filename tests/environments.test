@@ -11,6 +11,7 @@ package require tclwire::application::io 0.1
 package require tclwire::content_generator_agent 0.1
 package require tclwire::stdchans 0.1
 package require tclwire::rivet 0.1
+package require tclwire::rivetweb 0.1
 
 namespace eval ::tclwire::environment_test {
     variable events {}
@@ -670,6 +671,74 @@ test rivet-1.2b {rivet request initialization resets abort_page state} -body {
         removeDirectory $docroot
     }
 } -result [list {1 prior 0} {0 {} 0} 1]
+
+test rivetweb-1.1 {
+    rivetweb rethrows request failures and restores the worker directory
+} -body {
+    set original_directory [pwd]
+    set request_directory [makeDirectory rivetweb-request-directory]
+    set changed_directory [makeDirectory rivetweb-changed-directory]
+    set application {}
+    set request {}
+    try {
+        ::tclwire::envs::rivet install
+        foreach command {
+            ::Rivet::initialize_request
+            ::Rivet::finish_request
+            ::Rivet::cleanup_request
+            ::rivet::apache_log_error
+        } {
+            rename $command ${command}_saved
+        }
+        proc ::Rivet::initialize_request {} {
+            cd $::tclwire::environment_test::rivetweb_changed_directory
+            error simulated-rivetweb-failure
+        }
+        proc ::Rivet::finish_request {args} { return }
+        proc ::Rivet::cleanup_request {} { return }
+        proc ::rivet::apache_log_error {args} { return }
+
+        set ::tclwire::environment_test::rivetweb_changed_directory \
+            $changed_directory
+        oo::class create ::tclwire::environment_test::RivetwebRequest {
+            method target {} { return /index.rvt }
+            method path {} { return index.rvt }
+        }
+        set request [::tclwire::environment_test::RivetwebRequest new]
+        set application [::tclwire::envs::app::Rivetweb new \
+            [dict create docroot $request_directory encoding utf-8 \
+                         package tclwire::application hosts localhost]]
+
+        cd $request_directory
+        set failed [catch {$application handle_request $request} message]
+        list $failed $message [pwd]
+    } finally {
+        cd $original_directory
+        if {$application ne {}} {
+            catch {$application destroy}
+        }
+        if {$request ne {}} {
+            catch {$request destroy}
+        }
+        catch {::tclwire::environment_test::RivetwebRequest destroy}
+        foreach command {
+            ::Rivet::initialize_request
+            ::Rivet::finish_request
+            ::Rivet::cleanup_request
+            ::rivet::apache_log_error
+        } {
+            catch {rename $command {}}
+            catch {rename ${command}_saved $command}
+        }
+        unset -nocomplain ::tclwire::environment_test::rivetweb_changed_directory
+        catch {::tclwire::envs::rivet uninstall}
+        catch {namespace delete ::Rivet}
+        catch {namespace delete ::rivet}
+        removeDirectory $request_directory
+        removeDirectory $changed_directory
+    }
+} -result [list 1 simulated-rivetweb-failure [file normalize \
+    [file join [temporaryDirectory] rivetweb-request-directory]]]
 
 test rivet-1.2c {rivet clock_to_rfc850_gmt formats legacy GMT cookie time} -body {
     catch {::tclwire::envs::rivet uninstall}
