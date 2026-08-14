@@ -1212,6 +1212,72 @@ docroot = "rivet"
     ::tclwire::runtime_test::cleanup
 } -result false
 
+test runtime-1.12ah {
+    rivetweb website_root defaults to the effective application docroot
+} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "default"
+docroot = "www"
+
+[env.rivetweb]
+rivetweb_root = "/opt/rivetweb"
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost"
+docroot = "www"
+
+[http.site]
+hosts = "site.example.test"
+environment = "rivetweb"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    set descriptor [dict get $config applications site]
+    set expected_docroot [file normalize [file join \
+        [file dirname $config_file] www]]
+    list \
+        [expr {[dict get $descriptor docroot] eq $expected_docroot}] \
+        [expr {[dict get $descriptor environment_config rivetweb website_root] eq \
+            $expected_docroot}] \
+        [dict get $descriptor environment_config rivetweb rivetweb_root]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {1 1 /opt/rivetweb}
+
+test runtime-1.12ai {
+    explicit rivetweb website_root overrides the application docroot default
+} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "default"
+docroot = "www"
+
+[env.rivetweb]
+rivetweb_root = "/opt/rivetweb"
+website_root = "global-site"
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost"
+
+[http.site]
+hosts = "site.example.test"
+environment = "rivetweb"
+docroot = "site-docroot"
+
+[http.site.env.rivetweb]
+website_root = "local-site"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    set descriptor [dict get $config applications site]
+    dict get $descriptor environment_config rivetweb website_root
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result local-site
+
 test runtime-1.12aea {
     application-local environment configuration works without global table
 } -body {

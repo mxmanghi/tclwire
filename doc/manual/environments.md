@@ -101,6 +101,7 @@ The runtime uses these object methods:
 | `path_namespaces` | Tcl list of namespaces appended to application lookup paths. |
 | `application_class` | Optional TclOO application class supplied by the environment. |
 | `application_file` | Optional source file for the environment-supplied application class. |
+| `environment_configuration_defaults ?application_descriptor?` | Optional default environment configuration merged under global and application-local environment config. |
 | `application_configuration` | The CGA worker's application configuration object. |
 | `configuration ?key?` | This environment's effective configuration dictionary, or one value from it. |
 | `install` | Install commands, wrappers, namespace state, or hooks. |
@@ -230,6 +231,13 @@ table exists. If `[env.rivet]` is absent, the application-local dictionary is
 the effective configuration. This merge happens during application
 configuration normalization, before the CGA worker is initialized.
 
+Environments may also provide default environment configuration with
+`environment_configuration_defaults ?application_descriptor?`. TclWire passes
+the effective application descriptor when finalizing application inheritance, so
+an environment can derive default options from application fields such as
+`docroot`. These defaults have the lowest precedence: global `[env.<name>]`
+tables and application-local `[http.<app>.env.<name>]` tables override them.
+
 Applications that list an environment carry the effective environment
 configuration into their CGA workers. Environment objects read their owning
 application configuration with `my application_configuration` and read their
@@ -275,6 +283,13 @@ TclWire validates only the repository shape and inheritance graph.
 : Installs an Apache Rivet compatibility surface under `::rivet`, declares
   `stdchans` as a dependency, intercepts request `exit`, and supplies the Rivet
   application class from `environments/rivet_app.tcl`.
+
+`rivetweb`
+: Installs RivetWeb on top of `rivet` and supplies the RivetWeb application
+  class from `environments/rivetweb_app.tcl`. Configure `rivetweb_root` for the
+  shared RivetWeb installation, typically in `[env.rivetweb]`. Configure
+  `website_root` per application when it differs from the application's
+  `docroot`; when omitted, it defaults to that effective `docroot`.
 
 ## Creating an Environment
 

@@ -86,6 +86,10 @@ default_application = "default"
 # UploadMaxSize = 10485760
 # BeforeScript = "rivet/before.tcl"
 #
+# [env.rivetweb]
+# rivetweb_root = "/opt/rivetweb"
+# # website_root defaults to the effective application docroot when omitted.
+#
 # Applications that list an environment carry the effective environment
 # configuration into their content-generator workers. Application and
 # environment code can read it through:

@@ -42,6 +42,9 @@ auto_chunked_on_flush = true
 [env.rivet]
 UploadMaxSize = 10485760
 BeforeScript = "rivet/before.tcl"
+
+[env.rivetweb]
+rivetweb_root = "/opt/rivetweb"
 ```
 
 Each `[env.<name>]` table is an environment-owned dictionary. TclWire does not
@@ -53,6 +56,11 @@ explicit `flush stdout` request chunked HTTP streaming when the response has
 not already committed fixed-length headers. The `rivet` environment enables
 this `stdchans` behavior by default for Rivet-compatible streaming output;
 an explicit `[env.stdchans] auto_chunked_on_flush = false` disables it.
+
+For the `rivetweb` environment, `rivetweb_root` points at the shared RivetWeb
+installation and is commonly set globally in `[env.rivetweb]`. `website_root`
+points at the application-specific RivetWeb site; if omitted, TclWire defaults
+it to the effective application `docroot`.
 
 Applications that declare `environment = "..."` carry the effective
 environment configuration into their worker-pool configuration. Application

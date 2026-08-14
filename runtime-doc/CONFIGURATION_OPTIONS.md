@@ -279,6 +279,12 @@ application or environment code reads the application-scoped repository through
 The `rivet` environment enables this `stdchans` default for Rivet-compatible
 output, and explicit `[env.stdchans]` configuration can override it.
 
+The `rivetweb` environment recognizes `rivetweb_root` and `website_root`.
+`rivetweb_root` points at the shared RivetWeb installation and is typically set
+globally in `[env.rivetweb]`. `website_root` points at the application-specific
+RivetWeb site; if omitted, TclWire defaults it to the effective application
+`docroot`.
+
 Examples inside a running application or application environment:
 
 ```tcl

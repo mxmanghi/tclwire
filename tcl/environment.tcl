@@ -37,7 +37,7 @@ oo::class create ::tclwire::ApplicationEnvironment {
         return {}
     }
 
-    method environment_configuration_defaults {} {
+    method environment_configuration_defaults {{application_descriptor {}}} {
         return {}
     }
 

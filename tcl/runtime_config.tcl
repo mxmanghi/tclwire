@@ -417,7 +417,7 @@ namespace eval ::tclwire::config {
         return $names
     }
 
-    proc application_environment_default_config {environments} {
+    proc application_environment_default_config {environments {application_descriptor {}}} {
         set configuration [dict create]
         set seen {}
         set pending $environments
@@ -440,9 +440,15 @@ namespace eval ::tclwire::config {
             }
             set defaults {}
             if {[catch {
-                set defaults [$environment_object environment_configuration_defaults]
-            }]} {
-                set defaults {}
+                set defaults [$environment_object \
+                    environment_configuration_defaults $application_descriptor]
+            } message options]} {
+                if {[string match {wrong # args:*} $message]} {
+                    set defaults [$environment_object \
+                        environment_configuration_defaults]
+                } else {
+                    return -options $options $message
+                }
             }
             if {[catch {dict size $defaults}]} {
                 error "application environment '$name' configuration defaults must be a dictionary"
@@ -469,6 +475,35 @@ namespace eval ::tclwire::config {
             }
         }
         return $configuration
+    }
+
+    proc apply_application_environment_defaults {application_id descriptor} {
+        if {![dict exists $descriptor environment]} {
+            return $descriptor
+        }
+        set environments [dict get $descriptor environment]
+        if {[catch {llength $environments}]} {
+            error "application '$application_id' environment must be a list"
+        }
+        set defaults [application_environment_default_config \
+            $environments $descriptor]
+        if {![dict size $defaults]} {
+            return $descriptor
+        }
+        set configuration [dict create]
+        if {[dict exists $descriptor environment_config]} {
+            set configuration [dict get $descriptor environment_config]
+        }
+        dict for {environment_id options} $defaults {
+            set merged $options
+            if {[dict exists $configuration $environment_id]} {
+                set merged [dict merge $merged \
+                    [dict get $configuration $environment_id]]
+            }
+            dict set configuration $environment_id $merged
+        }
+        dict set descriptor environment_config $configuration
+        return $descriptor
     }
 
     # Select the subset of the resolved environment repository relevant to one
@@ -1213,6 +1248,8 @@ namespace eval ::tclwire::config {
                     ![dict exists $descriptor libdir]} {
                 dict set descriptor libdir [dict get $config libdir]
             }
+            set descriptor [apply_application_environment_defaults \
+                $application_id $descriptor]
             dict set applications $application_id $descriptor
         }
         dict set config applications $applications
