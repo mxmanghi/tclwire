@@ -887,7 +887,7 @@ namespace eval ::tclwire::config {
                 set application [dict filter $descriptor key \
                     class package hosts encoding log_level reload_on_request \
                     retain_uploaded_files chore chore_class environment \
-                    hostname admin server_path aliases]
+                    hostname admin server_path aliases rewrite_hook]
                 if {[dict exists $descriptor aliases]} {
                     dict set application aliases \
                         [parse_application_aliases "$protocol.$application_id.aliases" \

@@ -1530,6 +1530,32 @@ message = "Hello from concise config"
     removeFile $application_file
 } -result {1 1}
 
+test runtime-1.13bad {application rewrite_hook is preserved from protocol tables} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+docroot = "www"
+default_application = "default"
+
+[http]
+enabled = true
+port = 8990
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost 127.0.0.1"
+
+[http.lifemilch]
+hosts = "lifemilch.rivetweb.test"
+rewrite_hook = "hooks.tcl"
+docroot = "lifemilch"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    dict get $config applications lifemilch rewrite_hook
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result hooks.tcl
+
 test runtime-1.13baa {unquoted dotted application tables are rejected} -body {
     set config_file [::tclwire::runtime_test::make_config {
 [tclwire]
