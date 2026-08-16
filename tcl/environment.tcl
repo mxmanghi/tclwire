@@ -130,9 +130,8 @@ namespace eval ::tclwire::environment {
             error "application environment name must not be empty"
         }
         set command [command $environment]
-        if {![string match ::* $environment] &&
-                (![namespace exists $command] ||
-                 ![object_available $command])} {
+        if {![string match ::* $environment] && (![namespace exists $command] || 
+                                                 ![object_available $command])} {
             package require tclwire::$environment
         } elseif {![namespace exists $command]} {
             if {[string match ::* $environment]} {
