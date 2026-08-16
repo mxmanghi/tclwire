@@ -288,6 +288,443 @@ resources and provides extension points for path mapping, resource metadata,
 complete files, and byte ranges. Derived applications normally override
 `handle_request`.
 
+## Proposed Request Preparation and Response Planning
+
+> **Design status:** this section specifies a proposed generic hook and response
+> builder. The commands and methods shown here are not part of the implemented
+> worker API yet. Existing applications must continue to use `handle_request`,
+> `::tclwire::io`, and `::tclwire::http::io` as documented below.
+
+Some response decisions are useful before the normal request handler runs. A
+server may be able to answer `HEAD` from metadata, reject an unauthorized
+request, return a cached representation, turn a conditional request into
+`304 Not Modified`, or attach a cache policy to a static asset. These are all
+instances of the same operation: prepare a request and either pass it to the
+normal generator or provide a response immediately.
+
+The default `CApplication` already performs one specialized version of this
+optimization for filesystem resources: `HEAD` obtains the MIME type and file
+size without reading the file. The proposal generalizes the decision point so
+non-filesystem resources and environment-selected application classes can make
+equivalent decisions without adding special cases to CGA.
+
+The contract must not refer to scripts, templates, or commands belonging to a
+particular application environment. TclWire calls generic application methods.
+An environment adapter may implement those methods by invoking its own
+machinery, but that delegation remains inside the adapter-selected application
+class.
+
+### General Flow
+
+The proposed request path is:
+
+```text
+rewrite_request
+    |
+prepare_request
+    |
+    +-- pass  -> install response policy -> handle_request
+    |
+    +-- reply -> validate response descriptor -> skip handle_request
+                                                     |
+                                              prepare_response
+                                                     |
+                                               commit headers
+                                                     |
+                                             deliver or omit body
+                                                     |
+                                                  complete
+```
+
+`prepare_response` runs once at the response commitment boundary. For a
+buffered response that boundary may be after `handle_request` returns. For a
+streaming response it is reached by the first write or flush, so it necessarily
+runs while generation is still in progress. There can be no general mutable
+"after generation" phase: once streaming headers or body bytes have reached the
+client, changing the response would corrupt the HTTP message.
+
+A later `response_finished` notification may report the final status and byte
+count, but it must be observational. Because CGA output is asynchronous, such a
+notification requires an acknowledgement from the connection thread and must
+not be required for ordinary response completion.
+
+### Hook Methods
+
+The application-facing lifecycle consists of two mutable hooks:
+
+```tcl
+method prepare_request {request} {
+    return [::tclwire::http::request_action pass]
+}
+
+method prepare_response {request response} {
+    return $response
+}
+```
+
+`prepare_request` returns a pass or reply action. `prepare_response` receives
+the selected response descriptor after request preparation or normal response
+generation has established its metadata, but before commitment. It returns the
+same descriptor or a validated replacement. It must not write response body
+data or complete the transaction itself.
+
+For example, an application can make successful dynamic responses non-cacheable
+unless a handler or preparation policy chose a cache policy explicitly:
+
+```tcl
+method prepare_response {request response} {
+    set status [dict get $response status]
+    if {$status >= 200 && $status < 300 &&
+            ![::tclwire::http::response header exists \
+                $response Cache-Control]} {
+        ::tclwire::http::response header set response \
+            Cache-Control "no-store"
+    }
+    return $response
+}
+```
+
+An optional future observational callback has a different contract:
+
+```tcl
+method response_finished {request summary} {
+    # Observe status, committed headers, and transmitted byte counts only.
+    return
+}
+```
+
+It cannot replace the response or mutate headers. The `summary` dictionary
+would be produced by the connection thread after output succeeds or fails, not
+merely when `handle_request` returns.
+
+### Terms
+
+| Term | Meaning |
+| --- | --- |
+| **pass** | The preparation hook declines to answer the request. TclWire calls the normal `handle_request`. This is an action name, not Tcl's `continue` command. |
+| **reply** | The preparation hook supplies a response descriptor. TclWire skips `handle_request` and emits that response. |
+| **response descriptor** | A structured dictionary describing one immediate response: status, headers, representation properties, delivery intent, and optionally a body. |
+| **response policy** | Defaults or enforced choices that are retained while the normal handler generates its response. A policy is not itself a response. |
+| **response metadata** | Status, reason, headers, text or binary body mode, character encoding, delivery intent, and a known representation length. It excludes the body payload. |
+| **representation** | The bytes that the corresponding successful `GET` would deliver after text encoding. A `HEAD` response describes this representation even though it does not carry it. |
+| **delivery** | Application intent: let TclWire decide, buffer the response, or stream it. This is intentionally higher-level than HTTP wire framing. |
+| **framing** | The protocol mechanism delimiting a body, such as `Content-Length` or chunked transfer coding. The connection thread derives and validates framing. |
+| **commitment** | The point at which response headers become immutable because TclWire is about to send, or has sent, the response head. |
+| **completion** | The terminal response state. No further metadata or body output is accepted. Buffered output is serialized; a chunked stream receives its terminator. |
+
+The action names `pass` and `reply` are preferable to `continue` and `respond`:
+they do not resemble Tcl flow control, and they distinguish a hook decision
+from the existing `response` output event.
+
+### Action and Response Descriptors
+
+The default hook returns a `pass` action:
+
+```tcl
+method prepare_request {request} {
+    return [::tclwire::http::request_action pass]
+}
+```
+
+Conceptually, the helper returns this dictionary:
+
+```tcl
+dict create action pass
+```
+
+A pass action may carry a response policy:
+
+```tcl
+dict create action pass policy $policy
+```
+
+An immediate reply carries a response descriptor:
+
+```tcl
+dict create action reply response $response
+```
+
+The proposed response fields are:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `status` | yes | Integer HTTP status. |
+| `reason` | no | Reason phrase. TclWire supplies its standard phrase when omitted. |
+| `headers` | no | Ordered list of `{name value}` pairs. Repeated names are preserved. |
+| `body` | no | Complete immediate response body. Absence differs from an explicitly empty representation only when representation metadata is supplied separately. |
+| `body_mode` | no | `text` or `binary`; defaults to `text`. |
+| `encoding` | no | Encoding used to convert a text body to bytes; defaults to the application encoding. |
+| `delivery` | no | `automatic`, `buffered`, or `streaming`; defaults to `automatic`. |
+| `representation_length` | no | Exact byte length of the corresponding representation. It is useful for metadata-only `HEAD` replies and must never be an estimate. |
+
+Headers use pairs instead of preformatted lines so validation does not require
+parsing application-created strings and repeated fields remain representable:
+
+```tcl
+set headers {
+    {Content-Type {text/html; charset=utf-8}}
+    {Set-Cookie {session=abc; Path=/; HttpOnly}}
+    {Set-Cookie {layout=compact; Path=/}}
+}
+```
+
+### Response Builder Helpers
+
+The helpers operate on a dictionary variable, like `dict set`, so applications
+do not need to manage a request-scoped TclOO response object:
+
+```tcl
+set response [::tclwire::http::response create 200 \
+    ?-reason reason? \
+    ?-body value? \
+    ?-body-mode text|binary? \
+    ?-encoding encoding? \
+    ?-delivery automatic|buffered|streaming?]
+
+::tclwire::http::response header set response name value
+::tclwire::http::response header add response name value
+::tclwire::http::response header remove response name
+::tclwire::http::response header get response name
+::tclwire::http::response header exists response name
+::tclwire::http::response body set response value ?text|binary?
+::tclwire::http::response encoding response encoding
+::tclwire::http::response delivery response mode
+::tclwire::http::response representation_length response byte_count
+
+::tclwire::http::request_action pass ?-policy policy?
+::tclwire::http::request_action reply response
+```
+
+`header set` replaces all existing values with one value. `header add` appends
+another field and is required for headers such as `Set-Cookie`. Every helper
+validates its input immediately; the connection thread validates the compiled
+response again before commitment.
+
+For policies, header precedence must be explicit:
+
+```tcl
+set policy [::tclwire::http::response_policy create]
+::tclwire::http::response_policy header default policy name value
+::tclwire::http::response_policy header set policy name value
+::tclwire::http::response_policy header add policy name value
+::tclwire::http::response_policy delivery policy mode
+```
+
+`default` supplies a header only when the handler did not set it. `set`
+replaces handler values and expresses an application-wide rule. `add` retains
+handler values and appends another field. This distinction prevents a later
+`::tclwire::io response` call from accidentally erasing policy installed by
+`prepare_request`.
+
+### Example: Metadata-Only HEAD Reply
+
+An expensive dynamic page may have cheap metadata but no cached body. The hook
+can return its media type and caching policy without running the generator:
+
+```tcl
+method prepare_request {request} {
+    if {[$request method] ne "HEAD" ||
+            [$request path] ne "/reports/current"} {
+        return [::tclwire::http::request_action pass]
+    }
+
+    set response [::tclwire::http::response create 200]
+    ::tclwire::http::response header set response \
+        Content-Type "text/html; charset=utf-8"
+    ::tclwire::http::response header set response \
+        Cache-Control "private, max-age=60"
+
+    return [::tclwire::http::request_action reply $response]
+}
+```
+
+The response intentionally has no `Content-Length`. HTTP permits that omission.
+Supplying an estimated or character-count length would be incorrect because a
+`HEAD` `Content-Length`, when present, must equal the byte length of the
+representation that the equivalent `GET` would send.
+
+When an exact encoded length is available from a representation cache, the same
+hook can include it without loading the body:
+
+```tcl
+set metadata [my report_cache metadata current]
+
+set response [::tclwire::http::response create 200]
+::tclwire::http::response header set response \
+    Content-Type [dict get $metadata content_type]
+::tclwire::http::response representation_length response \
+    [dict get $metadata byte_length]
+
+return [::tclwire::http::request_action reply $response]
+```
+
+TclWire compiles `representation_length` into `Content-Length` for `HEAD`; it
+still suppresses body output defensively in the connection thread.
+
+### Example: Cache Policy Without Taking Over Generation
+
+Fingerprint-named CSS and JavaScript assets still need ordinary static handling,
+but can receive a long-lived browser cache policy:
+
+```tcl
+method prepare_request {request} {
+    set path [$request path]
+    if {![regexp {\.[0-9a-f]{12}\.(css|js)$} $path]} {
+        return [::tclwire::http::request_action pass]
+    }
+
+    set policy [::tclwire::http::response_policy create]
+    ::tclwire::http::response_policy header set policy \
+        Cache-Control "public, max-age=31536000, immutable"
+
+    return [::tclwire::http::request_action pass -policy $policy]
+}
+```
+
+The normal `handle_request` still resolves the resource, chooses its MIME type,
+handles ranges, and generates either its `GET` body or optimized `HEAD`
+metadata. The policy changes only the response header set.
+
+### Example: Conditional Cached Representation
+
+A cache can answer both validation requests and ordinary requests through the
+same preparation method. The example assumes a standards-aware validator
+helper; comparison of `If-None-Match` as one unparsed string would not correctly
+handle lists, weak tags, or `*`.
+
+```tcl
+method prepare_request {request} {
+    set key [my cache_key $request]
+    if {![my response_cache exists $key]} {
+        return [::tclwire::http::request_action pass]
+    }
+
+    set metadata [my response_cache metadata $key]
+    set etag [dict get $metadata etag]
+
+    if {[::tclwire::http::conditional not_modified $request \
+            -etag $etag \
+            -last-modified [dict get $metadata modified]]} {
+        set response [::tclwire::http::response create 304]
+        ::tclwire::http::response header set response ETag $etag
+        ::tclwire::http::response header set response \
+            Cache-Control "public, max-age=300"
+        return [::tclwire::http::request_action reply $response]
+    }
+
+    set response [::tclwire::http::response create 200 \
+        -body [my response_cache body $key] \
+        -body-mode binary \
+        -delivery buffered]
+    ::tclwire::http::response header set response \
+        Content-Type [dict get $metadata content_type]
+    ::tclwire::http::response header set response ETag $etag
+    ::tclwire::http::response header set response \
+        Cache-Control "public, max-age=300"
+
+    return [::tclwire::http::request_action reply $response]
+}
+```
+
+For `HEAD`, TclWire uses the cached binary body length as representation
+metadata but omits the body from the wire. For `304`, HTTP status semantics
+forbid a message body regardless of the request method.
+
+### Example: Declaring Streaming Intent
+
+An endpoint may require progressive delivery while leaving protocol framing to
+TclWire:
+
+```tcl
+method prepare_request {request} {
+    if {[$request path] ne "/events"} {
+        return [::tclwire::http::request_action pass]
+    }
+
+    set policy [::tclwire::http::response_policy create]
+    ::tclwire::http::response_policy header default policy \
+        Content-Type "text/event-stream; charset=utf-8"
+    ::tclwire::http::response_policy header set policy \
+        Cache-Control "no-cache"
+    ::tclwire::http::response_policy delivery policy streaming
+
+    return [::tclwire::http::request_action pass -policy $policy]
+}
+
+method handle_request {request} {
+    foreach event [my pending_events] {
+        ::tclwire::io out "data: $event\n\n"
+        ::tclwire::io flush
+    }
+}
+```
+
+`streaming` is not a synonym for adding `Transfer-Encoding: chunked`. The
+connection thread considers the HTTP version, method, and response status. For
+an eligible HTTP/1.1 `GET`, it may choose chunked framing. For `HEAD`, it emits
+the metadata that the equivalent streaming `GET` would have used but emits no
+chunks. Unsupported combinations are rejected or fall back only according to
+an explicitly documented server policy.
+
+### Example: Environment Delegation
+
+An environment-selected application class may delegate the generic hook to its
+own adapter. TclWire still knows only `prepare_request` and the generic action
+dictionary:
+
+```tcl
+oo::class create ::example::EnvironmentApplication {
+    superclass ::tclwire::CApplication
+
+    method prepare_request {request} {
+        set action [next $request]
+        if {[dict get $action action] ne "pass"} {
+            return $action
+        }
+        return [::example::environment::prepare_request $request $action]
+    }
+
+    method handle_request {request} {
+        tailcall ::example::environment::generate [self] $request
+    }
+}
+```
+
+The environment object selects this class through its existing
+`application_class` contract. No environment name, callback, script phase, or
+template concept is added to CGA.
+
+### Compiling Actions Into Output Events
+
+This proposal extends the worker-side preparation model; it does not require a
+second inter-thread protocol. A reply descriptor compiles into the existing
+ordered event sequence:
+
+```text
+response   status, reason, headers, body mode, encoding, delivery
+output     optional body data
+complete   terminal event
+```
+
+A pass policy is stored in the request-local output context. When the handler
+declares or implicitly starts its response, the output bridge merges the
+policy, invokes `prepare_response`, validates the final metadata, and sends the
+same events. The connection thread remains authoritative for HTTP framing,
+`HEAD` body suppression, status-specific body rules, commitment, and socket
+I/O.
+
+The following invariants belong to the generic implementation:
+
+- a supplied `representation_length` is a nonnegative exact byte count;
+- a complete supplied body must encode to that length when both are present;
+- `Content-Length` and streaming delivery cannot be combined;
+- statuses that forbid bodies reject supplied body data and emit no body;
+- a `HEAD` reply never sends body bytes;
+- header mutation is rejected after commitment;
+- `complete` is idempotent and prevents later output;
+- environment adapters receive and return only the generic action, policy, and
+  response structures.
+
 ## Request Object
 
 The CGA wraps the transported dictionary in `::tclwire::HttpRequest`.

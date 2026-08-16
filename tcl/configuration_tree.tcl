@@ -4,8 +4,8 @@
 #
 # `::tclwire::configuration tree` renders Tcl dictionaries; it does not
 # introspect TclOO objects by itself.  Application code therefore has to pass
-# a dictionary snapshot or serialized envelope.  In a request handler, including
-# a Rivet script, the current worker's application configuration object is:
+# a dictionary snapshot or serialized envelope.  In application request-handling
+# code, the current worker's application configuration object is:
 #
 #   ::tclwire::app::configuration
 #
