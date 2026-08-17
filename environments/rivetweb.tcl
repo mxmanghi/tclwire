@@ -19,6 +19,15 @@ oo::class create ::tclwire::envs::Rivetweb {
         return { ::rivetweb }
     }
 
+    method environment_configuration_defaults {{application_descriptor {}}} {
+        set defaults [dict create]
+        if {[dict exists $application_descriptor docroot]} {
+            dict set defaults rivetweb website_root \
+                [dict get $application_descriptor docroot]
+        }
+        return $defaults
+    }
+
     method do_install {} {
         set configuration [my configuration]
         set logger [::tclwire::logger::getlogger]

@@ -420,7 +420,7 @@ namespace eval ::tclwire::cga {
     }
 
     proc environments {} {
-        tailcall ::tclwire::cga::envs::list
+        tailcall ::tclwire::cga::envs::catalog
     }
 
     proc has_environment {environment} {
@@ -455,7 +455,7 @@ namespace eval ::tclwire::cga {
         return $environment
     }
 
-    proc list {} {
+    proc catalog {} {
         variable installed_names
         return $installed_names
     }
@@ -528,7 +528,7 @@ namespace eval ::tclwire::cga {
                 lappend path_namespaces $namespace
             }
         }
-        namespace eval ::tclwire::app [::list namespace path $path]
+        namespace eval ::tclwire::app [list namespace path $path]
         return
     }
 
@@ -547,7 +547,7 @@ namespace eval ::tclwire::cga {
                 lappend path $namespace
             }
         }
-        namespace eval $target_namespace [::list namespace path $path]
+        namespace eval $target_namespace [list namespace path $path]
         return
     }
 
@@ -564,6 +564,28 @@ namespace eval ::tclwire::cga {
     proc application_configuration {} {
         variable application_configuration
         return $application_configuration
+    }
+
+    proc log_lifecycle_error {operation environment message options} {
+        set fields [list "operation=[::tclwire::logger::log_value $operation]" \
+                           "environment=[::tclwire::logger::log_value $environment]" \
+                           "error=[::tclwire::logger::log_value $message]"]
+        foreach {option label} {-errorcode errorcode -errorinfo errorinfo} {
+            if {[dict exists $options $option]} {
+                lappend fields \
+                    "$label=[::tclwire::logger::log_value \
+                        [dict get $options $option]]"
+            }
+        }
+        set details [join $fields " "]
+
+        if {[catch {
+            set logger [::tclwire::logger::getlogger]
+            $logger write_error "environment level=error $details"
+        }]} {
+            catch {puts stderr "environment level=error $details"}
+        }
+        return
     }
 
     proc install_environment {environment} {
@@ -589,10 +611,16 @@ namespace eval ::tclwire::cga {
                 install_environment $required
             }
 
-            $environment_object install
+            try {
+                $environment_object install
+            } on error {message options} {
+                log_lifecycle_error install \
+                    [normalize $environment] $message $options
+                return -options $options $message
+            }
             set namespaces [$environment_object path_namespaces]
             if {![llength $namespaces]} {
-                set namespaces [::list $command]
+                set namespaces [list $command]
             }
             append_path $namespaces
         } finally {
@@ -639,12 +667,17 @@ namespace eval ::tclwire::cga {
         if {$application_namespace_path_saved} {
             catch {
                 namespace eval ::tclwire::app \
-                    [::list namespace path $application_namespace_path]
+                    [list namespace path $application_namespace_path]
             }
         }
         foreach environment [lreverse $installed] {
-            set environment_object [object $environment]
-            catch {$environment_object uninstall}
+            if {[catch {
+                set environment_object [object $environment]
+                $environment_object uninstall
+            } message options]} {
+                log_lifecycle_error uninstall \
+                    [normalize $environment] $message $options
+            }
         }
         set installed {}
         set installed_names {}

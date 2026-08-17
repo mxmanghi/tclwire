@@ -1620,14 +1620,9 @@ contract.
 
 - Request parsing: [`tcl/http_protocol.tcl`](../tcl/http_protocol.tcl)
 - Read-only request API: [`tcl/http_request.tcl`](../tcl/http_request.tcl)
-- Connection and response state:
-  [`tcl/http_connection_agent.tcl`](../tcl/http_connection_agent.tcl)
-- Application selection and worker dispatch:
-  [`tcl/application_dispatcher.tcl`](../tcl/application_dispatcher.tcl)
-- CGA request lifecycle:
-  [`tcl/content_generator_agent.tcl`](../tcl/content_generator_agent.tcl)
-- Application output commands:
-  [`tcl/application_io.tcl`](../tcl/application_io.tcl)
-- HTTP output controls:
-  [`tcl/http_application_io.tcl`](../tcl/http_application_io.tcl)
+- Connection and response state: [`tcl/http_connection_agent.tcl`](../tcl/http_connection_agent.tcl)
+- Application selection and worker dispatch: [`tcl/application_dispatcher.tcl`](../tcl/application_dispatcher.tcl)
+- CGA request lifecycle: [`tcl/content_generator_agent.tcl`](../tcl/content_generator_agent.tcl)
+- Application output commands: [`tcl/application_io.tcl`](../tcl/application_io.tcl)
+- HTTP output controls: [`tcl/http_application_io.tcl`](../tcl/http_application_io.tcl)
 - Default application API: [`tcl/application.tcl`](../tcl/application.tcl)

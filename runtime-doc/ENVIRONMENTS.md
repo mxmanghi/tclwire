@@ -94,6 +94,7 @@ The runtime uses these object methods:
 | `path_namespaces` | Tcl list of namespaces appended to application lookup paths. |
 | `application_class` | Optional TclOO application class supplied by the environment. |
 | `application_file` | Optional source file for the environment-supplied application class. |
+| `environment_configuration_defaults ?application_descriptor?` | Optional default environment configuration merged under global and application-local environment config. |
 | `application_configuration` | The CGA worker's application configuration object. |
 | `configuration ?key?` | This environment's effective configuration dictionary, or one value from it. |
 | `install` | Install commands, wrappers, namespace state, or hooks. Must be idempotent. |

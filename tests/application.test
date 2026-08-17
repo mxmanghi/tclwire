@@ -918,7 +918,7 @@ test application-configuration-1.4a {
     try {
         ::tclwire::cga::initialize app:env-test [$configuration serialize]
         set installed [::tclwire::envs::stdchans enabled]
-        set cga_environments [::tclwire::cga::envs::list]
+        set cga_environments [::tclwire::cga::envs::catalog]
         set has_environment [::tclwire::cga::envs::present stdchans]
         set has_qualified_environment [::tclwire::cga::envs::present \
             ::tclwire::envs::stdchans]
@@ -1050,6 +1050,111 @@ test application-configuration-1.4ab {
     [dict create option value] \
     env-config-install \
     value]
+
+test application-configuration-1.4ac {
+    CGA writes environment lifecycle failures to the application error log
+} -setup {
+    namespace eval ::tclwire::envs::lifecyclefail {
+        variable fail_install 1
+        variable fail_uninstall 0
+        variable environment_object {}
+    }
+    oo::class create ::tclwire::envs::LifecycleFailEnvironment {
+        superclass ::tclwire::ApplicationEnvironment
+
+        method name {} {
+            return lifecyclefail
+        }
+
+        method do_install {} {
+            if {$::tclwire::envs::lifecyclefail::fail_install} {
+                error "environment install failed"
+            }
+            return
+        }
+
+        method do_uninstall {} {
+            if {$::tclwire::envs::lifecyclefail::fail_uninstall} {
+                error "environment uninstall failed"
+            }
+            return
+        }
+    }
+    set ::tclwire::envs::lifecyclefail::environment_object \
+        [::tclwire::envs::LifecycleFailEnvironment new]
+    proc ::tclwire::envs::lifecyclefail::object {} {
+        variable environment_object
+        return $environment_object
+    }
+
+    set logfile [file join [temporaryDirectory] \
+        tclwire-environment-lifecycle-[pid].log]
+    set logerr [file join [temporaryDirectory] \
+        tclwire-environment-lifecycle-[pid].err]
+    set application_logfile [file join [temporaryDirectory] \
+        tclwire-environment-lifecycle-application-[pid].log]
+    set application_logerr [file join [temporaryDirectory] \
+        tclwire-environment-lifecycle-application-[pid].err]
+    catch {file delete -force \
+        $logfile $logerr $application_logfile $application_logerr}
+    set configuration [::tclwire::ApplicationConfiguration new lifecycle-test \
+        [dict create \
+            class ::tclwire::CApplication \
+            package tclwire::application \
+            hosts localhost \
+            docroot [temporaryDirectory] \
+            encoding utf-8 \
+            application_paths [list [temporaryDirectory]] \
+            environment {::tclwire::envs::lifecyclefail}]]
+} -body {
+    ::tclwire::logger start [dict create \
+        logfile $logfile \
+        logerr $logerr \
+        applications [dict create lifecycle-test [dict create \
+            logfile $application_logfile \
+            logerr $application_logerr]]]
+
+    set install_result [catch {
+        ::tclwire::cga::initialize app:lifecycle-test \
+            [$configuration serialize]
+    } install_message]
+    ::tclwire::cga::shutdown
+
+    set ::tclwire::envs::lifecyclefail::fail_install 0
+    set ::tclwire::envs::lifecyclefail::fail_uninstall 1
+    ::tclwire::cga::initialize app:lifecycle-test \
+        [$configuration serialize]
+    ::tclwire::cga::shutdown
+    ::tclwire::logger stop
+
+    set errors [::fileutil::cat $application_logerr]
+    list \
+        $install_result \
+        $install_message \
+        [string match \
+            {*environment level=error operation=install environment=lifecyclefail error=environment install failed*} \
+            $errors] \
+        [string match \
+            {*environment level=error operation=uninstall environment=lifecyclefail error=environment uninstall failed*} \
+            $errors] \
+        [expr {[string first {do_install} $errors] >= 0}] \
+        [expr {[string first {do_uninstall} $errors] >= 0}] \
+        [string trim [::fileutil::cat $logerr]]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {::tclwire::logger stop}
+    catch {$configuration destroy}
+    set ::tclwire::envs::lifecyclefail::fail_uninstall 0
+    catch {$::tclwire::envs::lifecyclefail::environment_object uninstall}
+    catch {$::tclwire::envs::lifecyclefail::environment_object destroy}
+    catch {::tclwire::envs::LifecycleFailEnvironment destroy}
+    catch {namespace delete ::tclwire::envs::lifecyclefail}
+    catch {file delete -force \
+        $logfile $logerr $application_logfile $application_logerr}
+} -result [list \
+    1 \
+    {environment install failed} \
+    1 1 1 1 {}]
 
 test application-configuration-1.4b {
     CGA applies environment namespace path to request-time application objects
@@ -1326,7 +1431,7 @@ test application-configuration-1.4c {
         ::tclwire::cga::initialize app:rivet-env-test [$configuration serialize]
         set path [namespace eval ::tclwire::app {namespace path}]
         set result [list \
-            [::tclwire::cga::envs::list] \
+            [::tclwire::cga::envs::catalog] \
             [::tclwire::cga::envs::present stdchans] \
             [::tclwire::cga::envs::present rivet] \
             [namespace exists ::Rivet] \
