@@ -111,10 +111,7 @@ namespace eval ::tclwire::configuration {
     }
 
     proc branch_prefix {prefix is_last} {
-        if {$is_last} {
-            return "${prefix}`-- "
-        }
-        return "${prefix}|-- "
+        return "${prefix}+-- "
     }
 
     proc child_prefix {prefix is_last} {

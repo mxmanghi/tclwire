@@ -1586,8 +1586,8 @@ message = "Hello from concise config"
         set configuration [$dispatcher application_configuration hello]
         set tree [::tclwire::configuration tree [$configuration serialize]]
         list \
-            [regexp {::tclwire::CApplication\n[ |`-]*directory_index\n[ |`-]*\[0\] = index\.html\n[ |`-]*\[1\] = index\.rvt} $tree] \
-            [regexp {::tclwire::app::Hello\n[ |`-]*message = Hello from concise config} $tree]
+            [regexp {::tclwire::CApplication\n[ |`+\-]*directory_index\n[ |`+\-]*\[0\] = index\.html\n[ |`+\-]*\[1\] = index\.rvt} $tree] \
+            [regexp {::tclwire::app::Hello\n[ |`+\-]*message = Hello from concise config} $tree]
     } finally {
         $dispatcher destroy
     }

@@ -122,14 +122,14 @@ Rendered output:
 
 ```text
 configuration
-|-- type = tclwire.server_configuration
-|-- version = 1
-|-- values
-|   |-- host = 127.0.0.1
-|   `-- startservers
-|       |-- [0] = http
-|       `-- [1] = ftp
-`-- application_configs
++-- type = tclwire.server_configuration
++-- version = 1
++-- values
+|   +-- host = 127.0.0.1
+|   +-- startservers
+|       +-- [0] = http
+|       +-- [1] = ftp
++-- application_configs
 ```
 
 ## Structure Heuristics
