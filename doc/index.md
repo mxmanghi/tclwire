@@ -3,14 +3,19 @@
 ![TclWire logo](assets/tclwire-logo.png){: .home-logo }
 
 TclWire is a Tcl written application server supporting the HTTP,
-HTTPS, FTP, FTPS and proxy protocols and was spurred from the
-code based developed to implement a test suite for the
-[Tclcurl](https://github.com/mxmanghi/tclcurl-ng) extension:
-the single thread tclcurl-ng test server was generalized to a largely
-multi-threaded architecture featuring a simplified model of virtual hosts,
-TOML flexible configuration, logging and a Tcl application development layer
+HTTPS, FTP, FTPS and proxy protocols and was spurred by the
+work aimed at implementing a server for the test suite of the
+[Tclcurl](https://github.com/mxmanghi/tclcurl-ng) extension.
+Tclwire is a largely multi-threaded architecture featuring a simplified
+model of virtual hosts, TOML flexible configuration, logging 
+and a Tcl application development layer
 which supports binary and text HTTP data transmission, multipart messaging
 handling, fixed length and chunked transfers, socket channel control
+
+Tclwire also implements *environment*, configurable code preloaded
+by an application that can emulate a given application environment.
+For example applications written for Apache/Rivet can run by
+requiring the 'rivet' environment in the configuration.
 
 Since the worker threads run within the same process web services
 developed for Tclwire can share part of their state by using Tcl
@@ -18,6 +23,8 @@ Thread shared areas and interthread communication mechanism.
 
 Tclwire natively ships HTML documents but implements a worker API
 for developing Tcl based web applications.
+
+Tcl wire supports also secure HTTPS connections
 
 ## Rationale
 
@@ -53,7 +60,7 @@ programming.
 
 The initial buildup of TclWire was made possible by devolving to an AI
 assistant much of the development that concerned the generally awkward
-and impervious protocol details. But the threads functional organization,
+and impervious protocol details. But the overall functional organization,
 their roles, features and structure is mostly the product of the author
 direct intervention on the assistant work. The code is as much as
 possible organized in TclOO classes and their development followed a
@@ -64,9 +71,9 @@ thorough review of every code installment.
 
 This project is the first from-ground-up project developed by the author
 with an AI assistant. Tclwire was therefore also the testbed where
-AI driven development was experienced, tested and new concepts were
-challenged for the purpose of making up a base of direct knowledge
-and experience in modern era programming
+AI driven development was exploited and tested. In a modern era of 
+software development AI assisted programming poses several questions
+about code efficiency and responsible usage of the AI assisted power.
 
 ## Current Entry Points
 
