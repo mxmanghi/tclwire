@@ -908,6 +908,39 @@ namespace eval ::tclwire::cga {
         return
     }
 
+    proc emit_prepared_reply {response} {
+        if {[catch {dict size $response}] || ![dict exists $response status]} {
+            error "prepare_request reply must contain a response descriptor with status"
+        }
+        set status [dict get $response status]
+        set reason OK
+        foreach {field variable default_value} {
+            reason reason OK
+            headers headers {}
+            body_mode body_mode text
+            encoding encoding {}
+        } {
+            set $variable $default_value
+            if {[dict exists $response $field]} {
+                set $variable [dict get $response $field]
+            }
+        }
+        set formatted_headers {}
+        foreach header $headers {
+            if {[llength $header] != 2} {
+                error "response descriptor headers must be name/value pairs"
+            }
+            lassign $header name value
+            lappend formatted_headers "$name: $value"
+        }
+        ::tclwire::io response $status $reason $formatted_headers \
+            $body_mode $encoding
+        if {[dict exists $response body]} {
+            ::tclwire::io out [dict get $response body] $body_mode
+        }
+        return
+    }
+
     proc process_request {request_descriptor} {
         variable application
 
@@ -915,8 +948,41 @@ namespace eval ::tclwire::cga {
         try {
             ::tclwire::app::begin_request [dict create  request            $request \
                                                         request_descriptor $request_descriptor]
+
+            # Request and response handling intentionally has three distinct
+            # application stages.  Rewriting is allowed to alter request
+            # routing, request preparation either passes control to normal
+            # generation or supplies an immediate descriptor, and response
+            # preparation is installed in the output bridge rather than called
+            # on this stack. The bridge is the sole component that knows the
+            # commitment boundary: for a buffered response it invokes the hook
+            # at complete; for a stream it invokes it before the first flush
+            # that can commit headers.  This prevents an apparently convenient
+            # "after handle_request" hook from trying to mutate a response
+            # whose headers or chunks may already be on the wire.
+
             $application rewrite_request $request
-            $application handle_request $request
+            set response_planner [list $application prepare_response $request]
+
+            ::tclwire::io configure_response_planner $response_planner
+            set action [$application prepare_request $request]
+            if {[catch {dict size $action}] || ![dict exists $action action]} {
+                error "prepare_request must return a pass or reply action"
+            }
+            switch -exact -- [dict get $action action] {
+                pass {
+                    $application handle_request $request
+                }
+                reply {
+                    if {![dict exists $action response]} {
+                        error "prepare_request reply action is missing response"
+                    }
+                    emit_prepared_reply [dict get $action response]
+                }
+                default {
+                    error "unknown prepare_request action: [dict get $action action]"
+                }
+            }
             if {[::tclwire::io::accepting_output]} {
                 ::tclwire::io complete
             }
@@ -927,6 +993,16 @@ namespace eval ::tclwire::cga {
         return
     }
 
+    # =========================================================================
+    # CGA PER-REQUEST EXECUTION BOUNDARY
+    #
+    # This is the operational boundary between the dispatcher/worker pool and
+    # the Content Generator Agent.  It establishes and tears down ambient
+    # worker state, reports workload transitions, and owns failure cleanup.
+    # process_request, called below, is the inner application lifecycle:
+    # rewrite_request -> prepare_request -> generation/reply ->
+    # prepare_response at the output commitment boundary.
+    # =========================================================================
     proc execute {request_descriptor} {
         variable initialized
         variable pool_key
@@ -944,8 +1020,7 @@ namespace eval ::tclwire::cga {
 
             ensure_initialized
             ::tclwire::accounting change_thread_status $worker_id running \
-                [list $application_class \
-                      [dict get $request_descriptor transaction_id]]
+                [list $application_class [dict get $request_descriptor transaction_id]]
 
             process_request $request_descriptor
         } on error {message options} {

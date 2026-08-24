@@ -1,10 +1,11 @@
 # application.tcl --
 #
-# Default TclWire content application and base HTTP application model.
+# Abstract TclWire application lifecycle and concrete static-file application.
 #
-# Derived applications normally override `handle_request` for routing and
-# dynamic content generation. Applications retaining the default static
-# resource workflow can override these narrower extension points:
+# ::tclwire::Application owns generic configuration and request/response
+# lifecycle hooks. Direct subclasses implement handle_request for non-file
+# representation models. ::tclwire::CApplication retains the default static
+# resource workflow and exposes these narrower extension points:
 #
 #   local_path             map a URL path to an application resource
 #   file_resource          describe the resolved resource
@@ -30,13 +31,9 @@ package require fileutil
 
 namespace eval ::tclwire {}
 
-oo::class create ::tclwire::CApplication {
+oo::class create ::tclwire::Application {
     variable configuration_object
-    variable document_root
     variable content_encoding
-    variable directory_index
-    variable aliases
-    variable rewrite_hook
 
     constructor {application_descriptor} {
         if {[catch {dict size $application_descriptor}]} {
@@ -52,23 +49,14 @@ oo::class create ::tclwire::CApplication {
         if {[dict exists $application_descriptor application_id]} {
             set application_id [dict get $application_descriptor application_id]
         }
-        set complete_descriptor $application_descriptor
-        foreach {property value} [list class       [info object class [self]] \
-                                       hosts       {} \
-                                       application_paths [list [dict get $application_descriptor docroot]] \
-                                       aliases     {} \
-                                       package     tclwire::application] {
-            if {![dict exists $complete_descriptor $property]} {
-                dict set complete_descriptor $property $value
-            }
-        }
-        set configuration_object \
-            [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
-        set document_root    [file normalize [dict get $application_descriptor docroot]]
+        set descriptor_defaults [dict create class [info object class [self]] \
+                                             hosts {} \
+                                             application_paths [list [dict get $application_descriptor docroot]] \
+                                             aliases {} \
+                                             package tclwire::application]
+        set complete_descriptor [dict merge $descriptor_defaults $application_descriptor]
+        set configuration_object [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
         set content_encoding [dict get $application_descriptor encoding]
-        set directory_index  [my configured_directory_index]
-        set aliases          [dict get $complete_descriptor aliases]
-        set rewrite_hook     [my configured_rewrite_hook]
     }
 
     method configuration_object {} {
@@ -82,12 +70,63 @@ oo::class create ::tclwire::CApplication {
         }
     }
 
-    method document_root {} {
-        return $document_root
-    }
-
     method encoding {} {
         return $content_encoding
+    }
+
+    method rewrite_request {request} {
+        return
+    }
+
+    # The default preparation stage preserves the established handler-only
+    # application contract. Subclasses may return {action reply response ...}
+    # to answer before generation, or attach a future response policy to pass.
+    method prepare_request {request} {
+        return [dict create action pass]
+    }
+
+    # The output bridge invokes this once immediately before the response head
+    # becomes immutable. It is deliberately a descriptor transformation, not
+    # an output method: a hook may adjust metadata but cannot send body bytes.
+    method prepare_response {request response} {
+        return $response
+    }
+
+    method initialize {} {
+        return
+    }
+
+    method shutdown {} {
+        return
+    }
+
+    method signal {args} {
+        return
+    }
+
+    method handle_request {request} {
+        error "Application subclasses must implement handle_request"
+    }
+}
+
+oo::class create ::tclwire::CApplication {
+    superclass ::tclwire::Application
+
+    variable document_root
+    variable directory_index
+    variable aliases
+    variable rewrite_hook
+
+    constructor {application_descriptor} {
+        next $application_descriptor
+        set document_root [file normalize [dict get $application_descriptor docroot]]
+        set directory_index [my configured_directory_index]
+        set aliases [[my configuration_object] aliases]
+        set rewrite_hook [my configured_rewrite_hook]
+    }
+
+    method document_root {} {
+        return $document_root
     }
 
     method directory_index {} {
@@ -97,7 +136,7 @@ oo::class create ::tclwire::CApplication {
     method configured_directory_index {} {
         set options [dict create directory_index [list index.html]]
         foreach class_name [list ::tclwire::CApplication [info object class [self]]] {
-            set class_options [$configuration_object class_configuration $class_name]
+            set class_options [[my configuration_object] class_configuration $class_name]
             if {$class_options ne {}} {
                 set options [dict merge $options $class_options]
             }
@@ -121,7 +160,7 @@ oo::class create ::tclwire::CApplication {
     }
 
     method configured_rewrite_hook {} {
-        set hook [string trim [$configuration_object get rewrite_hook]]
+        set hook [string trim [[my configuration_object] get rewrite_hook]]
         if {$hook eq {}} {
             return {}
         }
@@ -154,6 +193,41 @@ oo::class create ::tclwire::CApplication {
         return
     }
 
+    # Resolve successful static HEAD requests before normal generation.  This
+    # avoids reading the representation while still allowing the common
+    # prepare_response stage to inspect/finalize its metadata at commitment.
+    # Errors deliberately pass through to handle_request so its established
+    # error response and logging behavior remain authoritative.
+
+    method prepare_request {request} {
+
+        # CApplication subclasses may assign a different meaning to a file
+        # (for example, Rivet executes .tcl and .rvt resources).  Preserve
+        # their existing handle_request contract unless they opt into an
+        # equivalent preparation override themselves.
+
+        if {[info object class [self]] ne "::tclwire::CApplication" ||
+                [$request method] ne "HEAD"} {
+            return [next $request]
+        }
+        if {[catch {set resolution [my resolve_request_path $request]}] ||
+                $resolution eq {}} {
+            return [next $request]
+        }
+
+        set local_path [$request local_path]
+        my log_file_resolution $request 200 $local_path debug
+        set resource [my file_resource $local_path]
+        set header_pairs {}
+        foreach header [concat [my resource_headers $resource] \
+                [list "Content-Length: [dict get $resource length]"]] {
+            regexp {^([^:]+):\s*(.*)$} $header -> name value
+            lappend header_pairs [list $name $value]
+        }
+        return [dict create action reply response [dict create \
+            status 200 reason OK headers $header_pairs body_mode binary]]
+    }
+
     method directory_index_candidate {directory {existing_only 0}} {
         foreach name [my directory_index] {
             set candidate [file normalize [file join $directory $name]]
@@ -181,17 +255,7 @@ oo::class create ::tclwire::CApplication {
         return {}
     }
 
-    method initialize {} {
-        return
-    }
-
-    method shutdown {} {
-        return
-    }
-
-    method signal {args} {
-        return
-    }
+    # resolving %xx encoded characters in file paths
 
     method decode_path {path} {
         set bytes $::tclwire::constants::empty_bytearray

@@ -7,7 +7,8 @@ This chapter will describe how to write TclOO applications for TclWire.
 - Application class requirements.
 - The `handle_request {request}` entry point.
 - Request-scoped application objects.
-- `::tclwire::CApplication`.
+- The abstract `::tclwire::Application` lifecycle base and concrete
+  `::tclwire::CApplication` static-file application.
 - File-backed applications.
 - Package-backed applications.
 - Development reloading.

@@ -16,6 +16,26 @@ if {[info commands ::tclwire::envs::app::Rivetweb] ne {}} {
 oo::class create ::tclwire::envs::app::Rivetweb {
     superclass ::tclwire::envs::app::Rivet
 
+    method prepare_response {request response} {
+        set path [$request path]
+        set status [dict get $response status]
+        if {$status < 200 || $status >= 300 || ![regexp {\.(css|js)$} $path]} {
+            return $response
+        }
+
+        # Replace a handler-supplied Cache-Control value, if any, while preserving
+        # the order and repeated values of all other headers.
+        set headers {}
+        foreach header [dict get $response headers] {
+            if {![string equal -nocase [lindex $header 0] Cache-Control]} {
+                lappend headers $header
+            }
+        }
+        lappend headers [list Cache-Control "public, max-age=3600"]
+        dict set response headers $headers
+        return $response
+    }
+
     method handle_request {request} {
         set request_directory [pwd]
         try {
