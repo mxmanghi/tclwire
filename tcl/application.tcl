@@ -31,7 +31,11 @@ package require fileutil
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::CApplication {
-    variable configuration_object document_root content_encoding directory_index aliases
+    variable configuration_object
+    variable document_root
+    variable content_encoding
+    variable directory_index
+    variable aliases
     variable rewrite_hook
 
     constructor {application_descriptor} {
@@ -72,7 +76,8 @@ oo::class create ::tclwire::CApplication {
     }
 
     destructor {
-        if {[info exists configuration_object] && $configuration_object ne {}} {
+        if {[info exists configuration_object] && \
+            $configuration_object ne {}} {
             $configuration_object destroy
         }
     }
@@ -498,13 +503,15 @@ oo::class create ::tclwire::CApplication {
     }
 
     unexport    alias_file_candidate alias_matches \
-                configured_directory_index decode_path directory_index_candidate \
+                configured_directory_index decode_path \
+                directory_index_candidate \
                 directory_index_resolution resolve_path \
                 file_resource log_file_resolution read_file \
-                read_file_range resource_headers send_error path_file_candidate \
-                serve_complete_file serve_content_ranges serve_file_metadata \
-                serve_file_ranges serve_single_range serve_unsatisfiable_range \
-                url_file_candidate
+                read_file_range resource_headers send_error \
+                path_file_candidate serve_complete_file \
+                serve_content_ranges serve_file_metadata \
+                serve_file_ranges serve_single_range \
+                serve_unsatisfiable_range url_file_candidate
 }
 
 package provide tclwire::application 0.1
