@@ -19,7 +19,7 @@ oo::class create ::tclwire::envs::app::Rivetweb {
     method prepare_response {request response} {
         set path [$request path]
         set status [dict get $response status]
-        if {$status < 200 || $status >= 300 || ![regexp {\.(css|js)$} $path]} {
+        if {$status < 200 || $status >= 300 || ![regexp {\.(css|js|.ico)$} $path]} {
             return $response
         }
 

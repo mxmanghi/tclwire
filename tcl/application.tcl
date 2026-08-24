@@ -49,14 +49,15 @@ oo::class create ::tclwire::Application {
         if {[dict exists $application_descriptor application_id]} {
             set application_id [dict get $application_descriptor application_id]
         }
-        set descriptor_defaults [dict create class [info object class [self]] \
-                                             hosts {} \
-                                             application_paths [list [dict get $application_descriptor docroot]] \
-                                             aliases {} \
-                                             package tclwire::application]
-        set complete_descriptor [dict merge $descriptor_defaults $application_descriptor]
-        set configuration_object [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
-        set content_encoding [dict get $application_descriptor encoding]
+        set descriptor_defaults [dict create class              [info object class [self]] \
+                                             hosts              {} \
+                                             application_paths  [list [dict get $application_descriptor docroot]] \
+                                             aliases            {} \
+                                             package            tclwire::application]
+
+        set complete_descriptor     [dict merge $descriptor_defaults $application_descriptor]
+        set configuration_object    [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
+        set content_encoding        [dict get $application_descriptor encoding]
     }
 
     method configuration_object {} {

@@ -257,7 +257,7 @@ namespace eval ::tclwire::io {
         }
         if {$response_planner ne {}} {
 
-            # this is basically calling '$application prepare_response $request'.
+            # this is basically calling '$application prepare_response $request $response'.
             # By default the prepare_response returns the argument. That's
             # the place where headers can be changed, for example for client
             # content cache control
@@ -406,11 +406,8 @@ namespace eval ::tclwire::io {
         if {![accepting_output]} {
             return
         }
-        set channel_event_flags [dict merge \
-            [dict create auto_chunked_on_flush 0] \
-            $channel_event_flags]
-        if {[dict get $channel_event_flags auto_chunked_on_flush] ||
-                [streaming_response]} {
+        set channel_event_flags [dict merge [dict create auto_chunked_on_flush 0] $channel_event_flags]
+        if {[dict get $channel_event_flags auto_chunked_on_flush] || [streaming_response]} {
             prepare_response
         }
         flush_buffer
