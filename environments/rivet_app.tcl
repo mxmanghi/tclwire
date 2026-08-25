@@ -22,6 +22,11 @@ oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
 
     method initialize {} {
+        # Make Apache Rivet's process-global server array available to
+        # application initialization code as well as request scripts.  This
+        # is inherited by the RivetWeb application class.
+        ::tclwire::envs::rivet::load_server
+
         set script [::rivet::inspect ChildInitScript]
         if {[::tclwire::envs::rivet::configured_script $script]} {
             namespace eval :: $script

@@ -2255,7 +2255,7 @@ test application-configuration-1.4faa {
     [list [list init true] [list exit 1]]]
 
 test application-configuration-1.4fa {
-    rivet request scripts can read the global server array
+    rivet application initialization creates the global server array
 } -setup {
     set docroot [makeDirectory rivet-server-array-docroot]
     set script_path [file join $docroot server.tcl]
@@ -2288,6 +2288,7 @@ puts [expr {[file normalize $server(SERVER_CONF)] eq \
     set configuration [$dispatcher application_configuration rivet-app]
 } -body {
     ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    set server_available_after_initialize [array exists ::server]
     ::tclwire::cga::execute \
         [dict create \
             application_id rivet-app \
@@ -2305,7 +2306,7 @@ puts [expr {[file normalize $server(SERVER_CONF)] eq \
             append output [dict get $event data]
         }
     }
-    set output
+    list $server_available_after_initialize $output
 } -cleanup {
     catch {::tclwire::cga::shutdown}
     catch {$dispatcher destroy}
@@ -2313,7 +2314,7 @@ puts [expr {[file normalize $server(SERVER_CONF)] eq \
     catch {::tclwire::accounting remove_thread $worker_id}
     catch {::tclwire::io end}
     removeDirectory $docroot
-} -result "1\n3.3.0tw\n1\n"
+} -result [list 1 "1\n3.3.0tw\n1\n"]
 
 test application-configuration-1.4ff {
     rivet headers adapts to TclWire HTTP header commands
