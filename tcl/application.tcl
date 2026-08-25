@@ -34,6 +34,7 @@ namespace eval ::tclwire {}
 oo::class create ::tclwire::Application {
     variable configuration_object
     variable content_encoding
+    variable cache_control_map
 
     constructor {application_descriptor} {
         if {[catch {dict size $application_descriptor}]} {
@@ -49,15 +50,16 @@ oo::class create ::tclwire::Application {
         if {[dict exists $application_descriptor application_id]} {
             set application_id [dict get $application_descriptor application_id]
         }
-        set descriptor_defaults [dict create class              [info object class [self]] \
-                                             hosts              {} \
-                                             application_paths  [list [dict get $application_descriptor docroot]] \
-                                             aliases            {} \
-                                             package            tclwire::application]
+        set descriptor_defaults [dict create class             [info object class [self]] \
+                                             hosts             {} \
+                                             application_paths [list [dict get $application_descriptor docroot]] \
+                                             aliases           {} \
+                                             package           tclwire::application]
 
-        set complete_descriptor     [dict merge $descriptor_defaults $application_descriptor]
-        set configuration_object    [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
-        set content_encoding        [dict get $application_descriptor encoding]
+        set complete_descriptor  [dict merge $descriptor_defaults $application_descriptor]
+        set configuration_object [::tclwire::ApplicationConfiguration new $application_id $complete_descriptor]
+        set content_encoding     [dict get $application_descriptor encoding]
+        set cache_control_map    [my configured_cache_control_map]
     }
 
     method configuration_object {} {
@@ -65,8 +67,7 @@ oo::class create ::tclwire::Application {
     }
 
     destructor {
-        if {[info exists configuration_object] && \
-            $configuration_object ne {}} {
+        if {[info exists configuration_object] && $configuration_object ne {}} {
             $configuration_object destroy
         }
     }
@@ -86,10 +87,85 @@ oo::class create ::tclwire::Application {
         return [dict create action pass]
     }
 
+    # Subclasses may override this to supply site-independent defaults. Keys
+    # are extensions without a leading dot and values are nonnegative cache
+    # lifetimes in seconds. The application-owned cache_control_map
+    # configuration augments these defaults; an "unset" value removes a
+    # default. Keeping the policy in Application makes it available to both
+    # generated and file-backed representations.
+    method cache_control_defaults {} {
+        return [dict create]
+    }
+
+    method configured_cache_control_map {} {
+        set defaults [my cache_control_defaults]
+        if {[catch {dict size $defaults}]} {
+            error "Application cache_control_defaults must return a dictionary"
+        }
+        set cache_control_map {}
+        dict for {extension lifetime} $defaults {
+            set extension [string trimleft [string tolower $extension] .]
+            if {$extension eq {}} {
+                error "cache_control_defaults extension must not be empty"
+            }
+            if {![string is integer -strict $lifetime] || $lifetime < 0} {
+                error "default cache lifetime for $extension must be a nonnegative integer"
+            }
+            dict set cache_control_map $extension $lifetime
+        }
+        if {[[my configuration_object] exists cache_control_map]} {
+            set configured_map [[my configuration_object] get cache_control_map]
+            if {[catch {dict size $configured_map}]} {
+                error "application cache_control_map must be a dictionary"
+            }
+            dict for {extension lifetime} $configured_map {
+                set extension [string trimleft [string tolower $extension] .]
+                if {$extension eq {}} {
+                    error "cache_control_map extension must not be empty"
+                }
+                if {$lifetime eq "unset"} {
+                    if {[dict exists $cache_control_map $extension]} {
+                        dict unset cache_control_map $extension
+                    }
+                    continue
+                }
+                if {![string is integer -strict $lifetime] || $lifetime < 0} {
+                    error "cache lifetime for $extension must be a nonnegative integer"
+                }
+                dict set cache_control_map $extension $lifetime
+            }
+        }
+        return $cache_control_map
+    }
+
     # The output bridge invokes this once immediately before the response head
     # becomes immutable. It is deliberately a descriptor transformation, not
     # an output method: a hook may adjust metadata but cannot send body bytes.
+    #
+    # When cache_control_map names the request's extension, successful
+    # responses receive its public max-age value. A handler-supplied
+    # Cache-Control field is deliberately replaced, giving the configured
+    # application policy one authoritative value while preserving every other
+    # header and its relative order.
     method prepare_response {request response} {
+        if {[dict get $response status] < 200 ||
+                [dict get $response status] >= 300} {
+            return $response
+        }
+        set extension [string trimleft [string tolower \
+                [file extension [$request path]]] .]
+        if {$extension eq {} || ![dict exists $cache_control_map $extension]} {
+            return $response
+        }
+        set headers {}
+        foreach header [dict get $response headers] {
+            if {![string equal -nocase [lindex $header 0] Cache-Control]} {
+                lappend headers $header
+            }
+        }
+        lappend headers [list Cache-Control \
+                "public, max-age=[dict get $cache_control_map $extension]"]
+        dict set response headers $headers
         return $response
     }
 
@@ -202,17 +278,14 @@ oo::class create ::tclwire::CApplication {
 
     method prepare_request {request} {
 
-        # CApplication subclasses may assign a different meaning to a file
-        # (for example, Rivet executes .tcl and .rvt resources).  Preserve
-        # their existing handle_request contract unless they opt into an
-        # equivalent preparation override themselves.
-
-        if {[info object class [self]] ne "::tclwire::CApplication" ||
-                [$request method] ne "HEAD"} {
+        if {[$request method] ne "HEAD"} {
             return [next $request]
         }
+
+        # everything that follows is meant to address a HEAD request
+
         if {[catch {set resolution [my resolve_request_path $request]}] ||
-                $resolution eq {}} {
+             $resolution eq {}} {
             return [next $request]
         }
 

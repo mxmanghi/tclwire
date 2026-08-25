@@ -4461,6 +4461,54 @@ test application-1.1a {CApplication provides no-op lifecycle and signal hooks} -
     }
 } -result {{} {} {}}
 
+test application-1.1b {
+    Application applies configured cache lifetimes before response commitment
+} -body {
+    oo::class create ::tclwire::application_test::CachePolicyApplication {
+        superclass ::tclwire::Application
+
+        method cache_control_defaults {} {
+            return [dict create css 60 js 90]
+        }
+    }
+    set descriptor [dict create \
+        class ::tclwire::application_test::CachePolicyApplication \
+        package tclwire::application \
+        hosts localhost \
+        docroot ./application-root \
+        encoding utf-8 \
+        configure [dict create \
+            ::tclwire::application_test::CachePolicyApplication [dict create \
+                cache_control_map [dict create CSS 300 js unset png 600]]]]
+    set application [::tclwire::application_test::CachePolicyApplication new \
+        $descriptor]
+    set css_request [::tclwire::HttpRequest new [dict create \
+        method GET path /styles/site.CSS transaction_id 1]]
+    set js_request [::tclwire::HttpRequest new [dict create \
+        method GET path /scripts/site.js transaction_id 2]]
+    try {
+        set css_response [$application prepare_response $css_request [dict create \
+            status 200 headers [list [list Cache-Control no-store] \
+                                     [list X-Result original]]]]
+        set js_response [$application prepare_response $js_request [dict create \
+            status 200 headers {}]]
+        set missing_response [$application prepare_response $css_request [dict create \
+            status 404 headers {}]]
+        list \
+            [dict get $css_response headers] \
+            [dict get $js_response headers] \
+            [dict get $missing_response headers]
+    } finally {
+        $css_request destroy
+        $js_request destroy
+        $application destroy
+        ::tclwire::application_test::CachePolicyApplication destroy
+    }
+} -result [list \
+    [list [list X-Result original] [list Cache-Control {public, max-age=300}]] \
+    {} \
+    {}]
+
 test application-1.2 {CApplication reads content using its configured encoding} -body {
     set docroot [file join [temporaryDirectory] tclwire-application-[pid]]
     set expected "Caff\u00e8"

@@ -238,8 +238,7 @@ oo::class create ::tclwire::ApplicationConfiguration {
             dict set values $property \
                 [expr {!![dict get $values $property]}]
         }
-        if {[dict get $values reload_on_request] &&
-                [dict get $values file] eq {}} {
+        if {[dict get $values reload_on_request] && [dict get $values file] eq {}} {
             error "application '$id' reload_on_request requires file"
         }
         if {[dict get $values encoding] ni [encoding names]} {

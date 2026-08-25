@@ -29,6 +29,44 @@ Relative local paths are resolved under the selected application's `docroot`.
 Application aliases are searched before inherited aliases, so applications can
 override or extend global/default rules.
 
+## Application Configuration Boundary
+
+Application tables, such as `[http.example]`, use top-level options for
+runtime concerns and a `configure` subtable for options owned by the
+application class.
+
+| Area | Top-level options |
+| --- | --- |
+| Identity and loading | `class`, `package`, `file`, `libdir`, `environment` |
+| Routing and filesystem | `hosts`, `docroot`, `aliases`, `encoding`, `rewrite_hook` |
+| Worker pool | `minimum_workers`, `maximum_workers`, `reload_on_request` |
+| Request handling | `retain_uploaded_files`, `chore`, `chore_class` |
+| Logging and metadata | `log_level`, `logfile`, `logerr`, `hostname`, `admin`, `server_path` |
+| Application-owned configuration | `configure`, `env` |
+
+For example, the Rivetweb cache policy is application-owned and therefore
+belongs below `configure`:
+
+```toml
+[http.rivetweb.configure.cache_control_map]
+css  = 3600
+js   = 7200
+png  = 600
+jpeg = "unset"
+```
+
+An unknown top-level table such as `[http.rivetweb.cache_control_map]` is not
+retained in the runtime application descriptor.
+
+`::tclwire::Application` applies the resulting map only to successful (2xx)
+responses, just before their headers are committed. Extension keys are
+case-insensitive and conventionally omit the leading dot; values are
+nonnegative seconds. A matching configured value replaces a handler-supplied
+`Cache-Control` field. `"unset"` removes an inherited default. The base
+application has no defaults; Rivetweb defaults `css`, `js`, and `ico` to one
+hour. Other application classes can provide their own defaults through
+`cache_control_defaults`.
+
 ## Environment Configuration
 
 Environment configuration is declared separately from global runtime

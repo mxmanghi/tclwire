@@ -312,6 +312,44 @@ treats the DNS name as one key, for example `[http."hello.example.test"]`.
 Host-specific applications inherit from the configured default application,
 then from global runtime defaults.
 
+Application tables have two distinct surfaces.  The runtime accepts and
+normalizes the following top-level options; they describe how to load, route,
+and operate an application.  Application implementation settings are not
+top-level options: put them in the `configure` dictionary instead.
+
+| Area | Top-level options |
+| --- | --- |
+| Identity and loading | `class`, `package`, `file`, `libdir`, `environment` |
+| Routing and filesystem | `hosts`, `docroot`, `aliases`, `encoding`, `rewrite_hook` |
+| Worker pool | `minimum_workers`, `maximum_workers`, `reload_on_request` |
+| Request handling | `retain_uploaded_files`, `chore`, `chore_class` |
+| Logging and metadata | `log_level`, `logfile`, `logerr`, `hostname`, `admin`, `server_path` |
+| Application-owned configuration | `configure`, `env` |
+
+For example, a Rivetweb cache policy is application-owned rather than a
+runtime descriptor option, so configure it as a nested dictionary:
+
+```toml
+[http.rivetweb.configure.cache_control_map]
+css  = 3600
+js   = 7200
+png  = 600
+jpeg = "unset"
+```
+
+`[http.rivetweb.cache_control_map]` is syntactically valid TOML, but TclWire
+does not preserve that unknown top-level application field.
+
+`::tclwire::Application` applies `cache_control_map` to successful (2xx)
+responses immediately before their headers are committed. Keys are
+case-insensitive filename extensions, normally written without the leading
+dot; values are nonnegative lifetimes in seconds. The policy replaces any
+handler-supplied `Cache-Control` field for a matched extension. A value of
+`"unset"` removes a matching inherited default. By default `Application` has
+no entries; Rivetweb supplies `css`, `js`, and `ico` defaults of one hour.
+Other application classes can supply defaults by overriding
+`cache_control_defaults`.
+
 `class`
 : TclOO application class name. Required after inheritance. Bare names are
   qualified under `::tclwire::app`; fully qualified names are left unchanged.

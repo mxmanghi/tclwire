@@ -49,6 +49,17 @@ oo::class create ::tclwire::envs::app::Rivet {
         return [next $path]
     }
 
+    # Rivet source files are executable representations, not static files.
+    # Let handle_request select and run them even for HEAD; ordinary assets
+    # continue through CApplication's metadata-only HEAD preparation.
+    method prepare_request {request} {
+        if {[$request method] eq "HEAD" &&
+                [string tolower [file extension [$request path]]] in {".tcl" ".rvt"}} {
+            return [dict create action pass]
+        }
+        return [next $request]
+    }
+
     method handle_request {request} {
         set script {}
         set script_path {}
