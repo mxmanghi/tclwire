@@ -72,14 +72,27 @@ Returns the application id.
 $configuration get $property
 ```
 
-Returns one property value or errors for an unknown property.
+Returns one value from the effective application-facing surface, or errors for
+an unknown property. Descriptor fields take precedence; otherwise the resolved
+application class's `configure` block is consulted.
+
+```tcl
+$configuration exists $property
+$configuration effective_configuration
+```
+
+`exists` tests the same effective surface. `effective_configuration` returns a
+dictionary view of it. These methods let application code access its own
+configured options without first extracting a class block.
 
 ```tcl
 $configuration snapshot
 ```
 
-Returns the validated values dictionary. Mutating the returned dictionary does
-not mutate the configuration object.
+Returns the raw validated descriptor dictionary. It preserves the class-keyed
+`configure` structure for serialization and introspection, rather than
+flattening class options. Mutating the returned dictionary does not mutate the
+configuration object.
 
 ```tcl
 $configuration configure ?class_name?

@@ -132,8 +132,10 @@ The public object methods are:
 | Method | Result |
 | --- | --- |
 | `id` | Application identifier from the runtime configuration, such as `default` or `hello`. |
-| `get property` | One validated property value. Raises an error for an unknown property. |
-| `snapshot` | Dictionary containing all validated effective descriptor values. Mutating the returned dictionary does not mutate the object. |
+| `get property` | One value from the application-facing effective configuration surface. Descriptor properties take precedence; otherwise the resolved class's `configure` block is consulted. Raises an error for an unknown property. |
+| `exists property` | Whether `property` exists on that same effective configuration surface. |
+| `effective_configuration` | Dictionary view of the effective configuration surface. |
+| `snapshot` | Raw validated descriptor dictionary used for serialization and introspection. It does not flatten class configuration. Mutating the returned dictionary does not mutate the object. |
 | `configure ?class_name?` | The complete class-keyed `configure` dictionary, or the block for one TclOO class. Missing class blocks return an empty dictionary. |
 | `class_configuration class_name` | Alias-style semantic wrapper for `configure class_name`. |
 | `environment_configuration ?environment_name? ?key?` | The complete environment configuration dictionary, one environment block, or one key from that environment block. Missing environments return an empty dictionary; missing keys raise an error. |

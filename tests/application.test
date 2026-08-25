@@ -683,7 +683,7 @@ test application-configuration-1.1f {
     {}]
 
 test application-configuration-1.1fa {
-    application configuration exposes property existence checks
+    application configuration exposes its effective class-configured surface
 } -body {
     set configuration [::tclwire::ApplicationConfiguration new example \
         [dict create \
@@ -692,17 +692,30 @@ test application-configuration-1.1fa {
             hosts example.test \
             docroot /tmp \
             encoding utf-8 \
-            application_paths [list /tmp]]]
+            application_paths [list /tmp] \
+            configure [dict create \
+                ::example::Application [dict create \
+                    cache_control_map [dict create css 3600 js 3600] \
+                    encoding iso8859-1]]]]
     try {
         list \
             [$configuration exists docroot] \
+            [$configuration exists cache_control_map] \
             [$configuration exists missing] \
+            [$configuration get cache_control_map] \
+            [$configuration get encoding] \
+            [dict exists [$configuration snapshot] cache_control_map] \
             [catch {$configuration get missing} message] \
             $message
     } finally {
         $configuration destroy
     }
-} -result {1 0 1 {unknown application configuration property: missing}}
+} -result [list \
+    1 1 0 \
+    [dict create css 3600 js 3600] \
+    utf-8 \
+    0 \
+    1 {unknown application configuration property: missing}]
 
 test application-configuration-1.1g {
     construction rejects empty environment configuration names

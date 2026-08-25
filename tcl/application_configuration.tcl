@@ -251,15 +251,26 @@ oo::class create ::tclwire::ApplicationConfiguration {
         return $application_id
     }
 
+    # The descriptor is the authoritative configuration record.  The resolved
+    # application's configure block extends its application-facing surface, but
+    # cannot shadow descriptor fields such as encoding or docroot.  Keeping the
+    # merge here also lets get/exists serve the same context-aware view without
+    # changing snapshot, which remains the raw serializable descriptor.
+    method effective_configuration {} {
+        set class_name [dict get $values class]
+        return [dict merge [my class_configuration $class_name] $values]
+    }
+
     method get {property} {
-        if {![dict exists $values $property]} {
+        set effective_values [my effective_configuration]
+        if {![dict exists $effective_values $property]} {
             error "unknown application configuration property: $property"
         }
-        return [dict get $values $property]
+        return [dict get $effective_values $property]
     }
 
     method exists {property} {
-        return [dict exists $values $property]
+        return [dict exists [my effective_configuration] $property]
     }
 
     method snapshot {} {
