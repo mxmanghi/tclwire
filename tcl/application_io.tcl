@@ -287,6 +287,7 @@ namespace eval ::tclwire::io {
         variable active
         variable response_metadata
         variable response_prepared
+
         if {!$active} {
             error "no application output transaction is active"
         }
@@ -296,9 +297,11 @@ namespace eval ::tclwire::io {
         if {$response_prepared} {
             error "HTTP response metadata is immutable after preparation"
         }
-        set response_metadata [dict create  status  $status reason $reason \
-                                            headers [header_pairs $headers] \
-                                            body_mode $body_mode encoding $encoding]
+        set response_metadata [dict create  status      $status \
+                                            reason      $reason \
+                                            headers     [header_pairs $headers] \
+                                            body_mode   $body_mode \
+                                            encoding    $encoding]
 
         send_event response {} [dict create status      $status     \
                                             reason      $reason     \

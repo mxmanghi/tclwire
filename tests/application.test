@@ -2899,6 +2899,7 @@ puts [::rivet::var_post get single post-default]
 puts [::rivet::var_post get posted]
 puts [::rivet::var_qs list multi]
 puts [::rivet::var_post list multi]
+puts [::rivet::var_qs exists httpcode]
 }
     set worker_id [::thread::id]
     catch {::tclwire::accounting remove_thread $worker_id}
@@ -2929,9 +2930,9 @@ puts [::rivet::var_post list multi]
             connection_agent_id $receiver \
             transaction_id 105 \
             method POST \
-            target /var_urlencoded.tcl?single=one&multi=a&multi=b \
+            target /var_urlencoded.tcl?single=one&multi=a&multi=b&httpcode=1 \
             path /var_urlencoded.tcl \
-            query single=one&multi=a&multi=b \
+            query single=one&multi=a&multi=b&httpcode=1 \
             version 1.1 \
             headers [dict create \
                 host rivet.example.test \
@@ -2955,7 +2956,7 @@ puts [::rivet::var_post list multi]
     catch {::tclwire::accounting remove_thread $worker_id}
     catch {::tclwire::io end}
     removeDirectory $docroot
-} -result "one\nfallback\n{}\na b body\n1\n0\nmulti posted single space\n4\ndefault\none\nqs-default\npost-default\nvalue\na b\nbody\n"
+} -result "one\nfallback\n{}\na b body\n1\n0\nhttpcode multi posted single space\n5\ndefault\none\nqs-default\npost-default\nvalue\na b\nbody\n1\n"
 
 test application-configuration-1.4ffl {
     rivet var_post reads multipart fields without uploaded files

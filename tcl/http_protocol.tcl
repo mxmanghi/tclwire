@@ -87,26 +87,26 @@ oo::class create ::tclwire::HttpProtocolSession {
         # as a newly constructed object.  Any temporary file, transfer decoder,
         # or multipart parser from the previous request is closed by abort
         # before the parser state is reinitialized.
-        set input_state headers
-        set header_buffer {}
-        set request_info {}
+        set input_state     headers
+        set header_buffer   {}
+        set request_info    {}
         set request_info_status empty
-        set request_method {}
+        set request_method  {}
         set request_headers {}
-        set body_framing none
+        set body_framing    none
         set transfer_codings {}
-        set body_data $::tclwire::constants::empty_bytearray
-        set body_channel {}
-        set body_path {}
-        set body_size 0
-        set body_sink {}
-        set body_remaining 0
-        set chunk_buffer $::tclwire::constants::empty_bytearray
+        set body_data       $::tclwire::constants::empty_bytearray
+        set body_channel    {}
+        set body_path       {}
+        set body_size       0
+        set body_sink       {}
+        set body_remaining  0
+        set chunk_buffer    $::tclwire::constants::empty_bytearray
         set chunk_remaining 0
-        set trailers [dict create]
+        set trailers        [dict create]
         set completed_descriptor {}
         set declared_request_size 0
-        set header_size 0
+        set header_size     0
         set transfer_stream {}
         return
     }

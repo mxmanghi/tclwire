@@ -42,8 +42,7 @@ oo::class create ::tclwire::envs::RivetEnvironment {
     }
 
     method environment_configuration_defaults {{application_descriptor {}}} {
-        return [dict create \
-            stdchans [dict create auto_chunked_on_flush 1]]
+        return [dict create stdchans [dict create auto_chunked_on_flush 1]]
     }
 
     method do_install {} {
