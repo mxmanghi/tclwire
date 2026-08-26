@@ -19,22 +19,18 @@ namespace eval ::tclwire::http::errors {
                              body "The request could not be understood by TclWire.\n"] \
             403 [dict create reason "Forbidden" \
                              body "The requested resource is not available for this service.\n"] \
-            404 [dict create \
-                reason "Not Found" \
-                body "TclWire could not find {{path}}.\n"] \
+            404 [dict create reason "Not Found" \
+                             body "TclWire could not find {{path}}.\n"] \
             413 [dict create reason "Content Too Large" \
                              body "The request exceeds the configured size limit.\n"] \
-            405 [dict create \
-                reason "Method Not Allowed" \
-                body "The requested method is not supported for this resource.\n"] \
+            405 [dict create reason "Method Not Allowed" \
+                             body "The requested method is not supported for this resource.\n"] \
             431 [dict create reason "Request Header Fields Too Large" \
                              body "The request headers exceed the configured size limit.\n"] \
-            500 [dict create \
-                reason "Internal Server Error" \
-                body "TclWire could not complete the request because of an internal error.\n"] \
-            503 [dict create \
-                reason "Service Unavailable" \
-                body "The service is temporarily unavailable. Try again later.\n"]]
+            500 [dict create reason "Internal Server Error" \
+                             body "TclWire could not complete the request because of an internal error.\n"] \
+            503 [dict create reason "Service Unavailable" \
+                             body "The service is temporarily unavailable. Try again later.\n"]]
     }
 
     proc validate {messages} {
@@ -120,13 +116,12 @@ namespace eval ::tclwire::http::errors {
         if {![dict exists $context status]} {
             dict set context status $status
         }
-        return [dict create \
-            status $status \
-            reason [dict get $entry reason] \
-            body [expand [dict get $entry body] $context] \
-            headers [list "Content-Type: text/html; charset=utf-8"] \
-            body_mode text \
-            encoding utf-8]
+        return [dict create status      $status \
+                            reason      [dict get $entry reason] \
+                            body        [expand [dict get $entry body] $context] \
+                            headers     [list "Content-Type: text/html; charset=utf-8"] \
+                            body_mode   text \
+                            encoding    utf-8]
     }
 
     namespace export load messages message response

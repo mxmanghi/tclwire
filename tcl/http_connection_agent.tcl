@@ -551,11 +551,65 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return
     }
 
+    # Consume one application-output event and translate it into changes to the
+    # HTTP response associated with transaction_id.  Application code runs on
+    # a content-generator thread, so it cannot manipulate this connection or
+    # its protocol session directly.  ::tclwire::io::send_event instead sends
+    # this method a Tcl dictionary through the connection thread's event loop.
+    # A typical event dictionary has the following shape: 
+    #
+    #   type            output
+    #   transaction_id  17
+    #   output_sequence 2
+    #   stream          stdout
+    #   data            {Hello, world!}
+    #   flags           {body_mode text}
+    #
+    # The transaction_id argument is supplied separately by the router.  The
+    # same id is also present in events produced by application_io.tcl, while
+    # 'stream' is currently protocol metadata identifying the application's
+    # stdout stream.  This receiver is concerned principally with type, the
+    # monotonically increasing output_sequence, data, and type-specific flags.
+    #
+    # The transaction object is the connection-thread-owned response state.  A
+    # representative subset of its snapshot while a response is being built is:
+    #
+    #   transaction_id              17
+    #   method                      GET
+    #   version                     1.1
+    #   response_state              preparing
+    #   response_status             200
+    #   response_reason             OK
+    #   response_headers            {{Content-Type: text/plain}}
+    #   response_body_mode          text
+    #   response_body               {Hello, world!}
+    #   response_bytes              0
+    #   output_sequence             2
+    #
+    # response_body holds an uncommitted, non-chunked body.  response_bytes
+    # counts encoded entity bytes already written by the chunked path; the two
+    # values therefore describe different stages of output, not the same data.
+
     method application_output {transaction_id event} {
+
+        # A late asynchronous event can arrive after its transaction has been
+        # finished (for example, after an earlier event aborted the response).
+        # Ignoring it is both safe and necessary: there is no response state to
+        # update, and it must not be applied to a newer request on the socket.
+
         set transaction [my transaction_for $transaction_id]
         if {![info object isa object $transaction]} {
             return
         }
+
+        # Cross-thread sends are asynchronous.  Require the exact sequence
+        # assigned by ::tclwire::io::send_event so that lost, duplicated, or
+        # reordered metadata/body events can never silently corrupt the HTTP
+        # response. 
+
+        # This check on the ordering is carried out before dispatch because
+        # *ordering is a property of the complete event stream* 
+        # irrespective of event type.
 
         set expected [expr {[$transaction get output_sequence] + 1}]
         if {[dict get $event output_sequence] != $expected} {
@@ -569,10 +623,43 @@ oo::class create ::tclwire::HttpConnectionAgent {
         }
         $transaction set output_sequence $expected
 
+        # This switch is the response-output state machine's dispatcher.  Its
+        # arms serve four related but distinct purposes:
+        #
+        #   * response and http_header mutate HTTP metadata while it is still
+        #     legal to do so;
+        #   * output, no_body, and flush control entity-body representation,
+        #     buffering, and the transition to chunked streaming;
+        #   * complete and close_connection perform successful terminal
+        #     actions and release the transaction;
+        #   * error and default funnel application/protocol failures through
+        #     the common abort policy (a 500 before commitment, otherwise a
+        #     connection close because an already-sent response cannot be
+        #     replaced).
+        #
+        # Every event type uses the same outer dictionary shown above.  `data'
+        # carries body bytes/text for output or an error message for error;
+        # `flags' carries the structured, event-specific control data.
+
         switch -exact -- [dict get $event type] {
             response {
+
+                # Replace the complete response descriptor.  For example:
+                #
+                #   flags {status 201 reason Created
+                #          headers {{Content-Type: application/json}
+                #                   {Content-Length: 12}}
+                #          body_mode text encoding utf-8}
+                #
+                # Headers in this event are a list of already formatted HTTP
+                # header lines, not the request-header dictionary used in a
+                # request descriptor.  A response event must precede buffered
+                # body output and header commitment: replacing metadata after
+                # either point would make the bytes on the wire inconsistent
+                # with the transaction state.
+                
                 if {[$transaction get response_state] ne "preparing" ||
-                        [$transaction get response_body] ne {}} {
+                    [$transaction get response_body] ne {}} {
                     my abort_application_response $transaction_id $transaction \
                         "response event arrived after response output started"
                     return
@@ -581,11 +668,20 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 foreach field {status reason headers body_mode} {
                     $transaction set response_$field [dict get $flags $field]
                 }
+
+                # An explicit response descriptor fixes text versus binary
+                # semantics.  A later output event may no longer infer and
+                # change the mode from its own flags.
+
                 $transaction set response_body_mode_explicit 1
                 if {[dict get $flags encoding] ne {}} {
-                    $transaction set response_encoding \
-                        [dict get $flags encoding]
+                    $transaction set response_encoding [dict get $flags encoding]
                 }
+
+                # Validate Transfer-Encoding now.  In particular, reject an
+                # unsupported coding, Content-Length plus chunked, or chunked
+                # transfer on HTTP/1.0 before any response bytes are emitted.
+
                 if {[catch {my chunked_response $transaction} message options]} {
                     my abort_application_response $transaction_id $transaction \
                         $message $options
@@ -593,6 +689,17 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
             }
             http_header {
+
+                # Apply one incremental header operation.  flags is one of:
+                #
+                #   {action set    name Cache-Control value no-cache}
+                #   {action add    name Set-Cookie    value {theme=dark}}
+                #   {action remove name Content-Length}
+                #
+                # apply_header_event enforces valid field syntax, set/remove
+                # case-insensitive matching, header mutability, and the same
+                # transfer-framing invariants checked for a response event.
+
                 if {[catch {
                     my apply_header_event $transaction [dict get $event flags]
                 } message options]} {
@@ -602,22 +709,45 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
             }
             output {
+
+                # Add application data to the entity body.  A text example is:
+                #
+                #   {type output output_sequence 3 stream stdout
+                #    transaction_id 17 data {Hello, world!}
+                #    flags {body_mode text}}
+                #
+                # With body_mode binary, data is a Tcl bytearray and must not
+                # undergo character-encoding conversion.  An implicit response
+                # starts in text mode, so its first output is allowed to select
+                # binary mode, but only before metadata, buffered content, or
+                # streamed bytes make that choice observable to the client.
+
                 set body_mode [$transaction get response_body_mode]
                 if {[dict exists $event flags body_mode]} {
                     set body_mode [dict get $event flags body_mode]
                 }
+
                 if {$body_mode ne [$transaction get response_body_mode]} {
                     if {[$transaction get response_state] eq "preparing" &&
-                            ![$transaction get response_body_mode_explicit] &&
-                            [$transaction get response_body] eq {} &&
-                            [$transaction get response_bytes] == 0} {
+                       ![$transaction get response_body_mode_explicit] &&
+                        [$transaction get response_body] eq {} &&
+                        [$transaction get response_bytes] == 0} {
+
                         $transaction set response_body_mode $body_mode
+
                     } else {
                         my abort_application_response $transaction_id $transaction \
-                            "application output body mode changed from [$transaction get response_body_mode] to $body_mode"
+                        "application output body mode changed from [$transaction get response_body_mode] to $body_mode"
                         return
                     }
                 }
+
+                # Transfer-Encoding decides whether data can be sent now.  A
+                # chunked response commits its headers and frames each output
+                # event immediately.  Otherwise the body remains buffered so
+                # complete can calculate Content-Length and build one ordinary
+                # HTTP response.
+
                 if {[catch {set chunked [my chunked_response $transaction]} message options]} {
                     my abort_application_response $transaction_id $transaction \
                         $message $options
@@ -637,6 +767,16 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
             }
             no_body {
+
+                # Record the application's decision that this response has no
+                # entity body (used, for example, when application logic makes
+                # a body inappropriate).  Content-Length is removed so stale
+                # response metadata cannot advertise discarded content.
+                #
+                # This remains possible after data was merely buffered: that
+                # buffer is cleared below.  It is impossible after chunk bytes
+                # reached the peer, which response_bytes detects.
+
                 if {[$transaction get response_bytes] > 0} {
                     my abort_application_response $transaction_id $transaction \
                         "no_body event arrived after response bytes were sent"
@@ -653,6 +793,16 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 $transaction set response_body {}
             }
             flush {
+
+                # A flush is a streaming boundary, not response completion.
+                # Its flags normally look like:
+                #
+                #   {auto_chunked_on_flush 1}
+                #
+                # If requested and legal, HTTP/1.1 output without an explicit
+                # Content-Length is promoted to Transfer-Encoding: chunked.
+                # Existing explicit framing is always respected and validated.
+
                 if {[catch {
                     set channel_event_flags [dict get $event flags]
                     if {[dict get $channel_event_flags auto_chunked_on_flush]} {
@@ -662,6 +812,15 @@ oo::class create ::tclwire::HttpConnectionAgent {
                         set chunked [my chunked_response $transaction]
                     }
                     if {$chunked} {
+
+                        # Drain data accumulated before streaming was enabled,
+                        # then ensure the response head has been committed.  An
+                        # empty write with flush=1 asks the connection channel
+                        # to push pending bytes without creating an empty HTTP
+                        # chunk.  For a non-chunked response flush is purposely
+                        # a no-op: sending a partial, unframed body would make a
+                        # later Content-Length response impossible to construct.
+
                         set body [$transaction get response_body]
                         if {$body ne {}} {
                             my write_chunked_response_body \
@@ -681,20 +840,33 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
             }
             complete {
+
+                # Complete is the normal terminal event.  There are two output
+                # strategies, selected by the already-validated HTTP framing:
+                # chunked output has largely been sent already and needs only
+                # commitment/termination; non-chunked output is still buffered
+                # and can be assembled into a conventional response now.
+
                 if {[catch {set chunked [my chunked_response $transaction]} message options]} {
-                    my abort_application_response $transaction_id $transaction \
-                        $message $options
+                    my abort_application_response $transaction_id \
+                                                  $transaction \
+                                                  $message \
+                                                  $options
                     return
                 }
                 if {$chunked} {
                     if {[catch {
                         my commit_chunked_response $transaction
+
+                        # A HEAD response sends the same headers as GET would,
+                        # but never sends entity chunks or a chunk terminator.
+                        # Flushing still makes the committed head observable.
+
                         if {[my head_only $transaction]} {
                             if {![my write_output {} 1]} {
                                 error "failed to complete HTTP HEAD response"
                             }
-                        } elseif {![my write_output \
-                                [$protocol_session chunk_terminator] 1]} {
+                        } elseif {![my write_output [$protocol_session chunk_terminator] 1]} {
                             error "failed to terminate HTTP chunks"
                         }
                     } message options]} {
@@ -702,6 +874,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                             $message $options
                         return
                     }
+
+                    # Mark and snapshot before finish_transaction destroys the
+                    # live transaction object.  The snapshot remains available
+                    # for accounting and the access log.
+
                     $transaction set response_state complete
                     set descriptor [my finish_transaction $transaction_id]
                     catch {
@@ -714,22 +891,29 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     my close
                     return
                 }
-                set body [$transaction get response_body]
+
+                # In the buffered path build_response performs final encoding,
+                # framing, and HEAD suppression.  response_body is a Tcl string
+                # in text mode and a bytearray in binary mode, which is why log
+                # byte counts use encoding conversion only for text.
+
+                set body             [$transaction get response_body]
                 set content_encoding [$transaction get response_encoding]
-                set status [$transaction get response_status]
-                set reason [$transaction get response_reason]
-                set headers [$transaction get response_headers]
-                set body_mode [$transaction get response_body_mode]
-                set head_only [my head_only $transaction]
-                set descriptor [my finish_transaction $transaction_id]
+                set status           [$transaction get response_status]
+                set reason           [$transaction get response_reason]
+                set headers          [$transaction get response_headers]
+                set body_mode        [$transaction get response_body_mode]
+                set head_only        [my head_only $transaction]
+                set descriptor       [my finish_transaction $transaction_id]
+
                 catch {
                     ::tclwire::accounting update_connection $connection_key \
-                        [dict create current_transaction_id {} \
-                                     current_command {}]
+                        [dict create current_transaction_id {} current_command {}]
                 }
-                set response [$protocol_session build_response \
-                    $status $reason $body $content_encoding $headers $body_mode \
-                    $head_only]
+                set response [$protocol_session build_response $status $reason $body \
+                                                               $content_encoding $headers \
+                                                               $body_mode $head_only]
+
                 if {$head_only} {
                     set body_bytes 0
                 } elseif {$body_mode eq "binary"} {
@@ -742,6 +926,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 my write_and_close $response
             }
             close_connection {
+
+                # This is an intentional application-requested termination with
+                # no HTTP response.  Discard the transaction, clear accounting,
+                # log status/bytes as zero, and close the transport directly.
+
                 set descriptor [my finish_transaction $transaction_id]
                 catch {
                     ::tclwire::accounting update_connection $connection_key \
@@ -753,10 +942,18 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 return
             }
             error {
+                # Application failure events put the diagnostic message in
+                # data, for example {type error ... data {template failed}
+                # flags {}}.  The common abort helper logs the real reason and
+                # chooses a 500 response or immediate close based on whether
+                # HTTP headers have already been committed.
                 my abort_application_response $transaction_id $transaction \
                     [dict get $event data]
             }
             default {
+                # Treat an unrecognised type as a protocol violation.  Silently
+                # ignoring it would advance output_sequence while leaving the
+                # application's view of the response different from the wire.
                 my abort_application_response $transaction_id $transaction \
                     "unknown application output event type: [dict get $event type]"
             }
