@@ -79,7 +79,7 @@ namespace eval ::tclwire::envs::rivet::parser {
 
     proc parserivet {filename} {
         set script [parse_template [read_template_file $filename]]
-        return "namespace eval request {\n$script\n}\n"
+        return "namespace eval ::request {\n$script\n}\n"
     }
 
     proc install_commands {} {
