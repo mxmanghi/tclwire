@@ -20,6 +20,43 @@ if {[info commands ::tclwire::envs::app::Rivet] ne {}} {
 
 oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
+    variable template_cache
+
+    constructor {application_descriptor} {
+        next $application_descriptor
+        set template_cache [::tclwire::TemplateCache new \
+            ::tclwire::envs::rivet::parser::parse_template_file \
+            [my configured_template_cache_policy]]
+    }
+
+    destructor {
+        if {[info exists template_cache] && $template_cache ne {}} {
+            $template_cache destroy
+        }
+    }
+
+    method template_cache {} {
+        return $template_cache
+    }
+
+    method configured_template_cache_policy {} {
+        set policy always
+
+        # we look up any override to the cache policy in
+        # the application specific configuration (as returned by
+        # [info object class [self])
+        #
+        #   [http.<my-app>.configure]
+        #   template_cache_policy = immutable|mtime|always
+
+        foreach class_name [list ::tclwire::envs::app::Rivet [info object class [self]]] {
+            set options [[my configuration_object] class_configuration $class_name]
+            if {$options ne {} && [dict exists $options template_cache_policy]} {
+                set policy [dict get $options template_cache_policy]
+            }
+        }
+        return $policy
+    }
 
     method initialize {} {
         # Make Apache Rivet's process-global server array available to

@@ -2062,6 +2062,30 @@ set title TclWire
     removeDirectory $docroot
 } -result "<h1>TclWire</h1>\n\n<p>TclWire</p>\n\n<span>TclWire</span>\n"
 
+test application-configuration-1.4eba {
+    Rivet application owns a template cache configured by its class
+} -body {
+    set docroot [makeDirectory rivet-template-cache-docroot]
+    set application [::tclwire::envs::app::Rivet new \
+        [dict create \
+            application_id rivet-template-cache \
+            docroot $docroot \
+            encoding utf-8 \
+            package tclwire::application \
+            hosts localhost \
+            configure [dict create \
+                ::tclwire::envs::app::Rivet \
+                    [dict create template_cache_policy immutable]]]]
+    try {
+        list \
+            [info object isa object [$application template_cache]] \
+            [[$application template_cache] policy]
+    } finally {
+        $application destroy
+        removeDirectory $docroot
+    }
+} -result {1 immutable}
+
 test application-configuration-1.4ec {
     rivet parse reads template files with explicit encoding
 } -setup {

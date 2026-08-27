@@ -83,16 +83,22 @@ oo::class create ::tclwire::Application {
     # The default preparation stage preserves the established handler-only
     # application contract. Subclasses may return {action reply response ...}
     # to answer before generation, or attach a future response policy to pass.
+
     method prepare_request {request} {
         return [dict create action pass]
     }
 
-    # Subclasses may override this to supply site-independent defaults. Keys
-    # are extensions without a leading dot and values are nonnegative cache
+    # configured_cache_control_map --
+    #
+    # Mapping the configuration defined map of file extensions and HTTP 
+    # controlled browser cache lifetime values
+    #
+    # Keys are extensions without a leading dot and values are nonnegative cache
     # lifetimes in seconds. The application-owned cache_control_map
-    # configuration augments these defaults; an "unset" value removes a
+    # configuration changes and extends these defaults; an "unset" value removes a
     # default. Keeping the policy in Application makes it available to both
-    # generated and file-backed representations.
+    # content generating applications and ordinary static file representations.
+
     method cache_control_defaults {} {
         return [dict create]
     }
@@ -102,6 +108,7 @@ oo::class create ::tclwire::Application {
         if {[catch {dict size $defaults}]} {
             error "Application cache_control_defaults must return a dictionary"
         }
+
         set cache_control_map {}
         dict for {extension lifetime} $defaults {
             set extension [string trimleft [string tolower $extension] .]
@@ -113,6 +120,7 @@ oo::class create ::tclwire::Application {
             }
             dict set cache_control_map $extension $lifetime
         }
+
         if {[[my configuration_object] exists cache_control_map]} {
             set configured_map [[my configuration_object] get cache_control_map]
             if {[catch {dict size $configured_map}]} {
@@ -147,13 +155,13 @@ oo::class create ::tclwire::Application {
     # Cache-Control field is deliberately replaced, giving the configured
     # application policy one authoritative value while preserving every other
     # header and its relative order.
+
     method prepare_response {request response} {
         if {[dict get $response status] < 200 ||
-                [dict get $response status] >= 300} {
+            [dict get $response status] >= 300} {
             return $response
         }
-        set extension [string trimleft [string tolower \
-                [file extension [$request path]]] .]
+        set extension [string trimleft [string tolower [file extension [$request path]]] .]
         if {$extension eq {} || ![dict exists $cache_control_map $extension]} {
             return $response
         }
@@ -163,8 +171,8 @@ oo::class create ::tclwire::Application {
                 lappend headers $header
             }
         }
-        lappend headers [list Cache-Control \
-                "public, max-age=[dict get $cache_control_map $extension]"]
+        lappend headers \
+            [list Cache-Control "public, max-age=[dict get $cache_control_map $extension]"]
         dict set response headers $headers
         return $response
     }

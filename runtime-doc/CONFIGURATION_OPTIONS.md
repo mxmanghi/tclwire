@@ -350,6 +350,21 @@ no entries; Rivetweb supplies `css`, `js`, and `ico` defaults of one hour.
 Other application classes can supply defaults by overriding
 `cache_control_defaults`.
 
+Rivet applications support `template_cache_policy` in their `configure`
+dictionary, for example:
+
+```toml
+[http.example.configure]
+template_cache_policy = "mtime"
+```
+
+The default `always` reparses templates on every request. `mtime` reuses an
+entry while the modification time of its normalized full path is unchanged.
+`immutable` parses each path once for the lifetime of the application instance
+and is intended for restart- or invalidation-based deployments. Explicit
+`::rivet::parse -encoding` calls include the normalized encoding name in their
+cache key.
+
 `class`
 : TclOO application class name. Required after inheritance. Bare names are
   qualified under `::tclwire::app`; fully qualified names are left unchanged.

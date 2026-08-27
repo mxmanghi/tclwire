@@ -3,6 +3,7 @@
 # Thin Tcl compatibility layer for Apache Rivet's standalone parser package.
 
 package require fileutil
+package require tclwire::template_cache 0.1
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::envs {}
@@ -22,37 +23,48 @@ namespace eval ::tclwire::envs::rivet::parser {
 
     proc parse_template {template} {
         set script {}
-        set offset 0
-        set length [string length $template]
+        set literal_start 0
+        set code_start -1
+        set opening_delimiter -1
 
-        while {$offset < $length} {
-            set start [string first "<?" $template $offset]
-            if {$start < 0} {
-                append_literal script [string range $template $offset end]
-                break
+        # Each match has three index pairs: the complete delimiter, the opening
+        # delimiter capture, and the closing delimiter capture.  Captures that
+        # did not participate are {-1 -1}, which makes the stream self-tagging.
+        set delimiters [regexp -indices -all -inline {(<\?)|(\?>)} $template]
+        foreach {delimiter opening closing} $delimiters {
+            lassign $delimiter delimiter_start delimiter_end
+            lassign $opening opening_start
+
+            if {$opening_start >= 0} {
+                if {$code_start >= 0} {
+                    error "unexpected Rivet template opening delimiter at character $delimiter_start"
+                }
+                append_literal script \
+                    [string range $template $literal_start $delimiter_start-1]
+                set code_start [expr {$delimiter_end + 1}]
+                set opening_delimiter $delimiter_start
+                continue
             }
 
-            append_literal script [string range $template $offset $start-1]
-            set code_start [expr {$start + 2}]
-            set echo 0
+            if {$code_start < 0} {
+                error "unexpected Rivet template closing delimiter at character $delimiter_start"
+            }
+
+            set code [string range $template $code_start $delimiter_start-1]
             if {[string index $template $code_start] eq "="} {
-                set echo 1
-                incr code_start
-            }
-
-            set end [string first "?>" $template $code_start]
-            if {$end < 0} {
-                error "unterminated Rivet template Tcl block"
-            }
-
-            set code [string range $template $code_start $end-1]
-            if {$echo} {
-                append script [list puts -nonewline] " " $code "\n"
+                append script [list puts -nonewline] " " [string range $code 1 end] "\n"
             } else {
                 append script $code "\n"
             }
-            set offset [expr {$end + 2}]
+            set literal_start [expr {$delimiter_end + 1}]
+            set code_start          -1
+            set opening_delimiter   -1
         }
+
+        if {$code_start >= 0} {
+            error "unterminated Rivet template Tcl block beginning at character $opening_delimiter"
+        }
+        append_literal script [string range $template $literal_start end]
 
         return $script
     }
@@ -71,6 +83,10 @@ namespace eval ::tclwire::envs::rivet::parser {
         } finally {
             close $channel
         }
+    }
+
+    proc parse_template_file {path {encoding {}}} {
+        return [parse_template [read_template_file $path $encoding]]
     }
 
     proc parserivetdata {data} {

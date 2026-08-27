@@ -964,19 +964,22 @@ namespace eval ::tclwire::envs::rivet {
         if {[catch {set candidate [$application local_path $path]}]} {
             return {}
         }
-        return [local_file_script $candidate]
+        return [local_file_script $candidate $application]
     }
 
-    proc local_file_script {candidate} {
+    proc local_file_script {candidate {application {}}} {
         set extension [string tolower [file extension $candidate]]
         if {$candidate eq {} || $extension ni {".rvt" ".tcl"}} {
             return {}
         }
-        set content [read_template_file $candidate]
         if {$extension eq ".rvt"} {
-            return [parse_template $content]
+            if {$application ne {} &&
+                    [lsearch -exact [info object methods $application -all] template_cache] >= 0} {
+                return [[$application template_cache] get $candidate]
+            }
+            return [::tclwire::envs::rivet::parser::parse_template_file $candidate]
         }
-        return $content
+        return [read_template_file $candidate]
     }
 
     proc parse_file_path {path virtual} {
@@ -1033,6 +1036,7 @@ namespace eval ::tclwire::envs::rivet {
             parse_wrong_args
         }
 
+        set cached 0
         if {$string_mode} {
             set template $source_value
         } else {
@@ -1040,10 +1044,24 @@ namespace eval ::tclwire::envs::rivet {
             if {$path eq {} || ![file isfile $path] || ![file readable $path]} {
                 error "could not read Rivet template file"
             }
-            set template [read_template_file $path $encoding]
+            if {[string tolower [file extension $path]] eq ".rvt" &&
+                    ![catch {set application [::tclwire::app::current]}] &&
+                    [lsearch -exact [info object methods $application -all] template_cache] >= 0} {
+                if {$encoding eq {}} {
+                    set script [[$application template_cache] get $path]
+                } else {
+                    set script [[$application template_cache] get $path \
+                        [string tolower $encoding]]
+                }
+                set cached 1
+            } else {
+                set template [read_template_file $path $encoding]
+            }
         }
 
-        set script [parse_template $template]
+        if {!$cached} {
+            set script [parse_template $template]
+        }
         uplevel 1 $script
     }
 
@@ -1947,7 +1965,8 @@ namespace eval ::tclwire::envs::rivet {
 
             set local_path [$request local_path]
             if {$local_path ne {}} {
-                return [::tclwire::envs::rivet::local_file_script $local_path]
+                return [::tclwire::envs::rivet::local_file_script \
+                    $local_path $application]
             }
             return [::tclwire::envs::rivet::file_script $application \
                 [$request path]]

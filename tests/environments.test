@@ -956,6 +956,49 @@ test rivet-1.2f {rivet parser compiles mixed template content to Tcl} -body {
     }
 } -result "<h1>\$title</h1>\n\n<p>TclWire</p>\n<footer>TclWire</footer>\n"
 
+test rivet-1.2fa {rivet parser rejects non-alternating delimiters} -body {
+    list \
+        [catch {::tclwire::envs::rivet::parse_template {before ?>}} message] \
+        $message \
+        [catch {::tclwire::envs::rivet::parse_template {<? outer <? inner ?>}} message] \
+        $message \
+        [catch {::tclwire::envs::rivet::parse_template {<? incomplete}} message] \
+        $message
+} -result {1 {unexpected Rivet template closing delimiter at character 7} 1 {unexpected Rivet template opening delimiter at character 9} 1 {unterminated Rivet template Tcl block beginning at character 0}}
+
+test rivet-1.2fb {template cache applies each refresh policy by full path} -body {
+    set path [file join [temporaryDirectory] template-cache-[pid].rvt]
+    set ::tclwire::environment_test::template_cache_loads 0
+    proc ::tclwire::environment_test::load_template {path args} {
+        incr ::tclwire::environment_test::template_cache_loads
+        return "[::fileutil::cat $path]:[join $args ,]"
+    }
+    ::fileutil::writeFile $path one
+    try {
+        set cache [::tclwire::TemplateCache new \
+            ::tclwire::environment_test::load_template always]
+        set always [list [$cache get $path] [$cache get $path]]
+        $cache policy mtime
+        set mtime [list [$cache get $path] [$cache get $path]]
+        ::fileutil::writeFile $path two
+        file mtime $path 1000000001
+        lappend mtime [$cache get $path]
+        $cache policy immutable
+        set immutable [list [$cache get $path]]
+        ::fileutil::writeFile $path three
+        file mtime $path 1000000002
+        lappend immutable [$cache get $path]
+        set encoding [list [$cache get $path utf-8] [$cache get $path utf-8]]
+        list $always $mtime $immutable $encoding \
+            $::tclwire::environment_test::template_cache_loads
+    } finally {
+        catch {$cache destroy}
+        catch {rename ::tclwire::environment_test::load_template {}}
+        unset -nocomplain ::tclwire::environment_test::template_cache_loads
+        file delete -force $path
+    }
+} -result {{one: one:} {one: one: two:} {two: two:} {three:utf-8 three:utf-8} 5}
+
 test rivet-1.2g {rivet lempty reports empty lists and invalid list values} -body {
     catch {::tclwire::envs::rivet uninstall}
     catch {namespace delete ::Rivet}

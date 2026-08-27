@@ -67,6 +67,21 @@ application has no defaults; Rivetweb defaults `css`, `js`, and `ico` to one
 hour. Other application classes can provide their own defaults through
 `cache_control_defaults`.
 
+Rivet applications also accept `template_cache_policy` in their `configure`
+table:
+
+```toml
+[http.example.configure]
+template_cache_policy = "mtime"
+```
+
+The default `always` parses the template on every request and is suited to
+development. `mtime` reuses a parsed template while its normalized full path
+has the same file modification time. `immutable` parses each path once for the
+lifetime of the application instance; use it only with restart- or
+invalidation-based deployments. Explicit `::rivet::parse -encoding` calls use
+the normalized encoding name as an additional cache-key component.
+
 ## Environment Configuration
 
 Environment configuration is declared separately from global runtime
