@@ -106,6 +106,12 @@ The runtime uses these object methods:
 overriding `install` or `uninstall`, because the base class already guards
 idempotency before calling `do_install`.
 
+Its constructor accepts an optional application source path. The base class
+normalizes and stores that path, and its `application_file` method returns it.
+Environments that supply an application class should pass the matching source
+file when creating their environment object; environments that do not supply a
+class can continue to construct the object without arguments.
+
 Environment namespaces usually export ensemble wrappers for the lifecycle
 entry points, not for the subclass hooks. The namespace boundary exposes
 `install` and `uninstall`; those wrappers call the object's base lifecycle
@@ -397,9 +403,10 @@ commands will be visible to application code through Tcl's namespace path.
 
 ### 9. Provide an application class only when needed
 
-Override `application_class` and `application_file` only when the environment
-owns the application execution model. If ordinary `::tclwire::CApplication`
-subclasses can use the environment, leave these methods empty.
+Override `application_class` only when the environment owns the application
+execution model, and pass its source path to the base constructor when it must
+support file-backed loading. If ordinary `::tclwire::CApplication` subclasses
+can use the environment, leave the class and source path empty.
 
 ### 10. Register the package
 

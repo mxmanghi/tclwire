@@ -7,9 +7,14 @@ package require TclOO
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ApplicationEnvironment {
+    variable application_file_path
     variable installed
 
-    constructor {} {
+    constructor {{application_file {}}} {
+        set application_file_path ""
+        if {$application_file ne {}} {
+            set application_file_path [file normalize $application_file]
+        }
         set installed 0
     }
 
@@ -34,7 +39,7 @@ oo::class create ::tclwire::ApplicationEnvironment {
     }
 
     method application_file {} {
-        return {}
+        return $application_file_path
     }
 
     method environment_configuration_defaults {{application_descriptor {}}} {

@@ -113,6 +113,12 @@ The runtime uses these object methods:
 overriding `install` or `uninstall`, because the base class already prevents
 repeated installation on the same object.
 
+Its constructor accepts an optional application source path. The base class
+normalizes and stores that path, and its `application_file` method returns it.
+Environments that supply an application class should pass the matching source
+file when creating their environment object; environments that do not supply a
+class can continue to construct the object without arguments.
+
 Environment namespaces commonly expose ensemble wrappers for inspection and
 manual testing:
 
@@ -433,8 +439,9 @@ If you prefer to avoid namespace-path lookup, call the command explicitly as
   namespace state changed by the environment.
 - Rely on the base `install` and `uninstall` methods for idempotency, and make
   lower-level helpers safe when called more than once.
-- Override `application_class` and `application_file` only when the environment
-  owns the application execution model.
+- Override `application_class` only when the environment owns the application
+  execution model, and pass its source path to the base constructor when it
+  must support file-backed loading.
 - Add tests for lifecycle metadata, install/uninstall behavior, dependency
   ordering, namespace-path command resolution, configuration, and request-time
   behavior.

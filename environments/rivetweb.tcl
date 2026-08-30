@@ -42,7 +42,7 @@ oo::class create ::tclwire::envs::Rivetweb {
         } else {
             set ::website_root [file join rivetweb website]
         }
-        set auto_path [list $::website_root $::rweb_root {*}$::auto_path]
+        set ::auto_path [list $::website_root $::rweb_root {*}$::auto_path]
 
         namespace eval :: { source [file join $::rweb_root init.tcl] }
         return
@@ -56,13 +56,11 @@ oo::class create ::tclwire::envs::Rivetweb {
         return ::tclwire::envs::app::Rivetweb
     }
 
-    method application_file {} {
-        return [file normalize [file join [file dirname [info script]] rivetweb_app.tcl]]
-    }
 }
 
 namespace eval ::tclwire::envs::rivetweb {
-    variable rivetweb_o [::tclwire::envs::Rivetweb new]
+    variable rivetweb_o [::tclwire::envs::Rivetweb new \
+        [file normalize [file join [file dirname [info script]] rivetweb_app.tcl]]]
 
     proc object {} {
         variable rivetweb_o
