@@ -43,7 +43,7 @@ oo::class create ::tclwire::envs::app::Rivet {
     }
 
     method configured_template_cache_policy {} {
-        set policy always
+        set policy mtime
 
         # we look up any override to the cache policy in
         # the application specific configuration (as returned by
