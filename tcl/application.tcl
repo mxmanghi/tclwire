@@ -468,7 +468,7 @@ oo::class create ::tclwire::CApplication {
 
         set fields [list "method=[::tclwire::logger::log_value [$request method]]" \
                          "path=[::tclwire::logger::log_value [$request path]]" \
-                         "original_path=[::tclwire::logger::log_value [$request url_path]]" \
+                         "original_path=[::tclwire::logger::log_value [$request path]]" \
                          "status=$status" \
                          "resolved_path=[::tclwire::logger::log_value $resolved_path]"]
 

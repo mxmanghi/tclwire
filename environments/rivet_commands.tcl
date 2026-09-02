@@ -3,6 +3,7 @@
 # Apache Rivet compatibility commands installed into ::rivet.
 
 package require tclwire::content_generator_agent 0.1
+package require tclwire::http::codes 0.1
 package require tclwire::http::application::io 0.1
 package require tclwire::http::query 0.1
 package require fileutil
@@ -24,30 +25,6 @@ namespace eval ::tclwire::envs::rivet {
     variable abort_code {}
     variable abort_exiting 0
     variable rivet_version 3.3.0tw
-    variable response_reasons {
-        100 Continue
-        101 "Switching Protocols"
-        200 OK
-        201 Created
-        202 Accepted
-        204 "No Content"
-        301 "Moved Permanently"
-        302 Found
-        303 "See Other"
-        304 "Not Modified"
-        307 "Temporary Redirect"
-        308 "Permanent Redirect"
-        400 "Bad Request"
-        401 Unauthorized
-        403 Forbidden
-        404 "Not Found"
-        405 "Method Not Allowed"
-        413 "Content Too Large"
-        431 "Request Header Fields Too Large"
-        500 "Internal Server Error"
-        503 "Service Unavailable"
-    }
-
     variable inspect_options {
         ServerInitScript
         GlobalInitScript
@@ -734,12 +711,7 @@ namespace eval ::tclwire::envs::rivet {
     }
 
     proc response_reason {status} {
-        variable response_reasons
-
-        if {[dict exists $response_reasons $status]} {
-            return [dict get $response_reasons $status]
-        }
-        return {}
+        tailcall ::tclwire::http::codes::reason $status
     }
 
     proc headers {operation args} {
@@ -973,8 +945,7 @@ namespace eval ::tclwire::envs::rivet {
             return {}
         }
         if {$extension eq ".rvt"} {
-            if {$application ne {} &&
-                    [lsearch -exact [info object methods $application -all] template_cache] >= 0} {
+            if {$application ne {}} {
                 return [[$application template_cache] get $candidate]
             }
             return [::tclwire::envs::rivet::parser::parse_template_file $candidate]
@@ -1045,8 +1016,7 @@ namespace eval ::tclwire::envs::rivet {
                 error "could not read Rivet template file"
             }
             if {[string tolower [file extension $path]] eq ".rvt" &&
-                    ![catch {set application [::tclwire::app::current]}] &&
-                    [lsearch -exact [info object methods $application -all] template_cache] >= 0} {
+               ![catch {set application [::tclwire::app::current]}]} {
                 if {$encoding eq {}} {
                     set script [[$application template_cache] get $path]
                 } else {
@@ -1069,8 +1039,8 @@ namespace eval ::tclwire::envs::rivet {
         error {wrong # args: should be "::rivet::parse ?-encoding encoding? ?-virtual? filename | -string template_string"}
     }
 
-    proc lempty {list} {
-        if {[catch {llength $list} len]} {
+    proc lempty {a_list} {
+        if {[catch {llength $a_list} len]} {
             return 0
         }
         return [expr {$len == 0}]

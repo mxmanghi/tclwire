@@ -25,6 +25,7 @@
 
 package require TclOO
 package require tclwire::constants 0.1
+package require tclwire::http::codes 0.1
 package require tclwire::http::query 0.1
 package require tclwire::http::message 0.1
 package require tclwire::http::multipart 0.1
@@ -923,6 +924,9 @@ oo::class create ::tclwire::HttpProtocolSession {
         status reason body content_encoding {headers {}} {body_mode text}
         {head_only 0}
     } {
+        if {$reason eq {}} {
+            set reason [::tclwire::http::codes::reason $status]
+        }
         set body_bytes [my encode_response_body \
             $body $content_encoding $body_mode]
         set response_headers [list \
@@ -980,6 +984,9 @@ oo::class create ::tclwire::HttpProtocolSession {
     }
 
     method build_chunked_response_head { status reason content_encoding headers body_mode } {
+        if {$reason eq {}} {
+            set reason [::tclwire::http::codes::reason $status]
+        }
         set response_headers [list  "HTTP/1.1 $status $reason"  \
                                     "Connection: close"         \
                                     "Transfer-Encoding: chunked"]

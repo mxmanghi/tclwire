@@ -22,6 +22,9 @@ oo::class create ::tclwire::envs::app::Rivet {
     superclass ::tclwire::CApplication
     variable template_cache
 
+    # Rivet command implementations rely on every Rivet application exposing
+    # this cache.  Subclasses inherit both its ownership and template_cache
+    # accessor as part of the Rivet application contract.
     constructor {application_descriptor} {
         next $application_descriptor
         set template_cache [::tclwire::TemplateCache new \

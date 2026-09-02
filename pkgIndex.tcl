@@ -28,8 +28,12 @@ package ifneeded tclwire::configuration_tree 0.1 \
 package ifneeded tomlfile 0.1 \
     [list source [file join $dir tcl toml.tcl]]
 
+package ifneeded tclwire::http::codes 0.1 \
+    [list source [file join $dir tcl http_codes.tcl]]
+
 package ifneeded tclwire::http::protocol 0.1 [subst {
     package require tclwire::constants 0.1
+    package require tclwire::http::codes 0.1
     package require tclwire::http::query 0.1
     source [list [file join $dir tcl http_protocol.tcl]]
 }]

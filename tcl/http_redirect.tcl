@@ -4,18 +4,12 @@
 
 package require tclwire::constants 0.1
 package require tclwire::application::io 0.1
+package require tclwire::http::codes 0.1
 
 namespace eval ::tclwire {}
 namespace eval ::tclwire::http {}
 
 namespace eval ::tclwire::http::redirect {
-    ::tclwire::define_constant reasons [dict create \
-        301 "Moved Permanently" \
-        302 "Found" \
-        303 "See Other" \
-        307 "Temporary Redirect" \
-        308 "Permanent Redirect"]
-
     proc validate_location {location} {
         if {$location eq {}} {
             error "HTTP redirect location must not be empty"
@@ -28,12 +22,11 @@ namespace eval ::tclwire::http::redirect {
     }
 
     proc reason {status} {
-        variable reasons
-
-        if {![dict exists $reasons $status]} {
+        set reason [::tclwire::http::codes::reason $status]
+        if {$reason eq {} || $status ni {301 302 303 307 308}} {
             error "unsupported HTTP redirect status: $status"
         }
-        return [dict get $reasons $status]
+        return $reason
     }
 
     proc validate_headers {headers} {

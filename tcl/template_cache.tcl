@@ -37,7 +37,7 @@ oo::class create ::tclwire::TemplateCache {
             mtime {
                 set mtime [file mtime $path]
                 if {[dict exists $entries $key] &&
-                        [dict get $entries $key mtime] == $mtime} {
+                    [dict get $entries $key mtime] == $mtime} {
                     return [dict get $entries $key script]
                 }
                 set script [my load $path {*}$args]
@@ -46,8 +46,7 @@ oo::class create ::tclwire::TemplateCache {
             }
             immutable {
                 if {![dict exists $entries $key]} {
-                    dict set entries $key [dict create \
-                        script [my load $path {*}$args]]
+                    dict set entries $key [dict create script [my load $path {*}$args]]
                 }
                 return [dict get $entries $key script]
             }
