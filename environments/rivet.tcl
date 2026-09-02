@@ -11,12 +11,10 @@ namespace eval ::tclwire::envs {}
 
 oo::class create ::tclwire::envs::RivetEnvironment {
     superclass ::tclwire::ApplicationEnvironment
-    variable application_file_path
     variable previous_exit_command
 
     constructor {path} {
-        next
-        set application_file_path $path
+        next $path
         set previous_exit_command {}
     }
 
@@ -34,11 +32,6 @@ oo::class create ::tclwire::envs::RivetEnvironment {
 
     method application_class {} {
         return ::tclwire::envs::app::Rivet
-    }
-
-    method application_file {} {
-        variable application_file_path
-        return $application_file_path
     }
 
     method environment_configuration_defaults {{application_descriptor {}}} {

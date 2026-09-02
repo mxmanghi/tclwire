@@ -35,11 +35,12 @@ test stdchans-1.1 {stdchans environment exposes lifecycle metadata} -body {
         [::tclwire::envs::stdchans name] \
         [::tclwire::envs::stdchans requires] \
         [::tclwire::envs::stdchans path_namespaces] \
+        [$object application_file] \
         [::tclwire::envs::stdchans enabled] \
         [info object isa object $object] \
         [expr {"::tclwire::ApplicationEnvironment" in \
             [info class superclasses [info object class $object]]}]
-} -result [list stdchans {} ::tclwire::envs::stdchans 0 1 1]
+} -result [list stdchans {} ::tclwire::envs::stdchans {} 0 1 1]
 
 test environment-1.1a {environment configuration requires CGA application configuration} -body {
     set object [::tclwire::envs::stdchans object]
@@ -369,6 +370,38 @@ test rivet-1.1 {rivet environment exposes lifecycle metadata} -body {
         [expr {"::tclwire::ApplicationEnvironment" in \
             [info class superclasses [info object class $object]]}]
 } -result [list rivet stdchans ::rivet rivet_app.tcl ::tclwire::envs::app::Rivet 0 1 1]
+
+test rivetweb-1.0 {rivetweb environment keeps its application source path} -body {
+    list \
+        [::tclwire::envs::rivetweb requires] \
+        [::tclwire::envs::rivetweb application_class] \
+        [::tclwire::envs::rivetweb application_file]
+} -result [list \
+    rivet \
+    ::tclwire::envs::app::Rivetweb \
+    [file normalize [file join $project_root environments rivetweb_app.tcl]]]
+
+test rivetweb-1.0a {
+    loading the application source does not mask the environment package
+} -body {
+    set child [interp create]
+    try {
+        $child eval [list lappend auto_path $project_root]
+        $child eval [list namespace eval ::tclwire::app [list source \
+            [file join $project_root environments rivetweb_app.tcl]]]
+        set provided_before [$child eval {package provide tclwire::rivetweb}]
+        set result [$child eval {
+            set version [package require tclwire::rivetweb 0.1]
+            list \
+                $version \
+                [namespace exists ::tclwire::envs::rivetweb] \
+                [expr {[info commands ::tclwire::envs::rivetweb::object] ne {}}]
+        }]
+        list $provided_before {*}$result
+    } finally {
+        interp delete $child
+    }
+} -result {{} 0.1 1 1}
 
 test rivet-1.1a {rivet parser compatibility package parses standalone templates} -body {
     set path [file join [temporaryDirectory] rivet-parser-[pid].rvt]

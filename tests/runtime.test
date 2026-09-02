@@ -1359,6 +1359,45 @@ docroot = "rivet"
     ::tclwire::runtime_test::cleanup
 } -result [list ::tclwire::envs::app::Rivet rivet_app.tcl 0 1]
 
+test runtime-1.12ba {
+    rivetweb environment reload file remains relative to its package
+} -body {
+    set dispatcher {}
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+default_application = "default"
+docroot = "www"
+
+[http.default]
+class = "::tclwire::CApplication"
+package = "tclwire::application"
+hosts = "localhost"
+
+[http.rivetweb]
+hosts = "rivet.rivetweb.org"
+environment = "rivetweb"
+docroot = "rivet"
+reload_on_request = true
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivetweb]
+    list \
+        [$configuration class] \
+        [file tail [$configuration file]] \
+        [file isfile [$configuration file]] \
+        [$configuration reload_on_request]
+} -cleanup {
+    if {$dispatcher ne {}} {
+        $dispatcher destroy
+    }
+    ::tclwire::runtime_test::cleanup
+} -result [list \
+    ::tclwire::envs::app::Rivetweb \
+    rivetweb_app.tcl \
+    1 \
+    1]
+
 test runtime-1.13 {CLI values supersede TOML configuration} -body {
     set config_file [::tclwire::runtime_test::make_config {
 [tclwire]

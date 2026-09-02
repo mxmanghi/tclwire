@@ -171,4 +171,3 @@ oo::class create ::tclwire::envs::app::Rivetweb {
         }
     }
 }
-package provide tclwire::rivetweb 0.1
