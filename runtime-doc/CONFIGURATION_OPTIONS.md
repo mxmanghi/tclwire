@@ -121,6 +121,15 @@ as `true`, `false`, `yes`, `no`, `on`, `off`, `1`, and `0`.
   `adm` to use the console socket. By default, TclWire preserves the mode
   created under the process umask.
 
+`tclwire.user` and `tclwire.group`
+: Optional runtime account and primary group. They must be configured together.
+  TclWire opens all TCP and Unix-domain listeners first, then changes its real
+  and effective group and user IDs before it enters the event loop. This lets a
+  supervised process bind privileged ports such as `80` or `443` without
+  serving application traffic as root. These options require the TclX package
+  and are intended for Unix-like systems. Ensure the selected account can read
+  the configured application, certificate, and log paths.
+
 `--quiet` / `tclwire.quiet`
 : Suppresses normal runtime chatter where components observe the quiet flag.
   Disabled by default.

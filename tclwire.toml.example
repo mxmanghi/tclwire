@@ -35,6 +35,10 @@ log_level = "info"
 unix_socket = "/tmp/tclwire.sock"
 # unix_socket_group = "adm"
 # unix_socket_permissions = "0660"
+# To bind privileged ports such as 80 or 443, start TclWire with sufficient
+# privilege and then drop to this account immediately after all listeners open.
+# user = "tclwire"
+# group = "tclwire"
 conn_max_wait = 1000
 conn_max_workers = 100
 max_request_bytes = 16777216

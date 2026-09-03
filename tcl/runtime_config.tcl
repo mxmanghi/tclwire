@@ -589,6 +589,8 @@ namespace eval ::tclwire::config {
         set unix_socket         [file normalize /tmp/tclwire.sock]
         set unix_socket_group   {}
         set unix_socket_permissions {}
+        set user                {}
+        set group               {}
         set ftp_user_check      1
         set ftproot_follows_docroot [expr {$ftproot eq $docroot}]
         set startservers        [::tclwire::runtime::default_protocols]
@@ -646,6 +648,8 @@ namespace eval ::tclwire::config {
                             unix_socket         $unix_socket \
                             unix_socket_group   $unix_socket_group \
                             unix_socket_permissions $unix_socket_permissions \
+                            user                $user \
+                            group               $group \
                             startservers        $startservers \
                             services            $services \
                             custom_services     $custom_services \
@@ -703,7 +707,7 @@ namespace eval ::tclwire::config {
             # unrelated TOML keys out while letting file values replace the
             # built-in defaults in one dictionary operation.
 
-            set config_keys {host encoding default_application hostname admin server_path aliases unix_socket_group}
+            set config_keys {host encoding default_application hostname admin server_path aliases unix_socket_group user group}
 
             set config [dict merge $config [dict filter $global key {*}$config_keys]]
             if {[dict exists $global aliases]} {
@@ -1156,6 +1160,16 @@ namespace eval ::tclwire::config {
     # and default-application values, fills service defaults, normalizes service
     # descriptors, and removes construction-only helper fields.
     proc finalize_config {config} {
+        # Privilege dropping is deliberately opt-in.  Requiring both values
+        # avoids a surprising partial identity change and makes the startup
+        # contract unambiguous.
+        foreach field {user group} {
+            dict set config $field [string trim [dict get $config $field]]
+        }
+        if {([dict get $config user] eq {}) != ([dict get $config group] eq {})} {
+            usage_error "tclwire.user and tclwire.group must be configured together"
+        }
+
         set applications [dict get $config applications]
         set default_application [dict get $config default_application]
         if {![dict exists $applications $default_application]} {

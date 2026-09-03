@@ -29,6 +29,23 @@ Relative local paths are resolved under the selected application's `docroot`.
 Application aliases are searched before inherited aliases, so applications can
 override or extend global/default rules.
 
+## Privileged Ports
+
+To serve ports such as `80` or `443`, TclWire can start with the privilege
+needed to open listeners and immediately drop to a configured account:
+
+```toml
+[tclwire]
+user = "tclwire"
+group = "tclwire"
+```
+
+The two options must be set together. TclWire opens its TCP and local console
+listeners first, changes group before user, and drops privileges before the
+event loop accepts traffic. This requires TclX on a Unix-like host. Make the
+application, certificate, and log paths readable or writable as appropriate
+for the selected account.
+
 ## Application Configuration Boundary
 
 Application tables, such as `[http.example]`, use top-level options for

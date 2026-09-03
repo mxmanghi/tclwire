@@ -85,6 +85,11 @@ namespace eval ::tclwire::runtime {
                 -shutdowncommand    [list ::tclwire::runtime::request_shutdown]]
             $console_reactor start
 
+            # All listeners are open at this point, including the local
+            # console socket.  Drop privileges before returning to the event
+            # loop, so no connection can be accepted while privileged.
+            drop_privileges $config
+
         } on error {message options} {
             catch {::tclwire::diagnostics stop}
             if {$chore_started} {
@@ -209,6 +214,31 @@ namespace eval ::tclwire::runtime {
     proc request_shutdown {} {
         variable shutdown_requested
         set shutdown_requested 1
+        return
+    }
+
+    proc drop_privileges {config {id_command ::id}} {
+        set user [dict get $config user]
+        set group [dict get $config group]
+        if {$user eq {} && $group eq {}} {
+            return
+        }
+
+        if {$user eq {} || $group eq {}} {
+            error "tclwire.user and tclwire.group must be configured together"
+        }
+        if {[catch {package require Tclx} message]} {
+            error "tclwire.user and tclwire.group require the TclX package: $message"
+        }
+
+        # setgid must precede setuid: after changing user identity, a process
+        # normally loses permission to change its primary group.
+        if {[catch {uplevel #0 [list {*}$id_command group $group]} message]} {
+            error "cannot switch TclWire group to '$group': $message"
+        }
+        if {[catch {uplevel #0 [list {*}$id_command user $user]} message]} {
+            error "cannot switch TclWire user to '$user': $message"
+        }
         return
     }
 

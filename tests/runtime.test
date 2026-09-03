@@ -117,6 +117,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
         [dict get $config unix_socket] \
         [dict get $config unix_socket_group] \
         [dict get $config unix_socket_permissions] \
+        [dict get $config user] \
+        [dict get $config group] \
         [dict get $config conn_max_wait] \
         [dict get $config conn_max_workers] \
         [dict get $config conn_max_per_thread] \
@@ -144,6 +146,8 @@ test runtime-1.1 {default arguments prepare one future HTTP service} -body {
     [file normalize /tmp/tclwire.log] \
     [file normalize /tmp/tclwire-err.log] \
     [file normalize /tmp/tclwire.sock] \
+    {} \
+    {} \
     {} \
     {} \
     1000 \
@@ -486,6 +490,46 @@ unix_socket_permissions = "0660"
 } -cleanup {
     ::tclwire::runtime_test::cleanup
 } -result {adm 0660}
+
+test runtime-1.2fa {runtime user and group are loaded from TOML} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+user = "tclwire"
+group = "tclwire"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    list [dict get $config user] [dict get $config group]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {tclwire tclwire}
+
+test runtime-1.2fb {runtime user and group must be configured together} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[tclwire]
+user = "tclwire"
+}]
+    catch {
+        ::tclwire::runtime prepare_config [list --config $config_file]
+    } message options
+    list $message [dict get $options -errorcode]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {{tclwire.user and tclwire.group must be configured together} {TCLWIRE USAGE}}
+
+test runtime-1.2fc {privilege drop changes the group before the user} -body {
+    set ::tclwire::runtime_test::calls {}
+    proc ::tclwire::runtime_test::identity {kind value} {
+        lappend ::tclwire::runtime_test::calls [list $kind $value]
+    }
+    try {
+        ::tclwire::runtime::drop_privileges \
+            [dict create user tclwire group tclwire] \
+            ::tclwire::runtime_test::identity
+        set ::tclwire::runtime_test::calls
+    } finally {
+        rename ::tclwire::runtime_test::identity {}
+    }
+} -result {{group tclwire} {user tclwire}}
 
 test runtime-1.2g {console socket permissions must be octal} -body {
     set config_file [::tclwire::runtime_test::make_config {
