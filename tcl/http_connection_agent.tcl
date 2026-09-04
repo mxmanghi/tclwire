@@ -7,6 +7,7 @@ package require tclwire::connection_agent 0.1
 package require tclwire::http::protocol 0.1
 package require tclwire::http::errors 0.1
 package require tclwire::http::multipart 0.1
+package require tclwire::http::forwarded 0.1
 package require tclwire::application_dispatcher 0.1
 package require tclwire::logger::client 0.1
 
@@ -20,6 +21,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
     variable upload_area max_request_bytes max_header_bytes
     variable dump_multipart_requests
     variable request_memory_threshold request_bytes
+    variable trusted_proxy_networks
     variable request_head
     variable request_prefix
     variable continue_response_sent
@@ -35,6 +37,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
             -maxrequestbytes            16777216
             -maxheaderbytes             65536
             -requestmemorythreshold     1048576
+            -trustedproxies             {}
             -dumpmultipartrequests      0
         }
         foreach {name value} $args {
@@ -49,6 +52,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {$options(-connectionkey) eq {}} {
             error "HTTP connection agent requires connection key"
         }
+        set trusted_proxy_networks \
+            [::tclwire::http::forwarded compile_trusted_proxies \
+                $options(-trustedproxies)]
 
         next $conn_channel $id $host $port $options(-connectionkey)
         set protocol_threshold $options(-requestmemorythreshold)
@@ -209,6 +215,15 @@ oo::class create ::tclwire::HttpConnectionAgent {
         dict set descriptor connection_id [my connection_id]
         dict set descriptor remote_host [dict get $peer host]
         dict set descriptor remote_port [dict get $peer port]
+        set forwarded_header {}
+        if {[dict exists $descriptor headers x-forwarded-for]} {
+            set forwarded_header \
+                [dict get $descriptor headers x-forwarded-for]
+        }
+        set client [::tclwire::http::forwarded resolve_client \
+            [dict get $peer host] $forwarded_header $trusted_proxy_networks]
+        dict set descriptor forwarded_for [dict get $client forwarded_for]
+        dict set descriptor client_host [dict get $client client_host]
         return $descriptor
     }
 

@@ -16,6 +16,8 @@ kept under `runtime-doc/`:
 
 - [Worker Request API](runtime-doc/WORKER_REQUEST_API.md): worker-facing HTTP request
   and response API.
+- [Trusted Reverse Proxies](runtime-doc/TRUSTED_REVERSE_PROXIES.md): trusted
+  `X-Forwarded-For` resolution and the peer/client request-address surface.
 - [Application Configuration](runtime-doc/APPLICATION_CONFIGURATION.md): immutable
   application descriptor object and serialization envelope.
 - [Configuration Tree](runtime-doc/CONFIGURATION_TREE.md): structured ASCII

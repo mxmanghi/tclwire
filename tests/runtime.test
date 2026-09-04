@@ -2019,5 +2019,27 @@ dump_multipart_requests = true
     ::tclwire::runtime_test::cleanup
 } -result {0 1 1}
 
+test runtime-1.19 {trusted proxies are configured per HTTP listener} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[http]
+trusted_proxies = "127.0.0.1/32 10.20.0.0/16 ::1/128"
+}]
+    set config [::tclwire::runtime prepare_config [list --config $config_file]]
+    dict get [lindex [dict get $config services] 0] trusted_proxies
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -result {127.0.0.1/32 10.20.0.0/16 ::1/128}
+
+test runtime-1.20 {invalid trusted proxy CIDRs fail configuration} -body {
+    set config_file [::tclwire::runtime_test::make_config {
+[http]
+trusted_proxies = "127.0.0.1/33"
+}]
+    ::tclwire::runtime prepare_config [list --config $config_file]
+} -cleanup {
+    ::tclwire::runtime_test::cleanup
+} -returnCodes error \
+  -result {http.trusted_proxies: invalid trusted proxy prefix: 127.0.0.1/33}
+
 ::tclwire::runtime_test::cleanup
 cleanupTests

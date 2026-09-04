@@ -13,6 +13,8 @@ package require tclwire::http::request 0.1
 package require tclwire::connection_agent 0.1
 package require tclwire::http::connection_agent 0.1
 
+source [file join $project_root tests http_test_helpers.tcl]
+
 namespace eval ::tclwire::http_connection_test {
     variable logfile [file join [temporaryDirectory] tclwire-http-[pid].log]
     variable logerr [file join [temporaryDirectory] tclwire-http-[pid].err]
@@ -80,7 +82,9 @@ namespace eval ::tclwire::http_connection_test {
         while {[clock milliseconds] < $deadline} {
             update
             append response [read $chan]
-            if {[string first "\r\n\r\n" $response] >= 0} {
+            if {[string first \
+                    $::tclwire::constants::http_header_separator \
+                    $response] >= 0} {
                 catch {close $chan}
                 return $response
             }
@@ -96,6 +100,27 @@ namespace eval ::tclwire::http_connection_test {
 }
 
 ::tclwire::http_connection_test::cleanup
+
+test http-test-helper-1.1 {HTTP responses split into headers and body} -body {
+    set separator $::tclwire::constants::http_header_separator
+    set response "HTTP/1.1 200 OK\r\nContent-Length: 4${separator}body"
+    ::tclwire::test::parse_http_response \
+        $response headers body
+    list $headers $body
+} -result [list "HTTP/1.1 200 OK\r\nContent-Length: 4" body]
+
+test http-test-helper-1.2 {incomplete HTTP responses cannot be split} -body {
+    ::tclwire::test::parse_http_response \
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n" headers body
+} -returnCodes error -result {HTTP response is missing the header separator}
+
+test http-test-helper-1.3 {individual HTTP response projections} -body {
+    set separator $::tclwire::constants::http_header_separator
+    set response "HTTP/1.1 204 No Content${separator}body"
+    list \
+        [::tclwire::test::http_response_headers $response] \
+        [::tclwire::test::http_response_body $response]
+} -result [list {HTTP/1.1 204 No Content} body]
 
 test http-protocol-1.1 {protocol session extracts path query and headers} -body {
     set protocol [::tclwire::HttpProtocolSession new]
@@ -351,15 +376,14 @@ test http-protocol-1.3g {
         set file_path [dict get $file body_path]
         set channel [open $file_path rb]
         try { set stored [read $channel] } finally { close $channel }
-        list \
-            [dict get $descriptor body_media] \
-            [dict get $descriptor body_storage] \
-            [expr {[dict get $descriptor body_size] == [string length $body]}] \
-            [$request form_value field] \
-            [dict get $file filename] \
-            [dict get $file body_storage] \
-            $stored \
-            [llength [glob -nocomplain -directory $area tclwire-request*]]
+        list [dict get $descriptor body_media] \
+             [dict get $descriptor body_storage] \
+             [expr {[dict get $descriptor body_size] == [string length $body]}] \
+             [$request form_value field] \
+             [dict get $file filename] \
+             [dict get $file body_storage] \
+             $stored \
+             [llength [glob -nocomplain -directory $area tclwire-request*]]
     } finally {
         catch {$request destroy}
         if {$file_path ne {}} { catch {file delete $file_path} }
@@ -375,10 +399,9 @@ test http-protocol-1.3h {
     try {
         set result [$protocol feed \
             "POST /upload HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 7\r\n\r\n"]
-        list \
-            [dict get $result status] \
-            [dict get $result phase] \
-            [$protocol expects_continue]
+        list    [dict get $result status] \
+                [dict get $result phase] \
+                [$protocol expects_continue]
     } finally {
         $protocol destroy
     }
@@ -388,9 +411,8 @@ test http-protocol-1.4 {UTF-8 response lengths count encoded bytes} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
         set response [$protocol build_response 200 OK {caffè} utf-8]
-        set separator [string first "\r\n\r\n" $response]
-        set headers [string range $response 0 $separator-1]
-        set body_bytes [string range $response $separator+4 end]
+        ::tclwire::test::parse_http_response \
+            $response headers body_bytes
         list \
             [regexp {Content-Length: 6} $headers] \
             [encoding convertfrom utf-8 $body_bytes]
@@ -403,9 +425,8 @@ test http-protocol-1.5 {response framing does not infer a media type} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
         set response [$protocol build_response 200 OK {caffè} iso8859-1]
-        set separator [string first "\r\n\r\n" $response]
-        set headers [string range $response 0 $separator-1]
-        set body_bytes [string range $response $separator+4 end]
+        ::tclwire::test::parse_http_response \
+            $response headers body_bytes
         list \
             [regexp {Content-Length: 5} $headers] \
             [expr {![regexp -nocase {Content-Type:} $headers]}] \
@@ -419,8 +440,7 @@ test http-protocol-1.5a {responses include default security headers} -body {
     set protocol [::tclwire::HttpProtocolSession new]
     try {
         set response [$protocol build_response 200 OK body utf-8]
-        set separator [string first "\r\n\r\n" $response]
-        set headers [string range $response 0 $separator-1]
+        set headers [::tclwire::test::http_response_headers $response]
         list \
             [regexp -nocase {X-Content-Type-Options: nosniff} $headers] \
             [expr {![regexp -nocase {Strict-Transport-Security:} $headers]}]
@@ -433,8 +453,7 @@ test http-protocol-1.5b {HTTPS responses include HSTS} -body {
     set protocol [::tclwire::HttpProtocolSession new -secure 1]
     try {
         set response [$protocol build_response 200 OK body utf-8]
-        set separator [string first "\r\n\r\n" $response]
-        set headers [string range $response 0 $separator-1]
+        set headers [::tclwire::test::http_response_headers $response]
         list \
             [regexp -nocase {X-Content-Type-Options: nosniff} $headers] \
             [regexp -nocase {Strict-Transport-Security: max-age=31536000; includeSubDomains} $headers]
@@ -449,8 +468,7 @@ test http-protocol-1.5c {application security headers are not duplicated} -body 
         set response [$protocol build_response 200 OK body utf-8 \
             [list "X-Content-Type-Options: nosniff" \
                   "Strict-Transport-Security: max-age=86400"]]
-        set separator [string first "\r\n\r\n" $response]
-        set headers [string range $response 0 $separator-1]
+        set headers [::tclwire::test::http_response_headers $response]
         list \
             [regexp -all -nocase {X-Content-Type-Options:} $headers] \
             [regexp -all -nocase {Strict-Transport-Security:} $headers] \
@@ -624,9 +642,8 @@ test http-protocol-1.13 {HEAD response retains GET content length without body} 
     try {
         set response [$protocol build_response \
             200 OK {caffè} utf-8 [list "Content-Type: text/plain"] text 1]
-        set separator [string first "\r\n\r\n" $response]
-        set headers [string range $response 0 $separator-1]
-        set body [string range $response $separator+4 end]
+        ::tclwire::test::parse_http_response \
+            $response headers body
         list \
             [regexp {Content-Length: 6} $headers] \
             [string length $body]
@@ -659,9 +676,8 @@ test http-connection-1.3 {each accepted connection receives the document root in
     set response [::tclwire::http_connection_test::request \
         "GET /?argument=value HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
 
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body_bytes [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body_bytes
     set expected [::fileutil::cat -encoding utf-8 \
         [file join $project_root index.html]]
     ::tclwire::runtime stop
@@ -1068,9 +1084,8 @@ test http-connection-1.8 {custom document roots preserve UTF-8 content} -body {
     set response [::tclwire::http_connection_test::request \
         "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
 
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body_bytes [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body_bytes
     list \
         [regexp {Content-Length: 17} $headers] \
         [expr {[encoding convertfrom utf-8 $body_bytes] eq $expected}]
@@ -1143,9 +1158,8 @@ test http-connection-1.9 {static binary files are preserved byte for byte} -body
     set response [::tclwire::http_connection_test::request \
         "GET /assets/sample.bin HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
 
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body_bytes [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body_bytes
     list \
         [string match "HTTP/1.1 200 OK*" $headers] \
         [regexp -nocase \
@@ -1257,9 +1271,8 @@ encoding = "utf-8"
     append request "Content-Length: [string length $body]\r\n\r\n"
     append request $body
     set response [::tclwire::http_connection_test::request $request]
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set response_body [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers response_body
     list \
         [string match "HTTP/1.1 200 OK*" $headers] \
         $response_body \
@@ -1320,9 +1333,8 @@ encoding = "utf-8"
     ::tclwire::runtime start [list --config $streaming_config]
     set response [::tclwire::http_connection_test::request \
         "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body
     for {set attempt 0} {$attempt < 100 && [file size $streaming_status] == 0} \
             {incr attempt} {
         after 10
@@ -1414,9 +1426,8 @@ environment = "stdchans"
     }
     catch {close $channel}
 
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body
     list \
         $streamed \
         [string match "HTTP/1.1 200 OK*" $headers] \
@@ -1468,9 +1479,8 @@ environment = "stdchans"
     ::tclwire::runtime start [list --config $stdchans_binary_config]
     set response [::tclwire::http_connection_test::request \
         "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body
     list \
         [string match "HTTP/1.1 200 OK*" $headers] \
         [regexp -nocase {Content-Length:\s*3} $headers] \
@@ -1650,16 +1660,12 @@ test http-connection-1.14 {HEAD returns GET metadata without representation byte
     set error_response [::tclwire::http_connection_test::request \
         "HEAD /missing HTTP/1.1\r\nHost: unknown.example\r\nConnection: close\r\n\r\n"]
 
-    set get_separator [string first "\r\n\r\n" $get_response]
-    set head_separator [string first "\r\n\r\n" $head_response]
-    set error_separator [string first "\r\n\r\n" $error_response]
-    set get_headers [string range $get_response 0 $get_separator-1]
-    set head_headers [string range $head_response 0 $head_separator-1]
-    set error_headers [string range $error_response 0 \
-        $error_separator-1]
-    set head_body [string range $head_response $head_separator+4 end]
-    set error_body [string range $error_response \
-        $error_separator+4 end]
+    set get_headers \
+        [::tclwire::test::http_response_headers $get_response]
+    ::tclwire::test::parse_http_response \
+        $head_response head_headers head_body
+    ::tclwire::test::parse_http_response \
+        $error_response error_headers error_body
     regexp -nocase {Content-Length:\s*([0-9]+)} \
         $get_headers -> get_length
     regexp -nocase {Content-Length:\s*([0-9]+)} \
@@ -1686,9 +1692,8 @@ test http-connection-1.15 {static files support single byte ranges} -setup {
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
         "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: bytes=2-5\r\nConnection: close\r\n\r\n"]
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body
     list \
         [string match "HTTP/1.1 206 Partial Content*" $headers] \
         [regexp -nocase {Content-Range: bytes 2-5/10} $headers] \
@@ -1710,9 +1715,8 @@ test http-connection-1.16 {static files support multipart byte ranges} -setup {
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
         "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: bytes=0-1,8-9\r\nConnection: close\r\n\r\n"]
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body
     regexp -nocase \
         {Content-Type: multipart/byteranges; boundary=([^\r\n]+)} \
         $headers -> boundary
@@ -1740,9 +1744,8 @@ test http-connection-1.17 {unsatisfiable byte ranges return 416} -setup {
         --logfile $::tclwire::http_connection_test::logfile]
     set response [::tclwire::http_connection_test::request \
         "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: bytes=20-30\r\nConnection: close\r\n\r\n"]
-    set separator [string first "\r\n\r\n" $response]
-    set headers [string range $response 0 $separator-1]
-    set body [string range $response $separator+4 end]
+    ::tclwire::test::parse_http_response \
+        $response headers body
     list \
         [string match "HTTP/1.1 416 Range Not Satisfiable*" $headers] \
         [regexp -nocase {Content-Range: bytes \*/10} $headers] \
@@ -1766,9 +1769,8 @@ test http-connection-1.18 {unsupported and malformed ranges fall back to 200} -s
     foreach range {items=2-5 bytes=bad} {
         set response [::tclwire::http_connection_test::request \
             "GET /range.bin HTTP/1.1\r\nHost: localhost\r\nRange: $range\r\nConnection: close\r\n\r\n"]
-        set separator [string first "\r\n\r\n" $response]
-        set headers [string range $response 0 $separator-1]
-        set body [string range $response $separator+4 end]
+        ::tclwire::test::parse_http_response \
+            $response headers body
         lappend results \
             [string match "HTTP/1.1 200 OK*" $headers] \
             $body
@@ -1778,6 +1780,58 @@ test http-connection-1.18 {unsupported and malformed ranges fall back to 200} -s
     ::tclwire::http_connection_test::cleanup
     catch {file delete -force $range_root}
 } -result {1 0123456789 1 0123456789}
+
+test http-connection-1.19 {
+    trusted proxy metadata reaches the application request
+} -setup {
+    set forwarded_application [makeFile {
+package require tclwire::application 0.1
+
+oo::class create ::tclwire::http_connection_test::ForwardedApplication {
+    superclass ::tclwire::CApplication
+
+    method handle_request {request} {
+        ::tclwire::io response 200 OK \
+            [list "Content-Type: text/plain; charset=utf-8"] text utf-8
+        ::tclwire::io out [list [$request remote_host] \
+                                [$request client_host] \
+                                [$request forwarded_for]]
+    }
+}
+} forwarded-application.tcl]
+    set forwarded_config [makeFile [format {
+[tclwire]
+default_application = "forwarded"
+docroot = "%s"
+logfile = "%s"
+
+[http]
+port = 8990
+trusted_proxies = "127.0.0.1/32"
+
+[http.forwarded]
+class = "::tclwire::http_connection_test::ForwardedApplication"
+file = "%s"
+docroot = "%s"
+} $project_root \
+   $::tclwire::http_connection_test::logfile \
+   $forwarded_application \
+   $project_root] forwarded-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $forwarded_config]
+    set response [::tclwire::http_connection_test::request \
+        "GET / HTTP/1.1\r\nHost: forwarded\r\nX-Forwarded-For: 192.0.2.99, 198.51.100.20\r\nConnection: close\r\n\r\n"]
+    ::tclwire::test::parse_http_response \
+        $response headers body
+    list \
+        [string match "HTTP/1.1 200 OK*" $headers] \
+        $body
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $forwarded_config
+    removeFile $forwarded_application
+} -result [list 1 \
+    {127.0.0.1 198.51.100.20 {192.0.2.99 198.51.100.20}}]
 
 ::tclwire::http_connection_test::cleanup
 cleanupTests

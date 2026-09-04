@@ -659,6 +659,19 @@ oo::class create ::tclwire::HttpRequest {
         return [my optional remote_port {}]
     }
 
+    method forwarded_for {} {
+        # This is the validated address list advertised by intermediaries. It
+        # remains distinct from client_host because it may have arrived from an
+        # untrusted peer and therefore carries no authority by itself.
+        return [my optional forwarded_for {}]
+    }
+
+    method client_host {} {
+        # The connection agent resolves the effective client through configured
+        # trusted proxies. Older descriptors safely fall back to the TCP peer.
+        return [my optional client_host [my remote_host]]
+    }
+
     method application_id {} {
         return [my optional application_id {}]
     }

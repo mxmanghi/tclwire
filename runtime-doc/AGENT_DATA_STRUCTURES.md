@@ -78,6 +78,11 @@ sequence is decoded as UTF-8.
 | `connection_id` | integer | Runtime identifier of the client connection. |
 | `remote_host` | string | Peer address. |
 | `remote_port` | integer | Peer port. |
+| `forwarded_for` | list | Validated addresses advertised by `X-Forwarded-For`. |
+| `client_host` | string | Client resolved through configured trusted proxies, or the peer address. |
+
+These connection fields and their trust boundary are described in
+[`TRUSTED_REVERSE_PROXIES.md`](TRUSTED_REVERSE_PROXIES.md).
 
 Before dispatch, `HttpConnectionAgent dispatch_request_descriptor` adds:
 
@@ -128,6 +133,7 @@ The object exposes read-only semantic methods:
 | `trailers` | Request trailer dictionary. |
 | `connection_id`, `transaction_id` | Request identity. |
 | `remote_host`, `remote_port` | Peer endpoint. |
+| `forwarded_for`, `client_host` | Advertised proxy chain and trust-resolved client address. |
 | `application_id` | Selected application registration. |
 
 There are no mutation methods and the underlying dictionary is not exposed.

@@ -49,7 +49,9 @@ oo::class create ::tclwire::ProxyProtocolSession {
         while {$proxy_pending ne {}} {
             switch -exact -- $input_state {
                 headers {
-                    set header_end [string first "\r\n\r\n" $proxy_pending]
+                    set header_end [string first \
+                        $::tclwire::constants::http_header_separator \
+                        $proxy_pending]
                     if {$header_end < 0} {
                         return [my feed_result need_more headers]
                     } else {

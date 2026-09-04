@@ -84,6 +84,28 @@ application has no defaults; Rivetweb defaults `css`, `js`, and `ico` to one
 hour. Other application classes can provide their own defaults through
 `cache_control_defaults`.
 
+## Trusted Reverse Proxies
+
+An HTTP or HTTPS listener can trust selected TCP peers to report the original
+client address in `X-Forwarded-For`:
+
+```toml
+[http]
+trusted_proxies = "127.0.0.1/32 ::1/128 10.20.0.0/16"
+```
+
+The value is a Tcl list of literal IPv4 or IPv6 addresses and CIDR prefixes.
+A bare address means an exact `/32` or `/128` match. TclWire ignores the
+header when the socket peer is not in this list. For a trusted peer it walks
+the comma-separated address chain from right to left, stops at the first
+untrusted hop, and exposes that hop as `client_host`.
+
+`remote_host` always remains the address obtained from the TCP socket. Configure
+only networks dedicated to proxies: trusting a network that also contains
+ordinary clients lets those clients extend the trusted forwarding chain.
+Malformed forwarding headers are ignored and `client_host` falls back to
+`remote_host`.
+
 Rivet applications also accept `template_cache_policy` in their `configure`
 table:
 

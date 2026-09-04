@@ -222,6 +222,13 @@ Service-specific TOML options live under protocol tables: `[http]`,
 : HTTP or HTTPS service-specific in-memory request-body threshold. Overrides
   `tclwire.request_memory_threshold`.
 
+`trusted_proxies`
+: Tcl list of IPv4 or IPv6 addresses and CIDR prefixes whose HTTP connections
+  may supply `X-Forwarded-For`. This option is scoped to an `http` or `https`
+  listener and defaults to an empty list. Bare addresses are exact matches.
+  See [`TRUSTED_REVERSE_PROXIES.md`](TRUSTED_REVERSE_PROXIES.md) for the
+  resolution algorithm and security requirements.
+
 `libdir`
 : HTTP or HTTPS service default for application `libdir`. It overrides
   `tclwire.libdir` and is overridden by an application-specific `libdir`.

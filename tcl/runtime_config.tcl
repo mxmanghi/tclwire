@@ -221,6 +221,7 @@ namespace eval ::tclwire::config {
         return [expr {$field in {
             enabled port certfile keyfile libdir log_level logfile logerr upload_area
             max_request_bytes max_header_bytes request_memory_threshold
+            trusted_proxies
         }}]
     }
 
@@ -825,7 +826,7 @@ namespace eval ::tclwire::config {
             if {$protocol in {http https}} {
                 set http_options [dict filter $protocol_config key \
                     upload_area max_request_bytes max_header_bytes \
-                    request_memory_threshold]
+                    request_memory_threshold trusted_proxies]
                 dict with http_options {
                     # Dictionary-backed variables from http_options:
                     # upload_area, max_request_bytes, max_header_bytes,
@@ -854,6 +855,16 @@ namespace eval ::tclwire::config {
                                 [parse_integer_min "$protocol.request_memory_threshold" \
                                                     $request_memory_threshold 0]
                         dict set service request_memory_threshold $parsed_mem_threshold
+                    }
+
+                    if {[dict exists $http_options trusted_proxies]} {
+                        if {[catch {
+                            ::tclwire::http::forwarded compile_trusted_proxies \
+                                $trusted_proxies
+                        } message]} {
+                            error "$protocol.trusted_proxies: $message"
+                        }
+                        dict set service trusted_proxies $trusted_proxies
                     }
                 }
             }

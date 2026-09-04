@@ -37,9 +37,13 @@ namespace eval ::tclwire::runtime {
     proc http_service_agent_args {config service} {
         ensure_application_dispatcher $config
         set dump_multipart_requests 0
+        set trusted_proxies {}
         if {[dict exists $config dump_multipart_requests]} {
             set dump_multipart_requests \
                 [dict get $config dump_multipart_requests]
+        }
+        if {[dict exists $service trusted_proxies]} {
+            set trusted_proxies [dict get $service trusted_proxies]
         }
         return [list -applicationconfig $config \
                      -protocol [dict get $service protocol] \
@@ -49,6 +53,7 @@ namespace eval ::tclwire::runtime {
                      -maxheaderbytes [dict get $service max_header_bytes] \
                      -requestmemorythreshold \
                                 [dict get $service request_memory_threshold] \
+                     -trustedproxies $trusted_proxies \
                      -dumpmultipartrequests $dump_multipart_requests]
     }
 

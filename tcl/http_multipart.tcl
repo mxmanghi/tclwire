@@ -111,7 +111,8 @@ namespace eval ::tclwire::http::multipart {
 
     # Parse one complete multipart part into a neutral part dictionary.
     proc parse_part {part_body} {
-        set header_end [string first "\r\n\r\n" $part_body]
+        set header_end [string first \
+            $::tclwire::constants::http_header_separator $part_body]
         if {$header_end < 0} {
             error "multipart part headers are incomplete"
         }
@@ -366,7 +367,8 @@ oo::class create ::tclwire::http::multipart::IncrementalParser {
                     if {![my consume_boundary_line 1]} { return }
                 }
                 part_headers {
-                    set header_end [string first "\r\n\r\n" $buffer]
+                    set header_end [string first \
+                        $::tclwire::constants::http_header_separator $buffer]
                     if {$header_end < 0} { return }
                     set header_block [string range $buffer 0 $header_end-1]
                     set buffer [string range $buffer $header_end+4 end]

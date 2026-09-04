@@ -17,6 +17,7 @@ namespace eval ::tclwire {
 
 namespace eval ::tclwire::constants {
     ::tclwire::define_constant empty_bytearray [binary format a* {}]
+    ::tclwire::define_constant http_header_separator "\r\n\r\n"
 }
 
 package provide tclwire::constants 0.1

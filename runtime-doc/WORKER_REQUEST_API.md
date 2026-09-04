@@ -752,12 +752,18 @@ The request object exposes:
 | `trailers` | Decoded chunk trailer dictionary. |
 | `connection_id` | Runtime connection identifier. |
 | `transaction_id` | Connection-local transaction identifier. |
-| `remote_host` | Client address. |
-| `remote_port` | Client port. |
+| `remote_host` | TCP peer address. |
+| `remote_port` | TCP peer port. |
+| `forwarded_for` | Validated address list advertised by `X-Forwarded-For`. |
+| `client_host` | Client address resolved through trusted proxies, or `remote_host`. |
 | `application_id` | Selected application registration name. |
 
 Apart from application-local path mapping and rewriting, there are no request
 mutation methods and no channel accessor.
+
+The trust relationship among `remote_host`, `forwarded_for`, and `client_host`,
+including right-to-left chain processing and spoofing behavior, is specified in
+[`TRUSTED_REVERSE_PROXIES.md`](TRUSTED_REVERSE_PROXIES.md).
 
 ### Request Rewriting
 
@@ -1600,6 +1606,7 @@ contract.
 
 ## Implementation References
 
+- Trusted client address resolution: [`TRUSTED_REVERSE_PROXIES.md`](TRUSTED_REVERSE_PROXIES.md)
 - Request parsing: [`tcl/http_protocol.tcl`](../tcl/http_protocol.tcl)
 - Read-only request API: [`tcl/http_request.tcl`](../tcl/http_request.tcl)
 - Connection and response state: [`tcl/http_connection_agent.tcl`](../tcl/http_connection_agent.tcl)

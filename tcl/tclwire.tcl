@@ -23,6 +23,7 @@ package require tclwire::transport_reactor 0.1
 package require tclwire::console::reactor 0.1
 package require tclwire::chore 0.1
 package require tclwire::diagnostics 0.1
+package require tclwire::http::forwarded 0.1
 package require tomlfile 0.1
 
 namespace eval ::tclwire {}

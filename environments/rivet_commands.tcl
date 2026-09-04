@@ -211,7 +211,7 @@ namespace eval ::tclwire::envs::rivet {
                                      SCRIPT_NAME     [$request path] \
                                      SERVER_PROTOCOL $server_protocol \
                                      QUERY_STRING    [$request query] \
-                                     REMOTE_ADDR     [$request remote_host] \
+                                     REMOTE_ADDR     [$request client_host] \
                                      REMOTE_PORT     [$request remote_port]]
 
         if {[$request scheme] eq "https"} {

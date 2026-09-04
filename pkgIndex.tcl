@@ -104,6 +104,9 @@ package ifneeded tclwire::environment 0.1 \
 package ifneeded tclwire::http::query 0.1 \
     [list source [file join $dir tcl http_query.tcl]]
 
+package ifneeded tclwire::http::forwarded 0.1 \
+    [list source [file join $dir tcl http_forwarded.tcl]]
+
 package ifneeded tclwire::http::message 0.1 \
     [list source [file join $dir tcl http_message.tcl]]
 
@@ -173,6 +176,7 @@ package ifneeded tclwire::connection_agent 0.1 [subst {
 package ifneeded tclwire::http::connection_agent 0.1 [subst {
     package require tclwire::connection_agent 0.1
     package require tclwire::http::protocol 0.1
+    package require tclwire::http::forwarded 0.1
     package require tclwire::http::errors 0.1
     package require tclwire::application_dispatcher 0.1
     package require tclwire::logger::client 0.1
@@ -253,6 +257,7 @@ package ifneeded tclwire::runtime 0.1 [subst {
     package require tclwire::transport_reactor 0.1
     package require tclwire::chore 0.1
     package require tclwire::diagnostics 0.1
+    package require tclwire::http::forwarded 0.1
     package require tomlfile 0.1
     source [list [file join $dir tcl tclwire.tcl]]
 }]

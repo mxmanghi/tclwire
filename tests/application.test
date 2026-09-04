@@ -2464,6 +2464,7 @@ puts [::rivet::env MISSING_VALUE]
             version 1.0 \
             protocol https \
             remote_host 192.0.2.10 \
+            client_host 198.51.100.20 \
             remote_port 54321 \
             headers [dict create \
                 host rivet.example.test \
@@ -2486,7 +2487,7 @@ puts [::rivet::env MISSING_VALUE]
     catch {::tclwire::accounting remove_thread $worker_id}
     catch {::tclwire::io end}
     removeDirectory $docroot
-} -result "POST\n/docs/env.tcl?one=two\n/docs/env.tcl\none=two\nrivet.example.test\nvalue\ntext/plain\n192.0.2.10\n54321\n1\n1\n\n"
+} -result "POST\n/docs/env.tcl?one=two\n/docs/env.tcl\none=two\nrivet.example.test\nvalue\ntext/plain\n198.51.100.20\n54321\n1\n1\n\n"
 
 test application-configuration-1.4ffea {
     rivet inspect script returns current script absolute path

@@ -564,7 +564,9 @@ oo::class create ::tclwire::HttpProtocolSession {
                         set chunk_buffer [string range $chunk_buffer 2 end]
                         return [my finish_incremental_request]
                     }
-                    set trailer_end [string first "\r\n\r\n" $chunk_buffer]
+                    set trailer_end [string first \
+                        $::tclwire::constants::http_header_separator \
+                        $chunk_buffer]
                     if {$trailer_end < 0} {
                         return [my feed_result need_more body]
                     }
@@ -644,7 +646,8 @@ oo::class create ::tclwire::HttpProtocolSession {
             # Any bytes after CRLFCRLF stay in the local bytes variable and are
             # processed by the selected body phase below in the same call.
             append header_buffer $bytes
-            set header_end [string first "\r\n\r\n" $header_buffer]
+            set header_end [string first \
+                $::tclwire::constants::http_header_separator $header_buffer]
             if {$header_end < 0} {
                 set header_size [string length $header_buffer]
                 return [my feed_result need_more headers]
@@ -708,7 +711,8 @@ oo::class create ::tclwire::HttpProtocolSession {
         return $completed_descriptor
     }
     method parse_headers {request} {
-        set header_end [string first "\r\n\r\n" $request]
+        set header_end [string first \
+            $::tclwire::constants::http_header_separator $request]
         if {$header_end < 0} {
             return [dict create]
         }
@@ -844,7 +848,9 @@ oo::class create ::tclwire::HttpProtocolSession {
                                         consumed_length [expr {$data_start + 2}]]
                 }
 
-                set trailer_end [string first "\r\n\r\n" $body $data_start]
+                set trailer_end [string first \
+                    $::tclwire::constants::http_header_separator \
+                    $body $data_start]
                 if {$trailer_end < 0} {
                     return [dict create complete 0]
                 }
@@ -883,7 +889,8 @@ oo::class create ::tclwire::HttpProtocolSession {
             set query [string range $target $query_start+1 end]
         }
 
-        set header_end [string first "\r\n\r\n" $request]
+        set header_end [string first \
+            $::tclwire::constants::http_header_separator $request]
         if {$header_end < 0} {
             error "HTTP request headers are incomplete"
         }
