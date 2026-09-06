@@ -6,18 +6,26 @@
 # TCP peer is an explicitly trusted proxy.  This module keeps that policy out
 # of HttpRequest: the connection agent knows the peer and resolves the header
 # before the application-facing request object is constructed.
+#
+# This helper module relies on Tcllib's 'ip' package
 
 package require ip
 
 namespace eval ::tclwire::http::forwarded {
-    namespace export compile_trusted_proxies parse_x_forwarded_for \
-        address_is_trusted resolve_client
+    namespace export compile_trusted_proxies \
+                     parse_x_forwarded_for \
+                     address_is_trusted \
+                     resolve_client
+
+    # validate_address --
+    #
+    # Validate a bare IPv4 or IPv6 address and return its normalized form.
+    # CIDR prefixes are rejected.
 
     proc validate_address {address} {
         set address [string trim $address]
         set family [::ip::version $address]
-        if {$address eq {} || $family < 0 ||
-                [::ip::mask $address] ne {}} {
+        if {$address eq {} || $family < 0 || [::ip::mask $address] ne {}} {
             error "invalid IP address: $address"
         }
         set address [::ip::normalize $address]
@@ -26,6 +34,11 @@ namespace eval ::tclwire::http::forwarded {
         }
         return $address
     }
+
+    # compile_trusted_proxies --
+    #
+    # Validate a list of IPv4/IPv6 addresses or CIDRs and return normalized
+    # network prefixes. Bare addresses become host-sized prefixes.
 
     proc compile_trusted_proxies {specifications} {
         if {[catch {llength $specifications}]} {
@@ -47,8 +60,7 @@ namespace eval ::tclwire::http::forwarded {
             set maximum [expr {$family == 4 ? 32 : 128}]
             if {$prefix eq {}} {
                 set prefix $maximum
-            } elseif {![string is integer -strict $prefix] ||
-                    $prefix < 0 || $prefix > $maximum} {
+            } elseif {![string is integer -strict $prefix] || $prefix < 0 || $prefix > $maximum} {
                 error "invalid trusted proxy prefix: $specification"
             }
             if {[catch {
@@ -61,6 +73,11 @@ namespace eval ::tclwire::http::forwarded {
         }
         return $networks
     }
+
+    # address_is_trusted --
+    #
+    # Return true if address is valid and belongs to any compiled trusted
+    # network; otherwise return false.
 
     proc address_is_trusted {address trusted_networks} {
         if {[catch {set address [validate_address $address]}]} {
@@ -78,13 +95,14 @@ namespace eval ::tclwire::http::forwarded {
         return 0
     }
 
-    proc parse_x_forwarded_for {value} {
-        if {[string trim $value] eq {}} {
-            return {}
-        }
+    # parse_x_forwarded_for --
+    #
+    # Parse, validate, and normalize the comma-separated bare IP addresses
+    # in an X-Forwarded-For header. This operation does not establish trust.
 
+    proc parse_x_forwarded_for {value} {
         set addresses {}
-        foreach field [split $value ,] {
+        foreach field [split [string trim $value] ,] {
             set address [string trim $field]
             if {$address eq {}} {
                 error "invalid X-Forwarded-For address list"
@@ -96,6 +114,12 @@ namespace eval ::tclwire::http::forwarded {
         }
         return $addresses
     }
+
+    # resolve_client --
+    #
+    # Return client_host and forwarded_for. Starting with the observed peer,
+    # walk the forwarded chain right-to-left while each current hop is trusted.
+    # Malformed forwarding data falls back to the peer and an empty list.
 
     proc resolve_client {remote_host header_value trusted_networks} {
         set result [dict create client_host $remote_host forwarded_for {}]
