@@ -8,6 +8,7 @@ lappend auto_path $project_root
 package require tclwire::runtime 0.1
 package require tclwire::constants 0.1
 package require tclwire::http::protocol 0.1
+package require tclwire::http::path 0.1
 package require tclwire::http::query 0.1
 package require tclwire::http::request 0.1
 package require tclwire::connection_agent 0.1
@@ -155,6 +156,28 @@ test http-query-1.4 {malformed query escapes are rejected} -body {
 } -result [list \
     1 {incomplete percent escape in URL query} \
     1 {invalid percent escape in URL query}]
+
+test http-path-1.1 {path components use RFC 3986 percent encoding} -body {
+    list \
+        [::tclwire::http::path encode_component {My document+cafè.pdf}] \
+        [::tclwire::http::path encode {/download/My document+cafè.pdf}]
+} -result [list \
+    {My%20document%2Bcaf%C3%A8.pdf} \
+    {/download/My%20document%2Bcaf%C3%A8.pdf}]
+
+test http-path-1.2 {encoded paths decode without query plus semantics} -body {
+    ::tclwire::http::path decode {/download/My%20document+notes%2Epdf}
+} -result {/download/My document+notes.pdf}
+
+test http-path-1.3 {malformed path escapes and null bytes are rejected} -body {
+    list \
+        [catch {::tclwire::http::path decode {/download/bad%}} first] $first \
+        [catch {::tclwire::http::path decode {/download/bad%GG}} second] $second \
+        [catch {::tclwire::http::path decode {/download/bad%00.pdf}} third] $third
+} -result [list \
+    1 {incomplete percent escape in URL path} \
+    1 {invalid percent escape in URL path} \
+    1 {URL path contains a null byte}]
 
 test http-protocol-1.2 {request completion waits for the declared body} -body {
     set protocol [::tclwire::HttpProtocolSession new]

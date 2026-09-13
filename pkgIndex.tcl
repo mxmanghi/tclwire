@@ -104,6 +104,9 @@ package ifneeded tclwire::environment 0.1 \
 package ifneeded tclwire::http::query 0.1 \
     [list source [file join $dir tcl http_query.tcl]]
 
+package ifneeded tclwire::http::path 0.1 \
+    [list source [file join $dir tcl http_path.tcl]]
+
 package ifneeded tclwire::http::forwarded 0.1 \
     [list source [file join $dir tcl http_forwarded.tcl]]
 

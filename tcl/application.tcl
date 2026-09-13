@@ -23,6 +23,7 @@ package require tclwire::application_configuration 0.1
 package require tclwire::application::io 0.1
 package require tclwire::http::application::io 0.1
 package require tclwire::http::errors 0.1
+package require tclwire::http::path 0.1
 package require tclwire::http::range 0.1
 package require tclwire::http::redirect 0.1
 package require tclwire::http::request 0.1
@@ -340,30 +341,7 @@ oo::class create ::tclwire::CApplication {
     # resolving %xx encoded characters in file paths
 
     method decode_path {path} {
-        set bytes $::tclwire::constants::empty_bytearray
-        for {set i 0} {$i < [string length $path]} {incr i} {
-            set character [string index $path $i]
-            if {$character eq "\x00"} {
-                error "URL path contains a null byte"
-            }
-            if {$character eq "%"} {
-                if {$i + 2 >= [string length $path]} {
-                    error "incomplete percent escape in URL path"
-                }
-                set hex [string range $path $i+1 $i+2]
-                if {![regexp {^[0-9A-Fa-f]{2}$} $hex]} {
-                    error "invalid percent escape in URL path"
-                }
-                if {$hex eq "00"} {
-                    error "URL path contains a null byte"
-                }
-                append bytes [binary format H2 $hex]
-                incr i 2
-            } else {
-                append bytes [encoding convertto utf-8 $character]
-            }
-        }
-        return [encoding convertfrom utf-8 $bytes]
+        return [::tclwire::http::path decode $path]
     }
 
     method local_path {url_path} {
