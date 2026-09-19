@@ -13,8 +13,6 @@ package require ip
 
 namespace eval ::tclwire::http::forwarded {
     namespace export compile_trusted_proxies \
-                     parse_x_forwarded_for \
-                     address_is_trusted \
                      resolve_client
 
     # validate_address --

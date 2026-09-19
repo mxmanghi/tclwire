@@ -11,24 +11,24 @@ test http-forwarded-1.1 {trusted proxy matching supports IPv4 CIDRs} -body {
     set networks [::tclwire::http::forwarded compile_trusted_proxies \
         {127.0.0.1 10.20.0.0/16}]
     list \
-        [::tclwire::http::forwarded address_is_trusted 127.0.0.1 $networks] \
-        [::tclwire::http::forwarded address_is_trusted 10.20.99.4 $networks] \
-        [::tclwire::http::forwarded address_is_trusted 10.21.0.1 $networks]
+        [::tclwire::http::forwarded::address_is_trusted 127.0.0.1 $networks] \
+        [::tclwire::http::forwarded::address_is_trusted 10.20.99.4 $networks] \
+        [::tclwire::http::forwarded::address_is_trusted 10.21.0.1 $networks]
 } -result {1 1 0}
 
 test http-forwarded-1.2 {trusted proxy matching supports IPv6 CIDRs} -body {
     set networks [::tclwire::http::forwarded compile_trusted_proxies \
         {::1 2001:db8:abcd::/48}]
     list \
-        [::tclwire::http::forwarded address_is_trusted ::1 $networks] \
-        [::tclwire::http::forwarded address_is_trusted \
+        [::tclwire::http::forwarded::address_is_trusted ::1 $networks] \
+        [::tclwire::http::forwarded::address_is_trusted \
             2001:db8:abcd:1::20 $networks] \
-        [::tclwire::http::forwarded address_is_trusted \
+        [::tclwire::http::forwarded::address_is_trusted \
             2001:db8:abce::20 $networks]
 } -result {1 1 0}
 
 test http-forwarded-1.2a {forwarded addresses are normalized by Tcllib} -body {
-    ::tclwire::http::forwarded parse_x_forwarded_for \
+    ::tclwire::http::forwarded::parse_x_forwarded_for \
         {001.002.003.004, 2001:0db8:0:0::1}
 } -result {1.2.3.4 2001:db8::1}
 
