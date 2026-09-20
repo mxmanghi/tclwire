@@ -23,6 +23,7 @@ nav:
       - Running TclWire: manual/running.md
       - Writing Applications: manual/applications.md
       - Application Environments: manual/environments.md
+      - Application Command Reference: manual/application-reference.md
       - Request API: manual/request-api.md
       - Response API: manual/response-api.md
       - Console: manual/console.md

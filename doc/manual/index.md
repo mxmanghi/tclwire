@@ -22,6 +22,8 @@ implementation documents while gradually building a coherent manual.
   `handle_request`, static files, development reloading, and package loading.
 - [Application Environments](environments.md): environment contracts,
   worker-scoped command setup, and a minimal custom environment.
+- [Application Command Reference](application-reference.md): request handling,
+  `HttpRequest`, response output, HTTP helpers, and URL construction.
 - [Request API](request-api.md): `HttpRequest` methods and request-body access.
 - [Response API](response-api.md): response construction, helpers, files,
   redirects, ranges, and output behavior.
