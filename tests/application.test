@@ -1936,6 +1936,131 @@ test application-configuration-1.4eaa {
     removeDirectory $docroot
 } -result "<html><head><title>The very first tclwire/rivet template</title><head><body>\n    <h2>The very first Tclwire/Rivet template</h2><pre>generated</pre>\n</body></html>\n"
 
+test application-configuration-1.4eab-request-handler {
+    rivet RequestHandler replaces the default URL-script request handler
+} -setup {
+    set docroot [makeDirectory rivet-request-handler-docroot]
+    set handler_path [file join $docroot request_handler.tcl]
+    ::fileutil::writeFile [file join $docroot ignored.tcl] {puts default}
+    ::fileutil::writeFile [file join $docroot asset.txt] static
+    ::fileutil::writeFile $handler_path {
+puts "handled:[$request path]"
+}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet} \
+                environment_config [dict create rivet [dict create \
+                    RequestHandler $handler_path]]]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 109 \
+            method GET \
+            path /ignored.tcl]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 111 \
+            method GET \
+            path /asset.txt]
+    update
+    set output {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "output"} {
+            append output [dict get $event data]
+        }
+    }
+    set output
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result "handled:/ignored.tcl\nstatic"
+
+test application-configuration-1.4eac-empty-script {
+    rivet treats an empty URL script as a handled Rivet response
+} -setup {
+    set docroot [makeDirectory rivet-empty-script-docroot]
+    ::fileutil::writeFile [file join $docroot empty.tcl] {}
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set config [dict create \
+        docroot $docroot \
+        encoding utf-8 \
+        default_application default \
+        applications [dict create \
+            default [dict create \
+                class ::tclwire::CApplication \
+                package tclwire::application \
+                hosts localhost] \
+            rivet-app [dict create \
+                package tclwire::application \
+                hosts rivet.example.test \
+                environment {rivet}]]]
+    set dispatcher [::tclwire::ApplicationDispatcher new $config]
+    set configuration [$dispatcher application_configuration rivet-app]
+} -body {
+    ::tclwire::cga::initialize app:rivet-app [$configuration serialize]
+    ::tclwire::cga::execute \
+        [dict create \
+            application_id rivet-app \
+            connection_thread_id [::thread::id] \
+            connection_agent_id $receiver \
+            transaction_id 110 \
+            method GET \
+            path /empty.tcl]
+    update
+    set header {}
+    foreach item $::tclwire::application_test::events {
+        set event [lindex $item 1]
+        if {[dict get $event type] eq "http_header"} {
+            set header [dict get $event flags]
+        }
+    }
+    list $header [lmap item $::tclwire::application_test::events {
+        dict get [lindex $item 1] type
+    }]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {$dispatcher destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    removeDirectory $docroot
+} -result [list \
+    [dict create action set name Content-Type value "text/html; charset=utf-8"] \
+    {http_header complete}]
+
 test application-configuration-1.4eab {
     rivet directory index records selected local script
 } -setup {

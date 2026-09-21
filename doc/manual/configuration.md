@@ -80,6 +80,8 @@ auto_chunked_on_flush = true
 [env.rivet]
 UploadMaxSize = 10485760
 BeforeScript = "rivet/before.tcl"
+# The handler file is read once when each worker initializes.
+RequestHandler = "/srv/example/rivet/request_handler.tcl"
 
 [env.rivetweb]
 rivetweb_root = "/opt/rivetweb"
@@ -94,6 +96,14 @@ explicit `flush stdout` request chunked HTTP streaming when the response has
 not already committed fixed-length headers. The `rivet` environment enables
 this `stdchans` behavior by default for Rivet-compatible streaming output;
 an explicit `[env.stdchans] auto_chunked_on_flush = false` disables it.
+
+`RequestHandler` names a Tcl file whose contents replace Rivet's default
+URL-script request handler. TclWire reads the file once when each application
+worker initializes, then evaluates its contents for `.tcl` and `.rvt` requests.
+Static non-Rivet resources continue through `CApplication`. A custom handler
+is responsible for its own request
+initialization, hooks, and error or abort handling; it can call
+`::rivet::url_script` when it wants traditional URL-selected script behavior.
 
 For the `rivetweb` environment, `rivetweb_root` points at the shared RivetWeb
 installation and is commonly set globally in `[env.rivetweb]`. `website_root`
