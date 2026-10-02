@@ -68,8 +68,43 @@ oo::class create ::tclwire::envs::app::Rivet {
         ::tclwire::envs::rivet::load_server
 
         set script [::rivet::inspect ChildInitScript]
+
+        # ::tclwire::envs::rivet::configured_script just carries out the ordinary
+        # consistency tests excluding the argument to be an empty string or 
+        # exactly the string 'undefined' 
+
         if {[::tclwire::envs::rivet::configured_script $script]} {
             namespace eval :: $script
+        }
+
+        # Apache Rivet reads RequestHandler once per child, then evaluates its
+        # contents for every request in place of the default handler.  Defining
+        # an object method retains that behavior without reopening the file on
+        # each request.  A custom handler owns its request lifecycle, including
+        # any hooks and error/abort handling it wants to use.
+
+        set request_handler [::rivet::inspect RequestHandler]
+        if {[::tclwire::envs::rivet::configured_script $request_handler]} {
+            set channel [open $request_handler r]
+            try {
+                set handler_script [read $channel]
+            } finally {
+                close $channel
+            }
+            set handler_method [format {
+                if {[catch {set resolution [my resolve_request_path $request]}] || $resolution eq {}} {
+                    next $request
+                    return
+                }
+                set script_path [$request local_path]
+                if {$script_path eq {} ||
+                    [string tolower [file extension $script_path]] ni {".tcl" ".rvt"}} {
+                    next $request
+                    return
+                }
+                %s
+            } $handler_script]
+            oo::objdefine [self] method handle_request {request} $handler_method
         }
 
         # A CGA worker is reused across requests and applications. Do not
@@ -99,7 +134,7 @@ oo::class create ::tclwire::envs::app::Rivet {
     # continue through CApplication's metadata-only HEAD preparation.
     method prepare_request {request} {
         if {[$request method] eq "HEAD" &&
-                [string tolower [file extension [$request path]]] in {".tcl" ".rvt"}} {
+            [string tolower [file extension [$request path]]] in {".tcl" ".rvt"}} {
             return [dict create action pass]
         }
         return [next $request]
@@ -148,11 +183,6 @@ oo::class create ::tclwire::envs::app::Rivet {
             set changed_directory 1
 
             set script [::rivet::url_script]
-            if {$script eq {}} {
-                next $request
-                return
-            }
-
             ::tclwire::http::io header set Content-Type [my content_type $script_path]
 
             set before_script [::rivet::inspect BeforeScript]

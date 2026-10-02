@@ -35,6 +35,7 @@ namespace eval ::tclwire::envs::rivet {
         AfterEveryScript
         AbortScript
         ErrorScript
+        RequestHandler
         UploadMaxSize
         UploadDirectory
         UploadFilesToVar
@@ -60,6 +61,14 @@ namespace eval ::tclwire::envs::rivet {
             return true
         }
         set key [inspect_key $option]
+        set environment_options \
+            [::tclwire::app::environment_configuration rivet]
+        dict for {configured_key configured_value} $environment_options {
+            if {[string equal -nocase $configured_key $option] ||
+                    [string equal -nocase $configured_key $key]} {
+                return $configured_value
+            }
+        }
         set application [::tclwire::app::current]
         set configuration [::tclwire::app::configuration]
         set options [$configuration class_configuration [info object class $application]]

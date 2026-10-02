@@ -1540,6 +1540,7 @@ test rivet-1.3 {rivet inspect options map to configure keys} -body {
         AfterEveryScript
         AbortScript
         ErrorScript
+        RequestHandler
         UploadMaxSize
         UploadDirectory
         UploadFilesToVar
@@ -1557,11 +1558,11 @@ test rivet-1.3 {rivet inspect options map to configure keys} -body {
             message] \
         $message
 } -result [list \
-    {server_init_script global_init_script child_init_script child_exit_script before_script after_script after_every_script abort_script error_script upload_max_size upload_directory upload_files_to_var separate_virtual_interps honor_head_requests import_rivet_ns} \
+    {server_init_script global_init_script child_init_script child_exit_script before_script after_script after_every_script abort_script error_script request_handler upload_max_size upload_directory upload_files_to_var separate_virtual_interps honor_head_requests import_rivet_ns} \
     false \
     true \
     1 \
-    {bad inspect option "UnknownOption": must be ServerInitScript, GlobalInitScript, ChildInitScript, ChildExitScript, BeforeScript, AfterScript, AfterEveryScript, AbortScript, ErrorScript, UploadMaxSize, UploadDirectory, UploadFilesToVar, SeparateVirtualInterps, HonorHeadRequests, ImportRivetNS}]
+    {bad inspect option "UnknownOption": must be ServerInitScript, GlobalInitScript, ChildInitScript, ChildExitScript, BeforeScript, AfterScript, AfterEveryScript, AbortScript, ErrorScript, RequestHandler, UploadMaxSize, UploadDirectory, UploadFilesToVar, SeparateVirtualInterps, HonorHeadRequests, ImportRivetNS}]
 
 test rivet-1.3a {rivet inspect -all returns supported configuration values} -body {
     catch {::tclwire::envs::rivet uninstall}
@@ -1623,6 +1624,7 @@ test rivet-1.3a {rivet inspect -all returns supported configuration values} -bod
         AfterEveryScript
         AbortScript
         ErrorScript
+        RequestHandler
         UploadMaxSize
         UploadDirectory
         UploadFilesToVar

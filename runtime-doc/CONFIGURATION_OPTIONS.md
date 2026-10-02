@@ -295,6 +295,14 @@ application or environment code reads the application-scoped repository through
 The `rivet` environment enables this `stdchans` default for Rivet-compatible
 output, and explicit `[env.stdchans]` configuration can override it.
 
+`RequestHandler` in `[env.rivet]` names a Tcl file whose contents replace
+Rivet's default URL-script request handler. TclWire reads the file once when
+each application worker initializes, then evaluates it for requests passed
+to `.tcl` and `.rvt` resources. Static non-Rivet resources continue through
+`CApplication`. The custom handler owns request initialization,
+hooks, and error or abort handling; it may evaluate `::rivet::url_script` to
+retain traditional URL-selected script behavior.
+
 The `rivetweb` environment recognizes `rivetweb_root` and `website_root`.
 `rivetweb_root` points at the shared RivetWeb installation and is typically set
 globally in `[env.rivetweb]`. `website_root` points at the application-specific
