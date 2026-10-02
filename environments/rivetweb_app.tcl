@@ -26,7 +26,7 @@ oo::class create ::tclwire::envs::app::Rivetweb {
     method handle_request {request} {
         set request_directory [pwd]
         try {
-            ::rivet::apache_log_error info "Rivet request script: [$request target]"
+            ::rivet::apache_log_error debug "Rivet request script: [$request target]"
             set request_path [$request path]
             # HttpRequest paths are absolute URL paths. A direct request for
             # the Rivetweb entry point is therefore `/index.rvt`, while a
@@ -70,10 +70,7 @@ oo::class create ::tclwire::envs::app::Rivetweb {
                 # before script
 
                     set argsqs [dict create {*}[::rivet::var_qs all]]
-                    set ::rivetweb::is_homepage [::rivet::lempty [::rivetweb::strip_sticky_args $argsqs]]
-
-                # ------ workshop code determination should be taken from ::rivetweb::select_template
-                # ------ (::rivetweb::select_template) and moved here -------- #
+                    set is_homepage [page_is_home $argsqs]
 
                 # it's not clear whether determing the template key here
                 # is useful. It's supposed to be in RWPage but since even
@@ -121,7 +118,8 @@ oo::class create ::tclwire::envs::app::Rivetweb {
 
                     set ::rivetweb::current_page [::rwdatas::UrlHandler::select_page $argsqs]
 
-                    $::rivetweb::logger log debug "\[::rwdatas::UrlHandler::select_page $argsqs\] returned $::rivetweb::current_page"
+                    $::rivetweb::logger log debug \
+                                "\[::rwdatas::UrlHandler::select_page $argsqs\] returned $::rivetweb::current_page"
 
                 #
                 # The three stage generation of a page
@@ -132,9 +130,9 @@ oo::class create ::tclwire::envs::app::Rivetweb {
                 #
 
                     set ::rivetweb::page_content $::rivetweb::page_key
-                    set ::rivetweb::current_page [$::rivetweb::current_page prepare_content \
-                                                 [::rwdatas::UrlHandler::current_handler]  \
-                                                 $::rivetweb::language $argsqs]
+
+                    set urlh [::rwdatas::UrlHandler::current_handler]
+                    set ::rivetweb::current_page [$::rivetweb::current_page prepare_content $urlh $language $argsqs]
 
                 # sending headers
 
