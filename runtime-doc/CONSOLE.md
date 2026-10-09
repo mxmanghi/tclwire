@@ -114,9 +114,9 @@ as an ASCII tree.
 
 Arguments:
 
-- none: construct and print the selected `::tclwire::ApplicationConfiguration`;
-  the selected application is `--application <id>` when supplied, otherwise the
-  configured `default_application`;
+- none: print the effective global runtime settings, excluding service,
+  application, and environment configuration branches; when `--application <id>`
+  is supplied, print that application configuration instead;
 - `<name>`: print the application configuration for application id `<name>`;
   if no application with that id exists, print the environment configuration
   named `<name>`.
@@ -126,14 +126,13 @@ The client accepts these options for local configuration inspection:
 - `--config <path>`: TOML configuration file to load; when omitted, the client
   uses the connected server's `config_file` value when available, otherwise it
   falls back to `tclwire.toml.example`;
-- `--application <id>`: application id to inspect; defaults to the configured
-  `default_application`.
+- `--application <id>`: optional application id to inspect instead of global settings.
 
 This command does not require a live server connection. If the client can
 connect to the console socket and `--config` was not supplied, it asks the
 server for `SERVERCONF` and derives the local TOML path from the server's
 `global config_file` row. If the client cannot connect, it reports the
-connection error and continues so `CONF`, `HELP`, and `EXIT` remain available.
+connection error and continues so `CONF`, `APPS`, `ENVS`, `HELP`, and `EXIT` remain available.
 
 Examples:
 
@@ -141,6 +140,28 @@ Examples:
 tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command CONF
 tclsh utils/tclwire_console.tcl --config tclwire.toml.example --application hello --command CONF
 tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command "CONF hello"
+```
+
+### `APPS`
+
+Client-local command. Lists configured application names in alphabetical order,
+including disabled applications, one name per line. Accepts no arguments and
+uses the same configuration file discovery as `CONF`. No live server connection
+is required.
+
+```sh
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command APPS
+```
+
+### `ENVS`
+
+Client-local command. Lists configured environment names in alphabetical order,
+one name per line. Accepts no arguments and uses the same configuration file
+discovery as `CONF`. No live server connection is required. Use `CONF <name>`
+to inspect an environment's configuration.
+
+```sh
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command ENVS
 ```
 
 ### `SERVERCONF`

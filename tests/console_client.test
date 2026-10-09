@@ -179,6 +179,66 @@ test console-client-1.1f {connected server supplies default config file} -body {
     }
 } -result [list /tmp/from-server.toml {fake-channel SERVERCONF}]
 
+test console-client-conf-global {bare CONF selects global settings instead of the default application} -body {
+    set old_config_file $::tclwire::console_client::config_file
+    set old_explicit $::tclwire::console_client::config_file_explicit
+    set old_application $::tclwire::console_client::application_id
+    try {
+        set ::tclwire::console_client::config_file tclwire.toml.example
+        set ::tclwire::console_client::config_file_explicit 1
+        set ::tclwire::console_client::application_id {}
+        set config [::tclwire::console_client::load_configuration_tree]
+        list [dict exists $config conn_max_workers] \
+            [dict exists $config default_application] \
+            [dict exists $config application_id] \
+            [dict exists $config applications] \
+            [dict exists $config services] \
+            [dict exists $config environment_configs]
+    } finally {
+        set ::tclwire::console_client::config_file $old_config_file
+        set ::tclwire::console_client::config_file_explicit $old_explicit
+        set ::tclwire::console_client::application_id $old_application
+    }
+} -result {1 1 0 0 0 0}
+
+test console-client-apps {APPS lists all configured names, including disabled applications} -setup {
+    rename ::tclwire::console_client::load_runtime_configuration \
+        ::tclwire::console_client::load_runtime_configuration.real
+    proc ::tclwire::console_client::load_runtime_configuration {} {
+        return [dict create applications [dict create zebra {enabled false} default {} hello {}]]
+    }
+} -body {
+    list [::tclwire::console_client::is_local_command { apps }] \
+        [::tclwire::console_client::print_local_command APPS]
+} -cleanup {
+    rename ::tclwire::console_client::load_runtime_configuration {}
+    rename ::tclwire::console_client::load_runtime_configuration.real \
+        ::tclwire::console_client::load_runtime_configuration
+} -output "default\nhello\nzebra\n" -result {1 0}
+
+test console-client-apps-arguments {APPS rejects arguments} -body {
+    ::tclwire::console_client::print_local_command {APPS hello}
+} -errorOutput "APPS accepts no arguments\n" -result 1
+
+test console-client-envs {ENVS lists configured environment names alphabetically} -setup {
+    rename ::tclwire::console_client::load_runtime_configuration \
+        ::tclwire::console_client::load_runtime_configuration.real
+    proc ::tclwire::console_client::load_runtime_configuration {} {
+        return [dict create environment_configs [dict create stdchans {} rivet {} rivetweb {}]]
+    }
+} -body {
+    list [::tclwire::console_client::is_local_command { envs }] \
+        [::tclwire::console_client::print_local_command ENVS]
+} -cleanup {
+    rename ::tclwire::console_client::load_runtime_configuration {}
+    rename ::tclwire::console_client::load_runtime_configuration.real \
+        ::tclwire::console_client::load_runtime_configuration
+} -output "rivet\nrivetweb\nstdchans\n" -result {1 0}
+
+test console-client-envs-arguments {ENVS rejects arguments} -body {
+    ::tclwire::console_client::print_local_command {ENVS rivet}
+} -errorOutput "ENVS accepts no arguments\n" -result 1
+
 test console-client-1.2 {EXIT is recognized as a local console command} -body {
     list \
         [::tclwire::console_client::is_exit_command EXIT] \
@@ -191,10 +251,10 @@ test console-client-1.2a {HELP is recognized and describes all commands} -body {
     list \
         [::tclwire::console_client::is_help_command { help }] \
         [::tclwire::console_client::is_help_command PS] \
-        [lmap command {PS SERVICES CONN CWORK CONF SERVERCONF LOGROTATE SHUT RECONNECT HELP EXIT} {
+        [lmap command {PS SERVICES CONN CWORK CONF APPS ENVS SERVERCONF LOGROTATE SHUT RECONNECT HELP EXIT} {
             regexp -line "^  $command +\\S" $help
         }]
-} -result {1 0 {1 1 1 1 1 1 1 1 1 1 1}}
+} -result {1 0 {1 1 1 1 1 1 1 1 1 1 1 1 1}}
 
 test console-client-1.2b {RECONNECT is recognized as a local console command} -body {
     list \

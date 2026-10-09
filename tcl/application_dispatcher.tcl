@@ -464,9 +464,9 @@ oo::class create ::tclwire::ApplicationDispatcher {
                 }
             }
             set auto_path [concat $application_paths $inherited_paths]
-            package require Thread
-            package require tclwire::accounting 1.2
-            package require tclwire::content_generator_agent 0.1
+            # Replace cached package registrations before requiring any
+            # runtime dependency, so installed copies cannot be mixed with
+            # the application and runtime loaded from these paths.
             foreach directory [lreverse $application_paths] {
                 set pkg_index [file join $directory pkgIndex.tcl]
                 if {[file isfile $pkg_index]} {
@@ -475,6 +475,9 @@ oo::class create ::tclwire::ApplicationDispatcher {
                     unset dir
                 }
             }
+            package require Thread
+            package require tclwire::accounting 1.2
+            package require tclwire::content_generator_agent 0.1
             %s
             # This command runs in the new CGA worker interpreter.  It creates
             # and initializes the application object once for this application

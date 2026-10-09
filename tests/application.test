@@ -4294,6 +4294,55 @@ test application-dispatcher-1.9a {
     }
 } -result {1 1 1 1}
 
+test application-dispatcher-1.9ab {
+    workers replace stale package registrations before loading runtime dependencies
+} -body {
+    set original_directory [pwd]
+    set run_directory [makeDirectory worker-outside-root]
+    set dispatcher {}
+    set worker {}
+    try {
+        cd $run_directory
+        set dispatcher [::tclwire::ApplicationDispatcher new $application_config]
+        set configuration [$dispatcher application_configuration default]
+        set script [$dispatcher worker_script $configuration app:default]
+        # Execute startup through application loading, without entering the
+        # worker event loop or registering a pool with the controller.
+        set initialize_index [string first {::tclwire::cga::initialize} $script]
+        set startup [string range $script 0 [expr {$initialize_index - 1}]]
+        set worker [thread::create {thread::wait}]
+        thread::send $worker [list set dir $project_root]
+        thread::send $worker {
+            source [file join $dir pkgIndex.tcl]
+            package require tclwire::accounting 1.2
+        }
+        thread::send $worker {
+            package ifneeded tclwire::application_configuration 0.1 {
+                error "loaded stale application configuration"
+            }
+        }
+        thread::send $worker $startup
+        thread::send $worker [list set descriptor [$configuration snapshot]]
+        thread::send $worker {
+            set application [::tclwire::CApplication new $descriptor]
+            try {
+                [$application configuration_object] exists cache_control_map
+            } finally {
+                $application destroy
+            }
+        }
+    } finally {
+        if {$worker ne {}} {
+            thread::release $worker
+        }
+        if {$dispatcher ne {}} {
+            $dispatcher destroy
+        }
+        cd $original_directory
+        removeDirectory $run_directory
+    }
+} -result 0
+
 test application-dispatcher-1.9b {
     worker scripts notify their pool before removing accounting
 } -body {

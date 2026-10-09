@@ -30,7 +30,9 @@ namespace eval ::tclwire::console_client {
         SERVICES  {List running services with ports and descriptions.}
         CONN      {List connections; optionally filter by -port or -remote.}
         CWORK     {List connection worker workloads.}
-        CONF      {Show the effective local application configuration.}
+        CONF      {Show global settings, or configuration for a named application/environment.}
+        APPS      {List configured application names.}
+        ENVS      {List configured environment names.}
         SERVERCONF {Show the server-provided runtime configuration table.}
         LOGROTATE {Reopen the access and error log files.}
         SHUT      {Request an orderly server shutdown.}
@@ -190,7 +192,7 @@ namespace eval ::tclwire::console_client {
     }
 
     proc is_local_command {command} {
-        return [expr {[command_name $command] in {CONF HELP EXIT RECONNECT}}]
+        return [expr {[command_name $command] in {CONF APPS ENVS HELP EXIT RECONNECT}}]
     }
 
     proc config_file_from_serverconf {response} {
@@ -268,7 +270,7 @@ namespace eval ::tclwire::console_client {
         if {$target eq {}} {
             set target $application_id
             if {$target eq {}} {
-                set target [dict get $config default_application]
+                return [dict remove $config applications environment_configs services]
             }
         }
 
@@ -303,10 +305,29 @@ namespace eval ::tclwire::console_client {
         return 0
     }
 
+    proc print_local_names {command config_key} {
+        if {[llength [regexp -all -inline {\S+} [string trim $command]]] != 1} {
+            puts stderr "[command_name $command] accepts no arguments"
+            return 1
+        }
+        if {[catch {load_runtime_configuration} config]} {
+            puts stderr $config
+            return 1
+        }
+        puts [join [lsort [dict keys [dict get $config $config_key]]] \n]
+        return 0
+    }
+
     proc print_local_command {command} {
         switch -exact -- [command_name $command] {
             CONF {
                 return [print_local_conf $command]
+            }
+            APPS {
+                return [print_local_names $command applications]
+            }
+            ENVS {
+                return [print_local_names $command environment_configs]
             }
             HELP {
                 print_help
@@ -534,7 +555,7 @@ namespace eval ::tclwire::console_client {
                     incr cmdcount
                     continue
                 }
-                if {[command_name $line] eq "CONF"} {
+                if {[command_name $line] in {CONF APPS ENVS}} {
                     print_local_command $line
                     incr cmdcount
                     continue
@@ -563,7 +584,7 @@ namespace eval ::tclwire::console_client {
         }
         if {[llength $command] > 0 &&
                 [is_local_command $command_line] &&
-                [command_name $command_line] ne "CONF"} {
+                [command_name $command_line] ni {CONF APPS ENVS}} {
             exit [print_local_command $command_line]
         }
         if {[catch {connect} connected_channel]} {
