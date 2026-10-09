@@ -112,6 +112,9 @@ Columns:
 Client-local command. Loads the configured TOML file and prints a configuration
 as an ASCII tree.
 
+The configuration is rebuilt from the local file and runtime defaults on each
+invocation. Use `SERVERCONF` to inspect the running server's configuration.
+
 Arguments:
 
 - none: print the effective global runtime settings, excluding service,
@@ -132,7 +135,8 @@ This command does not require a live server connection. If the client can
 connect to the console socket and `--config` was not supplied, it asks the
 server for `SERVERCONF` and derives the local TOML path from the server's
 `global config_file` row. If the client cannot connect, it reports the
-connection error and continues so `CONF`, `APPS`, `ENVS`, `HELP`, and `EXIT` remain available.
+connection error and continues so `CONF`, `APPS`, `ENVS`, `HELP`, and `EXIT`
+remain available.
 
 Examples:
 
@@ -147,7 +151,7 @@ tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command "CONF he
 Client-local command. Lists configured application names in alphabetical order,
 including disabled applications, one name per line. Accepts no arguments and
 uses the same configuration file discovery as `CONF`. No live server connection
-is required.
+is required. Use `CONF <name>` to inspect one of the listed applications.
 
 ```sh
 tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command APPS
@@ -254,6 +258,8 @@ tclsh utils/tclwire_console.tcl --command "CONN -port 8990"
 tclsh utils/tclwire_console.tcl --command CWORK
 tclsh utils/tclwire_console.tcl --command SERVERCONF
 tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command CONF
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command APPS
+tclsh utils/tclwire_console.tcl --config tclwire.toml.example --command ENVS
 tclsh utils/tclwire_console.tcl PS
 tclsh utils/tclwire_console.tcl CONN -port 8990
 tclsh utils/tclwire_console.tcl CWORK
@@ -261,3 +267,69 @@ tclsh utils/tclwire_console.tcl SERVERCONF
 tclsh utils/tclwire_console.tcl LOGROTATE
 tclsh utils/tclwire_console.tcl SHUT
 ```
+
+## Inspecting configuration from `tclsh`
+
+The configuration loader and tree viewer can also be used directly from an
+interactive `tclsh`, without loading the console client or starting the server.
+Set `auto_path` to your TclWire checkout and select the TOML file to inspect:
+
+```tcl
+lappend auto_path /path/to/tclwire
+package require tclwire::runtime 0.1
+
+set config [::tclwire::runtime prepare_config {--config /tmp/tclwire.toml}]
+```
+
+`prepare_config` returns a dictionary of effective runtime settings, including
+defaults, service descriptors, applications, and environment configurations.
+Load the tree viewer separately and pass it a dictionary:
+
+```tcl
+package require tclwire::configuration_tree 0.1
+
+# Complete configuration tree
+puts [::tclwire::configuration tree $config]
+
+# Global settings, as shown by bare CONF
+puts [::tclwire::configuration tree \
+    [dict remove $config applications environment_configs services]]
+```
+
+Use Tcl's dictionary commands to examine values and select branches. Replace
+`hello` and `rivetweb` with names present in your configuration:
+
+```tcl
+dict keys $config
+dict get $config docroot
+
+# Names listed by APPS and ENVS
+lsort [dict keys [dict get $config applications]]
+lsort [dict keys [dict get $config environment_configs]]
+
+puts [::tclwire::configuration tree [dict get $config applications hello]]
+puts [::tclwire::configuration tree [dict get $config environment_configs rivetweb]]
+puts [::tclwire::configuration tree [dict get $config services]]
+```
+
+To inspect the effective application configuration object used by `CONF hello`,
+create an application dispatcher. Its package is already loaded by the runtime:
+
+```tcl
+set dispatcher [::tclwire::ApplicationDispatcher new $config]
+try {
+    set app [$dispatcher application_configuration hello]
+
+    puts [$app get docroot]
+    puts [::tclwire::configuration tree [$app snapshot]]
+
+    # Include the type, version, and application ID, as CONF hello does
+    puts [::tclwire::configuration tree [$app serialize]]
+} finally {
+    $dispatcher destroy
+}
+```
+
+The dispatcher owns the application configuration objects and destroys them
+when it is destroyed. The tree viewer accepts dictionaries returned by
+`snapshot` or `serialize`; it does not inspect an object command directly.
