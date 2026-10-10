@@ -1270,8 +1270,8 @@ The following commands inspect or clear worker-local pending output:
 
 ## Standard Channel Compatibility
 
-Applications that enable the `stdchans` environment can use Tcl's standard
-channel commands for `stdout` response output:
+Applications that enable the `stdchans` environment can use familiar Tcl
+standard-channel syntax for `stdout` response output:
 
 ```toml
 [http.legacy]
@@ -1292,8 +1292,13 @@ chan puts ?-nonewline? ?stdout? $string
 chan flush stdout
 ```
 
-Only `stdout` is virtualized. Operations on other channels are delegated to
-Tcl's native `puts`, `flush`, `fconfigure`, and `chan` implementations.
+This is an intentionally limited response-output compatibility facade, not a
+complete Tcl channel implementation. Only the listed `stdout` command forms are
+intercepted. Operations on other channels are delegated to Tcl's native
+implementations, while unlisted `chan` operations on `stdout` may still address
+the process's real standard channel. Of the virtual `fconfigure` settings,
+binary encoding or translation selects byte-preserving response output; other
+settings do not reproduce every native channel behavior.
 
 For normal text output:
 
@@ -1340,24 +1345,19 @@ method handle_request {request} {
 }
 ```
 
-Changing virtual `stdout` back to text affects subsequent `puts stdout` calls:
+Changing virtual `stdout` back to text affects subsequent `puts stdout` calls.
+Make such a change before emitting response data (or for a later response),
+because one HTTP response has one body mode:
 
 ```tcl
 fconfigure stdout -translation lf -encoding utf-8
 puts stdout "text again"
 ```
 
-Do not mix text and binary data in one pending worker buffer. Flush between
-mode changes when both forms are needed:
-
-```tcl
-fconfigure stdout -translation binary
-puts -nonewline stdout $binary_prefix
-flush stdout
-
-fconfigure stdout -translation lf -encoding utf-8
-puts stdout "text suffix"
-```
+Do not mix text and binary output in one HTTP response, even across a flush.
+The worker buffer rejects an unflushed mixture, and the connection agent rejects
+a body-mode change after response output has started. A flush is a streaming
+boundary, not a body-mode boundary.
 
 With HTTP/1.1, `flush stdout` may also promote an eligible response to chunked
 streaming when the effective `stdchans` environment configuration has

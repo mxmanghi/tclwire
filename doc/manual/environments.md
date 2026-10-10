@@ -290,6 +290,19 @@ TclWire validates only the repository shape and inheritance graph.
   `stdchans` as a dependency, intercepts request `exit`, and supplies the Rivet
   application class from `environments/rivet_app.tcl`.
 
+  Its standard-channel support is intentionally a response-output compatibility
+  facade, not a complete replacement for Tcl's `stdout` channel. It supports the
+  common Rivet forms of `puts`, `flush`, `fconfigure`, and `chan` needed for text
+  output and byte-preserving binary responses. Use `::rivet::write_binary`,
+  `::rivet::with_binary_output`, or select binary mode before writing with
+  `puts -nonewline`.
+
+  This limited scope is deliberate. Non-binary `fconfigure` settings do not
+  reproduce every native channel behavior, and other `chan` subcommands may
+  still operate on the process's real `stdout`. Select either text or binary
+  output for the whole HTTP response; flushing does not make a body-mode change
+  valid.
+
 `rivetweb`
 : Installs RivetWeb on top of `rivet` and supplies the RivetWeb application
   class from `environments/rivetweb_app.tcl`. Configure `rivetweb_root` for the
