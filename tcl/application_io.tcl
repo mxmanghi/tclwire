@@ -5,6 +5,7 @@
 package require Thread
 package require tclwire::constants 0.1
 package require tclwire::body_transfer 0.1
+package require tclwire::logger::client 0.1
 
 namespace eval ::tclwire {}
 
@@ -334,6 +335,19 @@ namespace eval ::tclwire::io {
         if {$output_body_mode eq {}} {
             set output_body_mode $body_mode
         } elseif {$output_body_mode ne $body_mode} {
+            variable transaction_id
+            # Log at detection, even if the application catches the error.
+            # Preserve the original error and buffer if logging is unavailable.
+            set details [join [list \
+                "reason=application output buffer cannot mix body modes" \
+                "transaction_id=[::tclwire::logger::log_value $transaction_id]" \
+                "buffered_body_mode=[::tclwire::logger::log_value $output_body_mode]" \
+                "attempted_body_mode=[::tclwire::logger::log_value $body_mode]"] " "]
+            if {[catch {
+                ::tclwire::logger::log_error application_output $details error
+            }]} {
+                catch {puts stderr "application_output level=error $details"}
+            }
             error "application output buffer cannot mix body modes"
         }
         append output_buffer $data

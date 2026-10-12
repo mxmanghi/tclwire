@@ -4890,6 +4890,59 @@ test application-1.3c {CApplication rejects unsafe directory index entries} -bod
     set message
 } -result {CApplication directory_index entries must be file names}
 
+test rivet-error-logging-1.1 {Rivet logs caught output and script errors to the application error log} -setup {
+    set docroot [makeDirectory rivet-error-logging-docroot]
+    ::fileutil::writeFile [file join $docroot mixed.tcl] {
+        ::tclwire::io out original binary
+        catch {puts -nonewline rejected}
+        ::tclwire::io discard_buffer
+        error rivet-original-failure
+    }
+    set worker_id [::thread::id]
+    catch {::tclwire::accounting remove_thread $worker_id}
+    ::tclwire::accounting register_thread $worker_id idle application
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    set configuration [::tclwire::ApplicationConfiguration new rivet-log-test \
+        [dict create class ::tclwire::envs::app::Rivet \
+            package tclwire::application hosts localhost \
+            docroot $docroot application_paths [list $docroot] \
+            encoding utf-8 environment {rivet} \
+            configure [dict create \
+                error_script {set ::tclwire::application_test::error_handled 1} \
+                after_every_script {set ignored 1}]]]
+    set logfile [file join $docroot server.log]
+    set logerr [file join $docroot server.err]
+    set app_logfile [file join $docroot application.log]
+    set app_logerr [file join $docroot application.err]
+    set ::tclwire::application_test::error_handled 0
+} -body {
+    ::tclwire::logger start [dict create logfile $logfile logerr $logerr \
+        applications [dict create rivet-log-test [dict create \
+            logfile $app_logfile logerr $app_logerr]]]
+    ::tclwire::cga::initialize app:rivet-log-test [$configuration serialize]
+    ::tclwire::cga::execute [dict create application_id rivet-log-test \
+        connection_thread_id $worker_id connection_agent_id $receiver \
+        transaction_id 152 method GET path /mixed.tcl]
+    update
+    ::tclwire::cga::shutdown
+    ::tclwire::logger stop
+    set errors [::fileutil::cat $app_logerr]
+    list $::tclwire::application_test::error_handled \
+        [string match {*application_output level=error*buffered_body_mode=binary attempted_body_mode=text*} $errors] \
+        [string match {*application level=error*path=/mixed.tcl error=rivet-original-failure*errorinfo=*} $errors] \
+        [string trim [::fileutil::cat $logerr]]
+} -cleanup {
+    catch {::tclwire::cga::shutdown}
+    catch {::tclwire::logger stop}
+    catch {$configuration destroy}
+    catch {$receiver destroy}
+    catch {::tclwire::accounting remove_thread $worker_id}
+    catch {::tclwire::io end}
+    unset -nocomplain ::tclwire::application_test::error_handled
+    removeDirectory $docroot
+} -result {1 1 1 {}}
+
 test application-io-1.1 {output commands send ordered transaction events} -body {
     set ::tclwire::application_test::events {}
     set receiver [::tclwire::application_test::OutputReceiver new]
@@ -4971,6 +5024,39 @@ test application-io-1.2 {buffer exposes pending application output} -body {
         $receiver destroy
     }
 } -result {alpha alphabeta {} output alphabeta {output flush complete}}
+
+test application-io-1.2a {caught mixed output errors are logged in both directions} -body {
+    set saved_logger $::tclwire::cga::logger
+    set ::tclwire::cga::logger [::tclwire::logger::Client new mixed-output]
+    set logfile [file join [temporaryDirectory] tclwire-mixed-output-[pid].log]
+    set logerr [file join [temporaryDirectory] tclwire-mixed-output-[pid].err]
+    set results {}
+    try {
+        ::tclwire::logger start [dict create logfile $logfile logerr $logerr]
+        foreach {first second} {binary text text binary} {
+            ::tclwire::io begin [::thread::id] unused 151
+            ::tclwire::io out original $first
+            set code [catch {::tclwire::io out rejected $second} message]
+            lappend results $code $message [::tclwire::io buffer]
+            ::tclwire::io end
+        }
+        ::tclwire::logger stop
+        set errors [::fileutil::cat $logerr]
+        foreach {first second} {binary text text binary} {
+            lappend results [string match \
+                "*application_output level=error reason=application output buffer cannot mix body modes transaction_id=151 buffered_body_mode=$first attempted_body_mode=$second*" \
+                $errors]
+        }
+        set results
+    } finally {
+        catch {::tclwire::io end}
+        catch {::tclwire::logger stop}
+        $::tclwire::cga::logger destroy
+        set ::tclwire::cga::logger $saved_logger
+        file delete -force $logfile $logerr
+    }
+} -result [list 1 {application output buffer cannot mix body modes} original \
+    1 {application output buffer cannot mix body modes} original 1 1]
 
 test application-io-1.3 {
     explicit completion closes response output while the transaction remains active
