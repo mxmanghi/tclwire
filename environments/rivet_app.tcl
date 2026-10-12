@@ -198,6 +198,9 @@ oo::class create ::tclwire::envs::app::Rivet {
         } trap {RIVET THREAD_EXIT} {err opts} {
             ::Rivet::finish_request $script $err $opts AbortScript
         } on error {err opts} {
+            # ErrorScript may consume the error or fail while emitting HTML
+            # into a binary response. Record the original failure first.
+            ::tclwire::cga::log_application_error [$request snapshot] $err $opts
             ::Rivet::finish_request $script $err $opts
         } finally {
             ::try {
