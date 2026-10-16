@@ -4,6 +4,7 @@
 
 package require Thread
 package require tclwire::constants 0.1
+package require tclwire::body_transfer 0.1
 
 namespace eval ::tclwire {}
 
@@ -19,8 +20,10 @@ namespace eval ::tclwire::io {
     variable response_metadata {}
     variable response_planner {}
     variable response_prepared 0
+    variable delegated_source 0
 
     proc begin {thread_id agent_id tx_id} {
+        variable delegated_source
         variable active
         variable response_state
         variable connection_thread_id
@@ -49,6 +52,7 @@ namespace eval ::tclwire::io {
                                               encoding   {}]
         set response_planner     {}
         set response_prepared    0
+        set delegated_source     0
         set response_state       open
         set active               1
         return
@@ -312,6 +316,7 @@ namespace eval ::tclwire::io {
     }
 
     proc out {data {body_mode text}} {
+        variable delegated_source
         variable active
         variable output_buffer
         variable output_body_mode
@@ -322,6 +327,9 @@ namespace eval ::tclwire::io {
         }
         if {![accepting_output]} {
             return
+        }
+        if {$delegated_source} {
+            error "output cannot be mixed with a delegated download"
         }
         if {$output_body_mode eq {}} {
             set output_body_mode $body_mode
@@ -403,14 +411,57 @@ namespace eval ::tclwire::io {
         return
     }
 
+    # A download supplies the entire response body. For channel sources a
+    # successful thread transfer consumes ownership, even if the response is
+    # subsequently rejected or its connection has already disappeared.
+    proc download {descriptor} {
+        variable delegated_source
+        variable output_buffer
+        variable response_metadata
+        variable connection_thread_id
+        if {![accepting_output]} {
+            error "no open application output transaction"
+        }
+        if {$delegated_source || $output_buffer ne {} || [response_is_prepared]} {
+            error "download must precede body output and response preparation"
+        }
+        set descriptor [::tclwire::transfer::validate $descriptor]
+        dict set response_metadata body_mode binary
+        prepare_response
+        set transferred 0
+        if {[dict exists $descriptor channel]} {
+            set source [dict get $descriptor channel]
+            # Validate locally before handing the resource to another thread.
+            chan configure $source -translation binary -encoding binary
+            chan event $source readable {}
+            catch {chan event $source writable {}}
+            if {$connection_thread_id ne [::thread::id]} {
+                ::thread::transfer $connection_thread_id $source
+            }
+            set transferred 1
+        }
+        set delegated_source 1
+        try {
+            send_event download {} $descriptor
+        } on error {message options} {
+            if {$transferred} {
+                catch {::thread::send $connection_thread_id [list close $source]}
+            }
+            return -options $options $message
+        }
+        return
+    }
+
     proc flush {{channel_event_flags {}}} {
         variable active
+        variable delegated_source
         if {!$active} {
             error "no application output transaction is active"
         }
         if {![accepting_output]} {
             return
         }
+        if {$delegated_source} { return }
         set channel_event_flags [dict merge [dict create auto_chunked_on_flush 0] $channel_event_flags]
         if {[dict get $channel_event_flags auto_chunked_on_flush] || [streaming_response]} {
             prepare_response
@@ -475,7 +526,7 @@ namespace eval ::tclwire::io {
     }
 
     namespace export begin end context response out buffer \
-                     discard_buffer puts flush complete \
+                     discard_buffer puts flush complete download \
                      close_connection fail configure_response_planner \
                      response_descriptor response_is_prepared
     namespace ensemble create

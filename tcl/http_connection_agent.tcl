@@ -3,6 +3,7 @@
 # HTTP specialization of the protocol-independent ConnectionAgent.
 
 package require TclOO
+package require tclwire::body_transfer 0.1
 package require tclwire::connection_agent 0.1
 package require tclwire::http::protocol 0.1
 package require tclwire::http::errors 0.1
@@ -26,8 +27,12 @@ oo::class create ::tclwire::HttpConnectionAgent {
     variable request_prefix
     variable continue_response_sent
     variable loggers
+    variable body_transfer download_source download_application_complete
 
     constructor {conn_channel id host port args} {
+        set body_transfer {}
+        set download_source {}
+        set download_application_complete 0
         array set options {
             -applicationconfig          {}
             -connectionkey              {}
@@ -106,12 +111,150 @@ oo::class create ::tclwire::HttpConnectionAgent {
     }
 
     destructor {
+        my close
         catch {$application_dispatcher destroy}
         catch {$protocol_session destroy}
         dict for {client logger} $loggers {
             catch {$logger destroy}
         }
         next
+    }
+
+    method close {} {
+        if {[info exists body_transfer] && [info object isa object $body_transfer]} {
+            $body_transfer destroy
+            set body_transfer {}
+        }
+        set download_source {}
+        next
+    }
+
+    method transfer_status {} {
+        if {![info object isa object $body_transfer]} { return {} }
+        return [$body_transfer status]
+    }
+
+    method start_download {transaction descriptor} {
+        if {[info object isa object $body_transfer] ||
+                [$transaction get response_state] ne "preparing" ||
+                [$transaction get response_body] ne {}} {
+            error "download must be the entire response body"
+        }
+        set descriptor [::tclwire::transfer::validate $descriptor]
+        if {[llength [my response_header_values $transaction Transfer-Encoding]]} {
+            error "known-length downloads cannot use Transfer-Encoding"
+        }
+        set status [$transaction get response_status]
+        if {$status < 200 || $status in {204 205 304}} {
+            error "this HTTP status does not permit a download body"
+        }
+        set source {}
+        set opened_source 0
+        set adopted 0
+        try {
+            if {[dict exists $descriptor filename]} {
+                set filename [dict get $descriptor filename]
+                if {![file isfile $filename]} { error "download source is not a regular file" }
+                set source [open $filename rb]
+                set opened_source 1
+                # Inspect the opened file, rather than trusting a size supplied
+                # by the application or a path stat performed before open.
+                seek $source 0 end
+                set size [tell $source]
+                if {$size != [dict get $descriptor filesize]} {
+                    error "download filesize does not match the opened file"
+                }
+                set first 0
+                set length $size
+                if {[dict exists $descriptor range]} {
+                    if {$status ni {200 206}} {
+                        error "file ranges require HTTP status 200 or 206"
+                    }
+                    lassign [dict get $descriptor range] first last
+                    set length [expr {$last - $first + 1}]
+                    set content_range "bytes $first-$last/$size"
+                    set existing [my response_header_values $transaction Content-Range]
+                    if {[llength $existing] && $existing ne [list $content_range]} {
+                        error "Content-Range disagrees with download range"
+                    }
+                    my apply_header_event $transaction [dict create action set \
+                        name Content-Range value $content_range]
+                    $transaction set response_status 206
+                    $transaction set response_reason {Partial Content}
+                }
+                seek $source $first start
+            } else {
+                set source [dict get $descriptor channel]
+                set length [dict get $descriptor length]
+            }
+            set lengths [my response_header_values $transaction Content-Length]
+            if {[llength $lengths] > 1} { error "duplicate Content-Length on download" }
+            if {[llength $lengths]} {
+                set declared [lindex $lengths 0]
+                if {![regexp {^[0-9]+$} $declared] ||
+                        [string trimleft $declared 0] ne [string trimleft [expr {$length + 0}] 0]} {
+                    error "Content-Length disagrees with download length"
+                }
+            }
+            my apply_header_event $transaction [dict create action set \
+                name Content-Length value [expr {$length + 0}]]
+            $transaction set response_body_mode binary
+            set head [$protocol_session build_response \
+                [$transaction get response_status] [$transaction get response_reason] \
+                {} binary [$transaction get response_headers] binary 1]
+            set count [expr {[my head_only $transaction] ? 0 : $length}]
+            set body_transfer [::tclwire::BodyTransfer new $source $channel $count \
+                [dict get $descriptor blocksize] \
+                [namespace code [list my download_progress [$transaction id]]]]
+            set download_source $source
+            set adopted 1
+            set download_application_complete 0
+            # Commitment precedes writing: a transport failure must never
+            # trigger an attempted replacement HTTP response.
+            $transaction set response_state committed
+            if {![my write_output $head 1]} { return }
+            $body_transfer start
+        } finally {
+            if {!$adopted && $opened_source} { catch {close $source} }
+        }
+    }
+
+    method download_progress {transaction_id progress} {
+        set transaction [my transaction_for $transaction_id]
+        if {![info object isa object $transaction]} { return }
+        set bytes [dict get $progress copied_bytes]
+        set delta [expr {$bytes - [$transaction get response_bytes]}]
+        $transaction set response_bytes $bytes
+        if {$delta > 0} {
+            catch {
+                set record [::tclwire::accounting get_connection_record $connection_key]
+                ::tclwire::accounting update_connection $connection_key [dict create \
+                    bytes_out [expr {[dict get $record bytes_out] + $delta}]]
+            }
+            my refresh_timeout
+        }
+        if {[dict get $progress state] eq "failed"} {
+            my abort_application_response $transaction_id $transaction \
+                [dict get $progress error]
+        } elseif {[dict get $progress state] eq "completed"} {
+            my finish_download $transaction_id
+        }
+    }
+
+    method finish_download {transaction_id} {
+        if {!$download_application_complete ||
+                [dict get [$body_transfer status] state] ne "completed"} { return }
+        set transaction [my transaction_for $transaction_id]
+        if {![info object isa object $transaction]} { return }
+        $transaction set response_state complete
+        set descriptor [my finish_transaction $transaction_id]
+        catch {
+            ::tclwire::accounting update_connection $connection_key \
+                [dict create current_transaction_id {} current_command {}]
+        }
+        my log_request $descriptor [dict get $descriptor response_status] \
+            [dict get $descriptor response_bytes]
+        my close
     }
 
     method logger_for_client {client} {
@@ -606,6 +749,22 @@ oo::class create ::tclwire::HttpConnectionAgent {
     # values therefore describe different stages of output, not the same data.
 
     method application_output {transaction_id event} {
+        # A channel can arrive after its transaction was cancelled. It must
+        # either be adopted by the transfer or released even for stale events.
+        set incoming {}
+        if {[dict get $event type] eq "download" && [dict exists $event flags channel]} {
+            set incoming [dict get $event flags channel]
+        }
+        try {
+            my consume_application_output $transaction_id $event
+        } finally {
+            if {$incoming ne {} && $incoming ne $download_source} {
+                catch {close $incoming}
+            }
+        }
+    }
+
+    method consume_application_output {transaction_id event} {
 
         # A late asynchronous event can arrive after its transaction has been
         # finished (for example, after an earlier event aborted the response).
@@ -628,12 +787,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
         set expected [expr {[$transaction get output_sequence] + 1}]
         if {[dict get $event output_sequence] != $expected} {
-            my log_application_response_abort $transaction \
+            my abort_application_response $transaction_id $transaction \
                 "application output event sequence mismatch: expected $expected, received [dict get $event output_sequence]" \
                 {}
-            set head_only [my head_only $transaction]
-            my finish_transaction $transaction_id
-            my send_error 500 {} $head_only
             return
         }
         $transaction set output_sequence $expected
@@ -645,8 +801,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
         #     legal to do so;
         #   * output, no_body, and flush control entity-body representation,
         #     buffering, and the transition to chunked streaming;
-        #   * complete and close_connection perform successful terminal
-        #     actions and release the transaction;
+        #   * download delegates binary body delivery to a transfer object;
+        #   * complete records application completion (and waits for a
+        #     delegated transfer); close_connection terminates immediately;
         #   * error and default funnel application/protocol failures through
         #     the common abort policy (a 500 before commitment, otherwise a
         #     connection close because an already-sent response cannot be
@@ -656,7 +813,20 @@ oo::class create ::tclwire::HttpConnectionAgent {
         # carries body bytes/text for output or an error message for error;
         # `flags' carries the structured, event-specific control data.
 
+        if {[info object isa object $body_transfer] &&
+                [dict get $event type] ni {complete close_connection error flush}} {
+            my abort_application_response $transaction_id $transaction \
+                "application output cannot be mixed with a delegated download"
+            return
+        }
+
         switch -exact -- [dict get $event type] {
+            download {
+                if {[catch {my start_download $transaction [dict get $event flags]} message options]} {
+                    my abort_application_response $transaction_id $transaction $message $options
+                }
+            }
+
             response {
 
                 # Replace the complete response descriptor.  For example:
@@ -808,6 +978,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 $transaction set response_body {}
             }
             flush {
+                if {[info object isa object $body_transfer]} { return }
 
                 # A flush is a streaming boundary, not response completion.
                 # Its flags normally look like:
@@ -855,6 +1026,11 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
             }
             complete {
+                if {[info object isa object $body_transfer]} {
+                    set download_application_complete 1
+                    my finish_download $transaction_id
+                    return
+                }
 
                 # Complete is the normal terminal event.  There are two output
                 # strategies, selected by the already-validated HTTP framing:
@@ -1035,7 +1211,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return [my active_transaction]
     }
 
-    unexport abort_application_response apply_header_event \
+    unexport start_download download_progress finish_download consume_application_output \
+        abort_application_response apply_header_event \
         chunked_response cleanup_request_body commit_chunked_response \
         dispatch_request_descriptor dump_multipart_descriptor \
         enable_chunked_response_for_flush \

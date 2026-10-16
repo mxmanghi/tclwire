@@ -4916,6 +4916,30 @@ test application-io-1.1 {output commands send ordered transaction events} -body 
     }
 } -result {7 output 1 7 flush 2 7 complete 3}
 
+test application-io-download {download is an ordered control event and excludes ordinary output} -body {
+    set ::tclwire::application_test::events {}
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 17
+        ::tclwire::io download [dict create filename /example.bin filesize 42]
+        set mixed [catch {::tclwire::io out extra}]
+        set duplicate [catch {::tclwire::io download [dict create filename /example.bin filesize 42]}]
+        ::tclwire::io flush
+        ::tclwire::io complete
+        ::tclwire::io end
+        update
+        set types {}
+        foreach item $::tclwire::application_test::events {
+            lappend types [dict get [lindex $item 1] type]
+        }
+        list $mixed $duplicate $types \
+            [dict get [lindex [lindex $::tclwire::application_test::events 0] 1] data]
+    } finally {
+        catch {::tclwire::io end}
+        $receiver destroy
+    }
+} -result {1 1 {download complete} {}}
+
 test application-io-1.2 {buffer exposes pending application output} -body {
     set ::tclwire::application_test::events {}
     set receiver [::tclwire::application_test::OutputReceiver new]

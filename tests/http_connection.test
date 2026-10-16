@@ -1837,5 +1837,202 @@ docroot = "%s"
     removeFile $forwarded_application
 } -result [list 1 {127.0.0.1 198.51.100.20 {192.0.2.99 198.51.100.20}}]
 
+test http-download-completion {application and transfer must both complete, in either order} -body {
+    oo::class create ::tclwire::http_connection_test::TransferStub {
+        variable state
+        constructor {} { set state copying }
+        method complete {} { set state completed }
+        method status {} { return [dict create state $state copied_bytes 0] }
+    }
+    oo::class create ::tclwire::http_connection_test::DownloadCompletion {
+        superclass ::tclwire::HttpConnectionAgent
+        constructor {} {
+            my variable body_transfer download_source download_application_complete closed transaction_state
+            set closed 0
+            set transaction_state {}
+            set body_transfer [::tclwire::http_connection_test::TransferStub new]
+            set download_source {}
+            set download_application_complete 0
+            my begin_transaction 1 [dict create method GET]
+            set transaction [my transaction_for 1]
+            foreach {key value} {output_sequence 0 response_status 200 response_bytes 0 response_state committed} {
+                $transaction set $key $value
+            }
+        }
+        destructor {
+            my variable body_transfer
+            $body_transfer destroy
+            my clear_transaction
+        }
+        method close {} { my variable closed; set closed 1 }
+        method log_request {args} { return }
+        method advance {} {
+            my variable body_transfer
+            $body_transfer complete
+            my download_progress 1 [$body_transfer status]
+        }
+        method inspect {} {
+            my variable closed
+            return [list $closed [info object isa object [my transaction_for 1]]]
+        }
+    }
+    set results {}
+    try {
+        foreach order {application transfer} {
+            set agent [::tclwire::http_connection_test::DownloadCompletion new]
+            try {
+                set event [dict create type complete output_sequence 1]
+                if {$order eq "application"} {
+                    $agent application_output 1 $event
+                    lappend results [$agent inspect]
+                    $agent advance
+                } else {
+                    $agent advance
+                    lappend results [$agent inspect]
+                    $agent application_output 1 $event
+                }
+                lappend results [$agent inspect]
+            } finally {
+                $agent destroy
+            }
+        }
+        set results
+    } finally {
+        ::tclwire::http_connection_test::DownloadCompletion destroy
+        ::tclwire::http_connection_test::TransferStub destroy
+    }
+} -result {{0 1} {1 0} {0 1} {1 0}}
+
+test http-download-stale {late download events release transferred channels} -body {
+    oo::class create ::tclwire::http_connection_test::ExpiredDownload {
+        superclass ::tclwire::HttpConnectionAgent
+        constructor {} {
+            my variable body_transfer download_source transaction_state
+            set body_transfer {}
+            set download_source {}
+            set transaction_state {}
+        }
+        destructor { return }
+    }
+    set agent [::tclwire::http_connection_test::ExpiredDownload new]
+    set results {}
+    try {
+        foreach target [list $agent ::tclwire::http_connection_test::missing_agent] {
+            lassign [chan pipe] source writer
+            try {
+                ::tclwire::route_application_output $target 999 [dict create \
+                    type download flags [dict create channel $source length 12]]
+                lappend results [expr {$source ni [chan names]}]
+            } finally {
+                catch {close $source}
+                close $writer
+            }
+        }
+        set results
+    } finally {
+        $agent destroy
+        ::tclwire::http_connection_test::ExpiredDownload destroy
+    }
+} -result {1 1}
+
+test http-download-1.1 {file, range, HEAD and cross-thread channel downloads} -setup {
+    set download_file [makeFile {} download-body.bin]
+    set download_bytes [binary decode hex [string repeat 000d0aff80 40000]]
+    set writer [open $download_file wb]
+    puts -nonewline $writer $download_bytes
+    close $writer
+    set download_application [makeFile [format {
+package require tclwire::application 0.1
+oo::class create ::tclwire::http_connection_test::DownloadApplication {
+    superclass ::tclwire::CApplication
+    method handle_request {request} {
+        set filename %s
+        set size [file size $filename]
+        set source [dict create filename $filename filesize $size blocksize 8192]
+        switch -- [$request path] {
+            /range { dict set source range {7 180001} }
+            /single { dict set source blocksize 0 }
+            /empty { set source [dict create channel [open $filename rb] length 0] }
+            /channel {
+                set channel [open $filename rb]
+                seek $channel 7
+                set source [dict create channel $channel length 179995 blocksize 8192]
+            }
+            /short {
+                set source [dict create channel [open $filename rb] length [expr {$size + 1}]]
+            }
+            /missing { dict set source filename "${filename}.missing" }
+            /bad-range { dict set source range [list 0 $size] }
+            /no-body { ::tclwire::io response 204 {} {} }
+            /bad-size { dict incr source filesize }
+            /bad-length { ::tclwire::http::io header set Content-Length 7 }
+            /chunked { ::tclwire::http::io header set Transfer-Encoding chunked }
+        }
+        ::tclwire::io download $source
+        ::tclwire::io complete
+    }
+}
+} [list $download_file]] download-application.tcl]
+    set download_config [makeFile [format {
+[tclwire]
+default_application = "localhost"
+docroot = "%s"
+logfile = "%s"
+[http]
+enabled = true
+port = 8990
+[http.localhost]
+class = "::tclwire::http_connection_test::DownloadApplication"
+file = "%s"
+docroot = "%s"
+encoding = "utf-8"
+} $project_root $::tclwire::http_connection_test::logfile \
+    $download_application $project_root] download-config.toml]
+} -body {
+    ::tclwire::runtime start [list --config $download_config --logerr $::tclwire::http_connection_test::logerr]
+    set results {}
+    foreach {method path expected_status expected_length expected_body} [list \
+        GET /file 200 200000 $download_bytes \
+        GET /single 200 200000 $download_bytes \
+        GET /range 206 179995 [string range $download_bytes 7 180001] \
+        GET /channel 200 179995 [string range $download_bytes 7 180001] \
+        HEAD /file 200 200000 {} \
+        HEAD /range 206 179995 {} \
+        HEAD /channel 200 179995 {} \
+        GET /empty 200 0 {}] {
+        set response [::tclwire::http_connection_test::request \
+            "$method $path HTTP/1.1\r\nHost: localhost\r\n\r\n"]
+        ::tclwire::test::parse_http_response $response headers body
+        lappend results [expr {[string match "HTTP/1.1 $expected_status *" $headers] &&
+            [regexp "Content-Length: $expected_length\r\n" "$headers\r\n"] &&
+            $body eq $expected_body &&
+            ![regexp -nocase {Transfer-Encoding:} $headers]}]
+        if {$path eq "/range"} {
+            lappend results [string match {*Content-Range: bytes 7-180001/200000*} $headers]
+        }
+    }
+    foreach path {/bad-size /bad-length /chunked /missing /bad-range /no-body} {
+        set response [::tclwire::http_connection_test::request \
+            "GET $path HTTP/1.1\r\nHost: localhost\r\n\r\n"]
+        lappend results [string match "HTTP/1.1 500 *" $response]
+    }
+    set response [::tclwire::http_connection_test::request \
+        "GET /short HTTP/1.1\r\nHost: localhost\r\n\r\n"]
+    ::tclwire::test::parse_http_response $response headers body
+    lappend results [expr {[string match "HTTP/1.1 200 *" $headers] &&
+        [string match {*Content-Length: 200001*} $headers] && $body eq $download_bytes}]
+    set response [::tclwire::http_connection_test::request \
+        "GET /file HTTP/1.0\r\nHost: localhost\r\n\r\n"]
+    ::tclwire::test::parse_http_response $response headers body
+    lappend results [expr {$body eq $download_bytes &&
+        ![regexp -nocase {Transfer-Encoding:} $headers]}]
+    set results
+} -cleanup {
+    ::tclwire::http_connection_test::cleanup
+    removeFile $download_file
+    removeFile $download_application
+    removeFile $download_config
+} -result {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1}
+
 ::tclwire::http_connection_test::cleanup
 cleanupTests

@@ -1,0 +1,166 @@
+package require tcltest
+namespace import ::tcltest::*
+lappend auto_path [file dirname [file dirname [file normalize [info script]]]]
+package require tclwire::body_transfer 0.1
+
+namespace eval ::transfer_test {
+    variable events {}
+    variable done 0
+    proc progress {status} {
+        variable events
+        variable done
+        lappend events $status
+        if {[dict get $status state] in {completed failed}} { set done 1 }
+    }
+    proc wait {} {
+        variable done
+        set timer [after 3000 {set ::transfer_test::done timeout}]
+        try {
+            vwait ::transfer_test::done
+            if {$done eq "timeout"} { error "transfer timed out" }
+        } finally {
+            after cancel $timer
+        }
+    }
+}
+
+foreach {name block checkpoints} {bounded 3 {3 6 9 10 10} single 0 {10 10}} {
+    test body-transfer-$name {binary copies continue from current source position} -body {
+        set path [makeFile {} transfer-source.bin]
+        set destination [makeFile {} transfer-destination.bin]
+        set writer [open $path wb]
+        puts -nonewline $writer [binary decode hex ff00010203040506070809fe]
+        close $writer
+        set input [open $path rb]
+        seek $input 1
+        set output [open $destination wb]
+        set ::transfer_test::events {}
+        set ::transfer_test::done 0
+        set transfer [::tclwire::BodyTransfer new $input $output 10 $block ::transfer_test::progress]
+        try {
+            $transfer start
+            ::transfer_test::wait
+            flush $output
+            set reader [open $destination rb]
+            try { set bytes [binary encode hex [read $reader]] } finally { close $reader }
+            set counts {}
+            foreach event $::transfer_test::events { lappend counts [dict get $event copied_bytes] }
+            list $bytes $counts [dict get [$transfer status] state] \
+                [expr {$input ni [chan names]}] [expr {$output in [chan names]}]
+        } finally {
+            $transfer destroy
+            close $output
+            removeFile $path
+            removeFile $destination
+        }
+    } -result [list 00010203040506070809 $checkpoints completed 1 1]
+}
+
+test body-transfer-short {premature EOF is failure with partial progress} -body {
+    set path [makeFile abc transfer-short.txt]
+    set destination [makeFile {} transfer-short-out.txt]
+    set input [open $path rb]
+    set output [open $destination wb]
+    set ::transfer_test::events {}
+    set ::transfer_test::done 0
+    set transfer [::tclwire::BodyTransfer new $input $output 100 0 ::transfer_test::progress]
+    try {
+        $transfer start
+        ::transfer_test::wait
+        set status [$transfer status]
+        list [dict get $status state] [dict get $status copied_bytes] [dict get $status error]
+    } finally {
+        $transfer destroy
+        close $output
+        removeFile $path
+        removeFile $destination
+    }
+} -result {failed 4 {download source ended before the declared length}}
+
+test body-transfer-zero {zero length does not consume a source byte} -body {
+    lassign [chan pipe] input writer
+    set destination [makeFile {} transfer-zero-out.txt]
+    set output [open $destination wb]
+    set ::transfer_test::events {}
+    set ::transfer_test::done 0
+    set transfer [::tclwire::BodyTransfer new $input $output 0 64 ::transfer_test::progress]
+    try {
+        $transfer start
+        ::transfer_test::wait
+        list [dict get [$transfer status] state] [dict get [$transfer status] copied_bytes]
+    } finally {
+        $transfer destroy
+        close $writer
+        close $output
+        removeFile $destination
+    }
+} -result {completed 0}
+
+test body-transfer-cancel {cancel an active copy waiting for source input} -body {
+    lassign [chan pipe] input writer
+    set destination [makeFile {} transfer-cancel-out.txt]
+    set output [open $destination wb]
+    set ::transfer_test::events {}
+    set transfer [::tclwire::BodyTransfer new $input $output 100 64 ::transfer_test::progress]
+    try {
+        $transfer start
+        update
+        $transfer cancel
+        update
+        list [dict get [$transfer status] state] $::transfer_test::events \
+            [expr {$input ni [chan names]}] [expr {$output in [chan names]}]
+    } finally {
+        $transfer destroy
+        close $writer
+        close $output
+        removeFile $destination
+    }
+} -result {cancelled {} 1 1}
+
+test body-transfer-backpressure {a stalled sink bounds input consumption and output buffering} -body {
+    set path [makeFile {} transfer-large.bin]
+    set writer [open $path wb]
+    puts -nonewline $writer [string repeat x 4194304]
+    close $writer
+    set input [open $path rb]
+    lassign [chan pipe] reader output
+    chan configure $output -blocking 0 -translation binary -buffersize 4096
+    set ::transfer_test::events {}
+    set transfer [::tclwire::BodyTransfer new $input $output 4194304 65536 ::transfer_test::progress]
+    try {
+        $transfer start
+        update
+        list [dict get [$transfer status] state] \
+            [expr {[tell $input] < 4194304}] \
+            [expr {[chan pending output $output] <= 65536}]
+    } finally {
+        $transfer destroy
+        catch {close $output}
+        close $reader
+        removeFile $path
+    }
+} -result {copying 1 1}
+
+test body-transfer-write-error {sink failure is reported through the transfer lifecycle} -body {
+    set path [makeFile abc transfer-error.txt]
+    set input [open $path rb]
+    lassign [chan pipe] reader output
+    chan configure $output -blocking 0 -translation binary -buffering none
+    close $reader
+    set ::transfer_test::events {}
+    set ::transfer_test::done 0
+    set transfer [::tclwire::BodyTransfer new $input $output 4 0 ::transfer_test::progress]
+    try {
+        $transfer start
+        ::transfer_test::wait
+        list [dict get [$transfer status] state] \
+            [expr {[dict get [$transfer status] error] ne {}}] \
+            [expr {$input ni [chan names]}]
+    } finally {
+        $transfer destroy
+        catch {close $output}
+        removeFile $path
+    }
+} -result {failed 1 1}
+
+cleanupTests

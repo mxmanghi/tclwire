@@ -501,6 +501,10 @@ namespace eval ::tclwire {
 
     proc route_application_output {agent transaction_id event} {
         if {![info object isa object $agent]} {
+            if {[dict get $event type] eq "download" &&
+                    [dict exists $event flags channel]} {
+                catch {close [dict get $event flags channel]}
+            }
             return
         }
         $agent application_output $transaction_id $event

@@ -1615,3 +1615,45 @@ contract.
 - Application output commands: [`tcl/application_io.tcl`](../tcl/application_io.tcl)
 - HTTP output controls: [`tcl/http_application_io.tcl`](../tcl/http_application_io.tcl)
 - Default application API: [`tcl/application.tcl`](../tcl/application.tcl)
+
+## Delegated Known-Length Downloads
+
+`::tclwire::io download $descriptor` sends a no-data `download` event whose
+`flags` contain one of these source descriptors:
+
+```tcl
+{filename /absolute/path/archive.bin filesize 1000000}
+{filename /absolute/path/archive.bin filesize 1000000 range {100 999}}
+{channel file42 length 900}
+```
+
+File ranges use inclusive offsets. Channel sources begin at their current
+position and require an explicit length. The IO bridge transfers channel
+ownership to the connection thread before sending the event. After successful
+handoff, the CGA must not read, write, or close that channel. The receiver closes
+sources even when their transaction or connection has already disappeared.
+Before a successful handoff, the application retains cleanup responsibility.
+
+Each descriptor optionally accepts `blocksize`: the default is 65536 bytes per
+asynchronous `fcopy`; zero selects one copy. These are copy checkpoints, not HTTP
+chunks. Downloads use `Content-Length`; unknown-length streaming is not yet
+implemented. The entire response body must come from this one source. Configure
+headers before delegation, and do not mix it with ordinary `out` events.
+
+The HTTP connection agent validates framing and file metadata, then delegates IO
+to `::tclwire::BodyTransfer` (`tclwire::body_transfer`). A range produces 206 and
+`Content-Range`. HEAD sends the corresponding length but no body. The transfer
+object reports `state`, `length`, `copied_bytes`, and `error` through a local
+callback and its `status` method. The agent exposes `transfer_status`; no progress
+callback is sent to a CGA which may already be handling another request.
+
+For downloads, `complete` records application completion. Actual response
+completion additionally waits for the transfer and local output drain. Source
+EOF before the declared length or a write error aborts the response; connection
+closure cancels copying and releases the source. Progress and accounting advance
+at completed copy checkpoints, not within a block and not on client receipt.
+The existing 30-second connection timeout is refreshed at nonempty checkpoints;
+with `blocksize 0` there is no refresh during the copy. Bounded copies should be
+used for longer transfers.
+
+See `doc/manual/response-api.md` for examples and ownership details.
