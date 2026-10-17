@@ -70,22 +70,24 @@ oo::class create ::tclwire::BodyTransfer {
         ::tclwire::transfer::nonnegative blocksize $block
         chan configure $input -translation binary -encoding binary -blocking 0
         chan event $input readable {}
-        set source $input
-        set sink $output
-        set length $size
-        set blocksize $block
-        set callback $command
-        set copied 0
-        set state ready
-        set failure {}
-        set scheduled {}
+        set source      $input
+        set sink        $output
+        set length      $size
+        set blocksize   $block
+        set callback    $command
+        set copied      0
+        set state       ready
+        set failure     {}
+        set scheduled   {}
     }
 
     destructor { my cancel }
 
     method status {} {
-        return [dict create state $state length $length copied_bytes $copied \
-                    error $failure]
+        return [dict create state           $state  \
+                            length          $length \
+                            copied_bytes    $copied \
+                            error           $failure]
     }
 
     method start {} {
@@ -134,8 +136,8 @@ oo::class create ::tclwire::BodyTransfer {
         set count $remaining
         if {$blocksize > 0} { set count [expr {min($count, $blocksize)}] }
         if {[catch {
-            fcopy $source $sink -size $count \
-                -command [namespace code [list my copied $count]]
+            fcopy $source $sink -size    $count \
+                                -command [namespace code [list my copied $count]]
         } message]} {
             my fail $message
         }

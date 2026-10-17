@@ -57,9 +57,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {$options(-connectionkey) eq {}} {
             error "HTTP connection agent requires connection key"
         }
-        set trusted_proxy_networks \
-            [::tclwire::http::forwarded compile_trusted_proxies \
-                $options(-trustedproxies)]
+        set trusted_proxy_networks [::tclwire::http::forwarded compile_trusted_proxies $options(-trustedproxies)]
 
         next $conn_channel $id $host $port $options(-connectionkey)
         set protocol_threshold $options(-requestmemorythreshold)
@@ -80,8 +78,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set log_service_id [expr {
             $options(-serviceid) eq {} ? $options(-protocol) : $options(-serviceid)
         }]
-        set loggers [dict create \
-            $log_service_id [::tclwire::logger::Client new $log_service_id]]
+        set loggers [dict create $log_service_id [::tclwire::logger::Client new $log_service_id]]
         set upload_area $options(-uploadarea)
         if {![string is boolean -strict $options(-dumpmultipartrequests)]} {
             error "-dumpmultipartrequests must be a boolean"
@@ -136,8 +133,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
     method start_download {transaction descriptor} {
         if {[info object isa object $body_transfer] ||
-                [$transaction get response_state] ne "preparing" ||
-                [$transaction get response_body] ne {}} {
+            [$transaction get response_state] ne "preparing" ||
+            [$transaction get response_body] ne {}} {
             error "download must be the entire response body"
         }
         set descriptor [::tclwire::transfer::validate $descriptor]
