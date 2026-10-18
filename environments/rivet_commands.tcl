@@ -24,7 +24,7 @@ namespace eval ::tclwire::envs::rivet {
     variable aborting 0
     variable abort_code {}
     variable abort_exiting 0
-    variable rivet_version 3.3.0tw
+    variable rivet_version 3.3.1tw
     variable inspect_options {
         ServerInitScript
         GlobalInitScript
