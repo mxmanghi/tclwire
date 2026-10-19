@@ -75,9 +75,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set default_application [dict get $options(-applicationconfig) default_application]
         set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
         set log_protocol $options(-protocol)
-        set log_service_id [expr {
-            $options(-serviceid) eq {} ? $options(-protocol) : $options(-serviceid)
-        }]
+        set log_service_id [expr { $options(-serviceid) eq {} ? $options(-protocol) : $options(-serviceid) }]
         set loggers [dict create $log_service_id [::tclwire::logger::Client new $log_service_id]]
         set upload_area $options(-uploadarea)
         if {![string is boolean -strict $options(-dumpmultipartrequests)]} {
@@ -98,12 +96,12 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 $options(-requestmemorythreshold) < 0} {
             error "-requestmemorythreshold must be a non-negative integer"
         }
-        set request_memory_threshold $options(-requestmemorythreshold)
-        set next_transaction_id 0
-        set request_bytes 0
-        set request_head 0
-        set request_prefix {}
-        set continue_response_sent 0
+        set request_memory_threshold    $options(-requestmemorythreshold)
+        set next_transaction_id         0
+        set request_bytes               0
+        set request_head                0
+        set request_prefix              {}
+        set continue_response_sent      0
         my start
     }
 
@@ -154,6 +152,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 if {![file isfile $filename]} { error "download source is not a regular file" }
                 set source [open $filename rb]
                 set opened_source 1
+
                 # Inspect the opened file, rather than trusting a size supplied
                 # by the application or a path stat performed before open.
                 seek $source 0 end
@@ -161,6 +160,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 if {$size != [dict get $descriptor filesize]} {
                     error "download filesize does not match the opened file"
                 }
+
                 set first 0
                 set length $size
                 if {[dict exists $descriptor range]} {
@@ -174,8 +174,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     if {[llength $existing] && $existing ne [list $content_range]} {
                         error "Content-Range disagrees with download range"
                     }
-                    my apply_header_event $transaction [dict create action set \
-                        name Content-Range value $content_range]
+                    my apply_header_event $transaction \
+                        [dict create action set name Content-Range value $content_range]
                     $transaction set response_status 206
                     $transaction set response_reason {Partial Content}
                 }
@@ -819,11 +819,12 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
         switch -exact -- [dict get $event type] {
             download {
-                if {[catch {my start_download $transaction [dict get $event flags]} message options]} {
+                if {[catch {
+                        my start_download $transaction [dict get $event flags]
+                    } message options]} {
                     my abort_application_response $transaction_id $transaction $message $options
                 }
             }
-
             response {
 
                 # Replace the complete response descriptor.  For example:

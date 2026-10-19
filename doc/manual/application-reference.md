@@ -133,7 +133,9 @@ copy a client filename into a destination path without validating it.
 
 These commands are available only while an application request is active. The
 runtime calls `begin` and `end`; handlers normally use `response`, `out`,
-`puts`, `flush`, and `complete`.
+`puts`, `flush`, and `complete`. See [Response API](response-api.md) for the
+response-descriptor schema, header representations, accepted values, and the
+commitment lifecycle.
 
 | Command | Description |
 | --- | --- |
@@ -173,10 +175,10 @@ framework.
 | `::tclwire::http::io header add name value` | Adds another response header (appropriate for repeated fields such as `Set-Cookie`). |
 | `::tclwire::http::io header remove name` | Removes response fields named `name`. |
 | `::tclwire::http::io header get name` | Returns all current values for `name`. |
-| `::tclwire::http::redirect response location ?options?` | Builds a redirect descriptor. Options: `-status` (301, 302, 303, 307, or 308), `-body`, and `-headers`. |
+| `::tclwire::http::redirect response location ?options?` | Builds a send-ready redirect dictionary. Its headers are formatted lines, not canonical descriptor pairs. Options: `-status` (301, 302, 303, 307, or 308), `-body`, and `-headers`. |
 | `::tclwire::http::redirect send location ?options?` | Sends that redirect metadata and optional body through `::tclwire::io`. |
 | `::tclwire::http::codes reason status` / `all` | Gets a conventional reason phrase or the complete status-to-reason dictionary. |
-| `::tclwire::http::errors load ?path?`, `messages`, `message status`, `response status ?context?` | Loads and uses the error catalog. `response` returns a response descriptor with HTML-escaped `{{name}}` substitutions from `context`. |
+| `::tclwire::http::errors load ?path?`, `messages`, `message status`, `response status ?context?` | Loads and uses the error catalog. `response` returns a send-ready dictionary with formatted header lines and HTML-escaped `{{name}}` substitutions from `context`. |
 
 ### HTTP syntax and multipart helpers
 
