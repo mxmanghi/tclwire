@@ -67,17 +67,18 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set protocol_session [::tclwire::HttpProtocolSession new -bodythreshold  $protocol_threshold \
                                                                  -spooldirectory $options(-uploadarea) \
                                                                  -maxbodybytes   $options(-maxrequestbytes) \
-                                                                 -secure         [expr {$options(-protocol) eq "https"}]]
+                                                            -secure [expr {$options(-protocol) eq "https"}]]
 
         # Pivotal object: it selects the HTTP application based on the Host: header
 
-        set application_dispatcher [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
-        set default_application [dict get $options(-applicationconfig) default_application]
-        set default_encoding [dict get [$application_dispatcher application $default_application] encoding]
-        set log_protocol $options(-protocol)
-        set log_service_id [expr { $options(-serviceid) eq {} ? $options(-protocol) : $options(-serviceid) }]
-        set loggers [dict create $log_service_id [::tclwire::logger::Client new $log_service_id]]
-        set upload_area $options(-uploadarea)
+        set application_dispatcher  [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
+        set default_application     [dict get $options(-applicationconfig) default_application]
+        set default_encoding        [dict get [$application_dispatcher application $default_application] \
+                                                                                                 encoding]
+        set log_protocol    $options(-protocol)
+        set log_service_id  [expr { $options(-serviceid) eq {} ? $options(-protocol) : $options(-serviceid) }]
+        set loggers         [dict create $log_service_id [::tclwire::logger::Client new $log_service_id]]
+        set upload_area     $options(-uploadarea)
         if {![string is boolean -strict $options(-dumpmultipartrequests)]} {
             error "-dumpmultipartrequests must be a boolean"
         }
@@ -143,26 +144,26 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {$status < 200 || $status in {204 205 304}} {
             error "this HTTP status does not permit a download body"
         }
-        set source {}
+        set source_fp {}
         set opened_source 0
         set adopted 0
         try {
             if {[dict exists $descriptor filename]} {
                 set filename [dict get $descriptor filename]
                 if {![file isfile $filename]} { error "download source is not a regular file" }
-                set source [open $filename rb]
+                set source_fp [open $filename rb]
                 set opened_source 1
 
                 # Inspect the opened file, rather than trusting a size supplied
                 # by the application or a path stat performed before open.
-                seek $source 0 end
-                set size [tell $source]
+                seek $source_fp 0 end
+                set size [tell $source_fp]
                 if {$size != [dict get $descriptor filesize]} {
                     error "download filesize does not match the opened file"
                 }
 
-                set first 0
-                set length $size
+                set first   0
+                set length  $size
                 if {[dict exists $descriptor range]} {
                     if {$status ni {200 206}} {
                         error "file ranges require HTTP status 200 or 206"
@@ -179,9 +180,9 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     $transaction set response_status 206
                     $transaction set response_reason {Partial Content}
                 }
-                seek $source $first start
+                seek $source_fp $first start
             } else {
-                set source [dict get $descriptor channel]
+                set source_fp [dict get $descriptor channel]
                 set length [dict get $descriptor length]
             }
             set lengths [my response_header_values $transaction Content-Length]
@@ -193,47 +194,89 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     error "Content-Length disagrees with download length"
                 }
             }
-            my apply_header_event $transaction [dict create action set \
-                name Content-Length value [expr {$length + 0}]]
+            my apply_header_event $transaction \
+                    [dict create action set name Content-Length value [expr {$length + 0}]]
             $transaction set response_body_mode binary
-            set head [$protocol_session build_response \
-                [$transaction get response_status] [$transaction get response_reason] \
-                {} binary [$transaction get response_headers] binary 1]
+
+            # assuming that response_status, response_reason and response_headers
+            # properties are all defined in the transaction object
+
+            foreach v {response_status response_reason response_headers} {
+                set $v [$transaction get $v]
+            }
+            set head [$protocol_session build_response  $response_status    \
+                                                        $response_reason {} \
+                                                        binary $response_headers binary 1]
+
             set count [expr {[my head_only $transaction] ? 0 : $length}]
-            set body_transfer [::tclwire::BodyTransfer new $source $channel $count \
-                [dict get $descriptor blocksize] \
-                [namespace code [list my download_progress [$transaction id]]]]
-            set download_source $source
+            set body_transfer [::tclwire::BodyTransfer new $source_fp $channel $count \
+                                    [dict get $descriptor blocksize] \
+                                    [namespace code [list my download_progress [$transaction id]]]]
+            set download_source $source_fp
             set adopted 1
             set download_application_complete 0
+
             # Commitment precedes writing: a transport failure must never
             # trigger an attempted replacement HTTP response.
             $transaction set response_state committed
             if {![my write_output $head 1]} { return }
             $body_transfer start
         } finally {
-            if {!$adopted && $opened_source} { catch {close $source} }
+            if {!$adopted && $opened_source} { catch {close $source_fp} }
         }
     }
 
+    # start_download registers this callback with BodyTransfer, binding the
+    # transaction id.  BodyTransfer invokes it in the connection thread and
+    # appends its status dictionary as progress:
+    #
+    #   state         copying, completed or failed for these notifications
+    #   length        total body bytes requested (zero for HEAD)
+    #   copied_bytes  cumulative bytes reported by asynchronous fcopy callbacks
+    #   error         failure description, or empty when no failure occurred
+    #
+    # These are transfer observations, not application-output events.
+    # BodyTransfer also has ready, draining and cancelled states, but does not
+    # notify this callback in those states.  completed means the requested
+    # bytes were copied and Tcl's output buffer drained; it does not establish
+    # that the peer application has received or consumed them.
+
     method download_progress {transaction_id progress} {
+        # Resolve the id against the current transaction.  Ignore a late
+        # notification if that transaction has already finished or disappeared.
         set transaction [my transaction_for $transaction_id]
         if {![info object isa object $transaction]} { return }
+
+        # response_bytes stores the previous cumulative body-byte count.
+        # HTTP headers are excluded.  Only the difference belongs in the
+        # connection-wide bytes_out counter, including on a partial failure.
         set bytes [dict get $progress copied_bytes]
         set delta [expr {$bytes - [$transaction get response_bytes]}]
         $transaction set response_bytes $bytes
         if {$delta > 0} {
+            # Accounting is best effort: a missing connection record must not
+            # prevent transfer handling.  Renew the idle timeout only when
+            # additional body bytes have actually been reported.
             catch {
-                set record [::tclwire::accounting get_connection_record $connection_key]
-                ::tclwire::accounting update_connection $connection_key [dict create \
-                    bytes_out [expr {[dict get $record bytes_out] + $delta}]]
+                set record \
+                    [::tclwire::accounting get_connection_record $connection_key]
+                    ::tclwire::accounting update_connection $connection_key \
+                    [dict create bytes_out [expr {[dict get $record bytes_out] + $delta}]]
             }
             my refresh_timeout
         }
         if {[dict get $progress state] eq "failed"} {
-            my abort_application_response $transaction_id $transaction \
-                [dict get $progress error]
+            # The download response is already committed.  Abort logs the
+            # transfer's error and closes the connection without a replacement
+            # HTTP error response.
+            my abort_application_response $transaction_id \
+                                          $transaction \
+                                          [dict get $progress error]
         } elseif {[dict get $progress state] eq "completed"} {
+            # Transfer completion and the application's complete event may
+            # arrive in either order.  finish_download checks both the current
+            # BodyTransfer status and download_application_complete before
+            # finalizing the transaction; the application event calls it too.
             my finish_download $transaction_id
         }
     }
