@@ -3,14 +3,14 @@
 # HTTP specialization of the protocol-independent ConnectionAgent.
 
 package require TclOO
-package require tclwire::body_transfer 0.1
-package require tclwire::connection_agent 0.1
-package require tclwire::http::protocol 0.1
-package require tclwire::http::errors 0.1
-package require tclwire::http::multipart 0.1
-package require tclwire::http::forwarded 0.1
+package require tclwire::body_transfer      0.1
+package require tclwire::connection_agent   0.1
+package require tclwire::http::protocol     0.1
+package require tclwire::http::errors       0.1
+package require tclwire::http::multipart    0.1
+package require tclwire::http::forwarded    0.1
 package require tclwire::application_dispatcher 0.1
-package require tclwire::logger::client 0.1
+package require tclwire::logger::client     0.1
 
 namespace eval ::tclwire {}
 
@@ -64,17 +64,18 @@ oo::class create ::tclwire::HttpConnectionAgent {
         if {$options(-uploadarea) eq {}} {
             set protocol_threshold $options(-maxrequestbytes)
         }
-        set protocol_session [::tclwire::HttpProtocolSession new -bodythreshold  $protocol_threshold \
-                                                                 -spooldirectory $options(-uploadarea) \
-                                                                 -maxbodybytes   $options(-maxrequestbytes) \
+        set protocol_session [::tclwire::HttpProtocolSession new \
+                                                            -bodythreshold  $protocol_threshold         \
+                                                            -spooldirectory $options(-uploadarea)       \
+                                                            -maxbodybytes   $options(-maxrequestbytes)  \
                                                             -secure [expr {$options(-protocol) eq "https"}]]
 
         # Pivotal object: it selects the HTTP application based on the Host: header
 
-        set application_dispatcher  [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
-        set default_application     [dict get $options(-applicationconfig) default_application]
-        set default_encoding        [dict get [$application_dispatcher application $default_application] \
-                                                                                                 encoding]
+        set application_dispatcher [::tclwire::ApplicationDispatcher new $options(-applicationconfig)]
+        set default_application    [dict get $options(-applicationconfig) default_application]
+        set default_encoding       [dict get [$application_dispatcher application $default_application] \
+                                                                                              encoding]
         set log_protocol    $options(-protocol)
         set log_service_id  [expr { $options(-serviceid) eq {} ? $options(-protocol) : $options(-serviceid) }]
         set loggers         [dict create $log_service_id [::tclwire::logger::Client new $log_service_id]]
@@ -87,22 +88,20 @@ oo::class create ::tclwire::HttpConnectionAgent {
             -maxrequestbytes max_request_bytes
             -maxheaderbytes  max_header_bytes
         } {
-            if {![string is integer -strict $options($option)] ||
-                    $options($option) < 1} {
+            if {![string is integer -strict $options($option)] || $options($option) < 1} {
                 error "$option must be a positive integer"
             }
             set $variable_name $options($option)
         }
-        if {![string is integer -strict $options(-requestmemorythreshold)] ||
-                $options(-requestmemorythreshold) < 0} {
+        if {![string is integer -strict $options(-requestmemorythreshold)] || $options(-requestmemorythreshold) < 0} {
             error "-requestmemorythreshold must be a non-negative integer"
         }
-        set request_memory_threshold    $options(-requestmemorythreshold)
-        set next_transaction_id         0
-        set request_bytes               0
-        set request_head                0
-        set request_prefix              {}
-        set continue_response_sent      0
+        set request_memory_threshold $options(-requestmemorythreshold)
+        set next_transaction_id      0
+        set request_bytes            0
+        set request_head             0
+        set request_prefix           {}
+        set continue_response_sent   0
         my start
     }
 
@@ -178,8 +177,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
                     error "download filesize does not match the opened file"
                 }
 
-                set first   0
-                set length  $size
+                set first  0
+                set length $size
                 if {[dict exists $download_spec range]} {
                     if {$status ni {200 206}} {
                         error "file ranges require HTTP status 200 or 206"
@@ -691,9 +690,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
             return
         }
         set body_bytes [$protocol_session encode_response_body \
-            $body \
-            [$transaction get response_encoding] \
-            $body_mode]
+                                          $body [$transaction get response_encoding] \
+                                          $body_mode]
         set frame [$protocol_session chunk_frame $body_bytes]
         if {$frame ne {} && ![my write_output $frame]} {
             error "failed to write HTTP response chunk"
@@ -723,18 +721,15 @@ oo::class create ::tclwire::HttpConnectionAgent {
             dict set context host [dict get $descriptor headers host]
         }
 
-        set fields [list \
-            "reason=[::tclwire::logger::log_value $reason]"]
+        set fields [list "reason=[::tclwire::logger::log_value $reason]"]
         foreach field {application_id transaction_id method path response_state response_body_mode} {
             if {$descriptor ne {} && [dict exists $descriptor $field]} {
-                lappend fields \
-                    "$field=[::tclwire::logger::log_value [dict get $descriptor $field]]"
+                lappend fields "$field=[::tclwire::logger::log_value [dict get $descriptor $field]]"
             }
         }
         foreach {option label} {-errorcode errorcode -errorinfo errorinfo} {
             if {[dict exists $options $option]} {
-                lappend fields \
-                    "$label=[::tclwire::logger::log_value [dict get $options $option]]"
+                lappend fields "$label=[::tclwire::logger::log_value [dict get $options $option]]"
             }
         }
 
@@ -804,32 +799,27 @@ oo::class create ::tclwire::HttpConnectionAgent {
     # values therefore describe different stages of output, not the same data.
 
     method application_output {transaction_id event} {
-        # A channel can arrive after its transaction was cancelled. It must
-        # either be adopted by the transfer or released even for stale events.
-        set incoming {}
-        if {[dict get $event type] eq "download" && [dict exists $event flags channel]} {
-            set incoming [dict get $event flags channel]
-        }
         try {
-            my consume_application_output $transaction_id $event
+            # Ignore late events for finished transactions or older requests
+            # on this socket, while still releasing their incoming channels.
+            set transaction [my transaction_for $transaction_id]
+            if {![info object isa object $transaction]} {
+                return
+            }
+            my consume_application_output $transaction_id $transaction $event
         } finally {
-            if {$incoming ne {} && $incoming ne $download_source} {
-                catch {close $incoming}
+            # A channel can arrive after its transaction was cancelled. It must
+            # either be adopted by the transfer or released even for stale events.
+            if {[dict exists $event flags channel]} {
+                set incoming [dict get $event flags channel]
+                if {$incoming ne {} && $incoming ne $download_source} {
+                    catch {close $incoming}
+                }
             }
         }
     }
 
-    method consume_application_output {transaction_id event} {
-
-        # A late asynchronous event can arrive after its transaction has been
-        # finished (for example, after an earlier event aborted the response).
-        # Ignoring it is both safe and necessary: there is no response state to
-        # update, and it must not be applied to a newer request on the socket.
-
-        set transaction [my transaction_for $transaction_id]
-        if {![info object isa object $transaction]} {
-            return
-        }
+    method consume_application_output {transaction_id transaction event} {
 
         # Cross-thread sends are asynchronous.  Require the exact sequence
         # assigned by ::tclwire::io::send_event so that lost, duplicated, or
@@ -842,10 +832,13 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
         set expected [expr {[$transaction get output_sequence] + 1}]
         if {[dict get $event output_sequence] != $expected} {
-            my abort_application_response $transaction_id $transaction \
-                "application output event sequence mismatch: expected $expected, received [dict get $event output_sequence]" \
-                {}
+
+            set error_message [list "application output event sequence mismatch: expected $expected" \
+                                    "received [dict get $event output_sequence]"]
+
+            my abort_application_response $transaction_id $transaction [join $error_message ", "]
             return
+
         }
         $transaction set output_sequence $expected
 
@@ -864,8 +857,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         #     connection close because an already-sent response cannot be
         #     replaced).
         #
-        # Every event type uses the same outer dictionary shown above.  `data'
-        # carries body bytes/text for output or an error message for error;
+        # Every event type uses the same outer dictionary shown above.
+        # `data' carries body bytes/text for output or an error message for error;
         # `flags' carries the structured, event-specific control data.
 
         if {[info object isa object $body_transfer] &&

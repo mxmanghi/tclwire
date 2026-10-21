@@ -192,12 +192,12 @@ oo::class create ::tclwire::HttpProtocolSession {
         if {$request_info_status eq "complete"} {
             set method $request_method
         }
-        return [dict create     status      $status \
-                                phase       $phase \
-                                header_size $header_size \
-                                method      $method \
-                                declared_request_size $declared_request_size \
-                                descriptor $descriptor]
+        return [dict create status      $status         \
+                            phase       $phase          \
+                            header_size $header_size    \
+                            method      $method         \
+                            declared_request_size $declared_request_size \
+                            descriptor $descriptor]
     }
 
     method abort {} {
@@ -244,9 +244,12 @@ oo::class create ::tclwire::HttpProtocolSession {
         if {$spool_directory eq {}} {
             error "request body exceeded the in-memory threshold and no spool directory is configured"
         }
-        file mkdir $spool_directory
-        if {![file isdirectory $spool_directory] || ![file writable $spool_directory]} {
-            error "request body spool directory is not writable: $spool_directory"
+        if {[file exists $spool_directory]} {
+            if {![file isdirectory $spool_directory] || ![file writable $spool_directory]} {
+                error "request body spool directory is not writable: $spool_directory"
+            }
+        } else {
+            file mkdir $spool_directory
         }
         set body_channel [file tempfile body_path [file join $spool_directory tclwire-request]]
         chan configure $body_channel -translation binary

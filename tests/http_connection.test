@@ -1903,7 +1903,7 @@ test http-download-completion {application and transfer must both complete, in e
     }
 } -result {{0 1} {1 0} {0 1} {1 0}}
 
-test http-download-stale {late download events release transferred channels} -body {
+test http-download-stale {late events release transferred channels regardless of type} -body {
     oo::class create ::tclwire::http_connection_test::ExpiredDownload {
         superclass ::tclwire::HttpConnectionAgent
         constructor {} {
@@ -1913,15 +1913,19 @@ test http-download-stale {late download events release transferred channels} -bo
             set transaction_state {}
         }
         destructor { return }
+        method consume_application_output {args} {
+            error "stale event reached consume_application_output"
+        }
     }
     set agent [::tclwire::http_connection_test::ExpiredDownload new]
     set results {}
     try {
-        foreach target [list $agent ::tclwire::http_connection_test::missing_agent] {
+        foreach {target type} [list $agent download $agent output \
+                ::tclwire::http_connection_test::missing_agent download] {
             lassign [chan pipe] source writer
             try {
                 ::tclwire::route_application_output $target 999 [dict create \
-                    type download flags [dict create channel $source length 12]]
+                    type $type flags [dict create channel $source length 12]]
                 lappend results [expr {$source ni [chan names]}]
             } finally {
                 catch {close $source}
@@ -1933,7 +1937,7 @@ test http-download-stale {late download events release transferred channels} -bo
         $agent destroy
         ::tclwire::http_connection_test::ExpiredDownload destroy
     }
-} -result {1 1}
+} -result {1 1 1}
 
 test http-download-1.1 {file, range, HEAD and cross-thread channel downloads} -setup {
     set download_file [makeFile {} download-body.bin]

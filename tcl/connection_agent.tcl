@@ -13,9 +13,16 @@ package require tclwire::transaction_descriptor 0.1
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ConnectionAgent {
-    variable channel connection_id connection_key peer_host peer_port input_buffer timeout_id
+    variable channel
+    variable connection_id
+    variable connection_key
+    variable peer_host
+    variable peer_port
+    variable input_buffer
+    variable timeout_id
     variable initial_read_id
-    variable transaction_state closed
+    variable transaction_state
+    variable closed
     variable close_logger
 
     constructor {conn_channel id host port key} {
