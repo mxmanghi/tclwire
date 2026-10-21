@@ -130,13 +130,29 @@ oo::class create ::tclwire::HttpConnectionAgent {
         return [$body_transfer status]
     }
 
-    method start_download {transaction descriptor} {
+    # start_download --
+    #
+    # Start an asynchronous, known-length download as the entire HTTP response
+    # body. Arguments:
+    #
+    #   transaction   Current TransactionDescriptor object whose response
+    #                 metadata and transfer state are updated.
+    #   download_spec Dictionary describing either of these download sources:
+    #                   file:    filename <absolute-path> filesize <bytes>
+    #                            ?range {first last}?
+    #                   channel: channel <channel-name> length <bytes>
+    #                 Both forms accept the optional field blocksize <bytes>.
+    #
+    # Byte counts and range offsets are non-negative integers. The range is
+    # inclusive, and blocksize defaults to 65536 bytes.
+
+    method start_download {transaction download_spec} {
         if {[info object isa object $body_transfer] ||
             [$transaction get response_state] ne "preparing" ||
             [$transaction get response_body] ne {}} {
             error "download must be the entire response body"
         }
-        set descriptor [::tclwire::transfer::validate $descriptor]
+        set download_spec [::tclwire::transfer::validate $download_spec]
         if {[llength [my response_header_values $transaction Transfer-Encoding]]} {
             error "known-length downloads cannot use Transfer-Encoding"
         }
@@ -148,8 +164,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
         set opened_source 0
         set adopted 0
         try {
-            if {[dict exists $descriptor filename]} {
-                set filename [dict get $descriptor filename]
+            if {[dict exists $download_spec filename]} {
+                set filename [dict get $download_spec filename]
                 if {![file isfile $filename]} { error "download source is not a regular file" }
                 set source_fp [open $filename rb]
                 set opened_source 1
@@ -158,17 +174,17 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 # by the application or a path stat performed before open.
                 seek $source_fp 0 end
                 set size [tell $source_fp]
-                if {$size != [dict get $descriptor filesize]} {
+                if {$size != [dict get $download_spec filesize]} {
                     error "download filesize does not match the opened file"
                 }
 
                 set first   0
                 set length  $size
-                if {[dict exists $descriptor range]} {
+                if {[dict exists $download_spec range]} {
                     if {$status ni {200 206}} {
                         error "file ranges require HTTP status 200 or 206"
                     }
-                    lassign [dict get $descriptor range] first last
+                    lassign [dict get $download_spec range] first last
                     set length [expr {$last - $first + 1}]
                     set content_range "bytes $first-$last/$size"
                     set existing [my response_header_values $transaction Content-Range]
@@ -182,15 +198,15 @@ oo::class create ::tclwire::HttpConnectionAgent {
                 }
                 seek $source_fp $first start
             } else {
-                set source_fp [dict get $descriptor channel]
-                set length [dict get $descriptor length]
+                set source_fp [dict get $download_spec channel]
+                set length [dict get $download_spec length]
             }
             set lengths [my response_header_values $transaction Content-Length]
             if {[llength $lengths] > 1} { error "duplicate Content-Length on download" }
             if {[llength $lengths]} {
                 set declared [lindex $lengths 0]
                 if {![regexp {^[0-9]+$} $declared] ||
-                        [string trimleft $declared 0] ne [string trimleft [expr {$length + 0}] 0]} {
+                     [string trimleft $declared 0] ne [string trimleft [expr {$length + 0}] 0]} {
                     error "Content-Length disagrees with download length"
                 }
             }
@@ -210,7 +226,7 @@ oo::class create ::tclwire::HttpConnectionAgent {
 
             set count [expr {[my head_only $transaction] ? 0 : $length}]
             set body_transfer [::tclwire::BodyTransfer new $source_fp $channel $count \
-                                    [dict get $descriptor blocksize] \
+                                    [dict get $download_spec blocksize] \
                                     [namespace code [list my download_progress [$transaction id]]]]
             set download_source $source_fp
             set adopted 1
@@ -258,9 +274,8 @@ oo::class create ::tclwire::HttpConnectionAgent {
             # prevent transfer handling.  Renew the idle timeout only when
             # additional body bytes have actually been reported.
             catch {
-                set record \
-                    [::tclwire::accounting get_connection_record $connection_key]
-                    ::tclwire::accounting update_connection $connection_key \
+                set record [::tclwire::accounting get_connection_record $connection_key]
+                ::tclwire::accounting update_connection $connection_key \
                     [dict create bytes_out [expr {[dict get $record bytes_out] + $delta}]]
             }
             my refresh_timeout

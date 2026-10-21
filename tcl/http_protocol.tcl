@@ -24,11 +24,11 @@
 #   - https://datatracker.ietf.org/doc/html/rfc9110#section-10.1.1
 
 package require TclOO
-package require tclwire::constants 0.1
-package require tclwire::http::codes 0.1
-package require tclwire::http::query 0.1
-package require tclwire::http::message 0.1
-package require tclwire::http::multipart 0.1
+package require tclwire::constants          0.1
+package require tclwire::http::codes        0.1
+package require tclwire::http::query        0.1
+package require tclwire::http::message      0.1
+package require tclwire::http::multipart    0.1
 
 oo::class create ::tclwire::HttpProtocolSession {
     variable input_state
@@ -49,10 +49,10 @@ oo::class create ::tclwire::HttpProtocolSession {
 
     constructor {args} {
         array set options {
-            -bodythreshold 1048576
-            -spooldirectory /tmp
-            -maxbodybytes 16777216
-            -secure 0
+            -bodythreshold      1048576
+            -spooldirectory     /tmp
+            -maxbodybytes       16777216
+            -secure             0
         }
         foreach {name value} $args {
             if {![info exists options($name)]} {
