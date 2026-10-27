@@ -2,6 +2,7 @@
 #
 # Transaction-scoped output bridge used by Content Generator Agents.
 
+package require tclwire::http::errors 0.1
 package require Thread
 package require tclwire::constants 0.1
 package require tclwire::body_transfer 0.1
@@ -10,6 +11,27 @@ package require tclwire::logger::client 0.1
 namespace eval ::tclwire {}
 
 namespace eval ::tclwire::io {
+    # Each registration contains {MIME-type append-application-charset}.
+    # Seed the registry at package load; it persists across transactions.
+    variable mime_types {
+        .css  {text/css 1}
+        .gif  {image/gif 0}
+        .htm  {text/html 1}
+        .html {text/html 1}
+        .ico  {image/x-icon 0}
+        .jpg  {image/jpeg 0}
+        .jpeg {image/jpeg 0}
+        .js   {text/javascript 1}
+        .json {application/json 1}
+        .md   {text/markdown 1}
+        .pdf  {application/pdf 0}
+        .png  {image/png 0}
+        .svg  {image/svg+xml 1}
+        .tcl  {text/plain 1}
+        .txt  {text/plain 1}
+        .webp {image/webp 0}
+        .xml  {application/xml 1}
+    }
     variable active 0
     variable response_state inactive
     variable connection_thread_id {}
@@ -19,7 +41,8 @@ namespace eval ::tclwire::io {
     variable output_buffer {}
     variable output_body_mode {}
     variable response_metadata {}
-    variable response_planner {}
+    variable application_request {}
+    variable application_object {}
     variable response_prepared 0
     variable delegated_source 0
 
@@ -34,7 +57,8 @@ namespace eval ::tclwire::io {
         variable output_buffer
         variable output_body_mode
         variable response_metadata
-        variable response_planner
+        variable application_request
+        variable application_object
         variable response_prepared
 
         if {$active} {
@@ -51,7 +75,8 @@ namespace eval ::tclwire::io {
                                               headers    {}      \
                                               body_mode  text    \
                                               encoding   {}]
-        set response_planner     {}
+        set application_request {}
+        set application_object     {}
         set response_prepared    0
         set delegated_source     0
         set response_state       open
@@ -69,7 +94,8 @@ namespace eval ::tclwire::io {
         variable output_buffer
         variable output_body_mode
         variable response_metadata
-        variable response_planner
+        variable application_request
+        variable application_object
         variable response_prepared
 
         set active 0
@@ -81,7 +107,8 @@ namespace eval ::tclwire::io {
         set output_buffer $::tclwire::constants::empty_bytearray
         set output_body_mode {}
         set response_metadata {}
-        set response_planner {}
+        set application_request {}
+        set application_object {}
         set response_prepared 0
         return
     }
@@ -138,21 +165,29 @@ namespace eval ::tclwire::io {
         return $event
     }
 
-    # Install the request-local response planner.  The CGA supplies a command
-    # prefix which calls the application's prepare_response method.  Keeping
-    # this callback in the output bridge is intentional: the bridge, rather
-    # than handle_request's return, knows whether completion is buffered or a
-    # flush has made a streaming response irreversible.
-    proc configure_response_planner {command_prefix} {
+    # Bind the Application contract and request for this transaction. The
+    # bridge calls the contract methods at the output commitment boundary.
+    proc configure_application {application request} {
         variable active
-        variable response_planner
+        variable application_object
+        variable application_request
         if {!$active} {
             error "no application output transaction is active"
         }
-        if {[catch {llength $command_prefix}]} {
-            error "response planner must be a command prefix"
+        if {[response_is_prepared]} {
+            error "application context is immutable after response preparation"
         }
-        set response_planner $command_prefix
+        set application_object $application
+        set application_request $request
+        return
+    }
+
+    proc require_application {} {
+        variable application_object
+        variable application_request
+        if {$application_object eq {} || $application_request eq {}} {
+            error "no application context is configured"
+        }
         return
     }
 
@@ -253,36 +288,30 @@ namespace eval ::tclwire::io {
     }
 
     proc prepare_response {} {
-        variable response_planner
+        variable application_request
+        variable application_object
         variable response_prepared
         variable response_metadata
 
         if {$response_prepared} {
             return
         }
-        if {$response_planner ne {}} {
+        require_application
+        set replacement [$application_object prepare_response $application_request $response_metadata]
 
-            # this is basically calling '$application prepare_response $request $response'.
-            # By default the prepare_response returns the argument. That's
-            # the place where headers can be changed, for example for client
-            # content cache control
-
-            set replacement [{*}$response_planner $response_metadata]
-
-            if {[catch {dict size $replacement}] ||
-                ![dict exists $replacement status]} {
-                error "prepare_response must return a response descriptor"
-            }
-            set replacement [dict merge $response_metadata $replacement]
-            if {![same_dictionary $replacement $response_metadata]} {
-                set headers [response_headers [dict get $replacement headers]]
-                set response_metadata $replacement
-                send_event response {} [dict create status [dict get $replacement status] \
-                                                    reason [dict get $replacement reason] \
-                                                    headers $headers \
-                                                    body_mode [dict get $replacement body_mode] \
-                                                    encoding [dict get $replacement encoding]]
-            }
+        if {[catch {dict size $replacement}] ||
+            ![dict exists $replacement status]} {
+            error "prepare_response must return a response descriptor"
+        }
+        set replacement [dict merge $response_metadata $replacement]
+        if {![same_dictionary $replacement $response_metadata]} {
+            set headers [response_headers [dict get $replacement headers]]
+            set response_metadata $replacement
+            send_event response {} [dict create status [dict get $replacement status] \
+                                                reason [dict get $replacement reason] \
+                                                headers $headers \
+                                                body_mode [dict get $replacement body_mode] \
+                                                encoding [dict get $replacement encoding]]
         }
         set response_prepared 1
         return
@@ -425,6 +454,133 @@ namespace eval ::tclwire::io {
         return
     }
 
+    # Register a single extension, including its leading dot. Later
+    # registrations replace earlier ones; lookup is case-insensitive.
+    proc register_mime_type {extension mime_type} {
+        variable mime_types
+        if {![regexp {^\.[^./\\[:space:][:cntrl:]]+$} $extension]} {
+            if {[catch {
+                ::tclwire::logger::log_error register_mime_type \
+                    "invalid extension=[::tclwire::logger::log_value $extension]: file extension must be a single suffix beginning with a dot" error
+            }]} {
+                error "file extension must be a single suffix beginning with a dot"
+            }
+            return
+        }
+        if {![regexp {^[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+$} $mime_type]} {
+            if {[catch {
+                ::tclwire::logger::log_error register_mime_type \
+                    "invalid mime_type=[::tclwire::logger::log_value $mime_type]: MIME type must be a type/subtype without parameters" error
+            }]} {
+                error "MIME type must be a type/subtype without parameters"
+            }
+            return
+        }
+        dict set mime_types [string tolower $extension] [list $mime_type 0]
+        return
+    }
+
+    # Default MIME detection used by the Application contract.
+    proc file_content_type {path {encoding utf-8}} {
+        variable mime_types
+        set extension [string tolower [file extension $path]]
+        if {[dict exists $mime_types $extension]} {
+            lassign [dict get $mime_types $extension] mime_type append_charset
+            if {$append_charset} {
+                append mime_type "; charset=$encoding"
+            }
+            return $mime_type
+        }
+
+        # Load the large recognizer only when extension lookup misses. Version
+        # 2 returns {descriptions mime-components extensions}; version 1 did
+        # not provide MIME components.
+        package require fileutil::magic::filetype 2
+        if {![catch {::fileutil::magic::filetype $path} detected]} {
+            set components [lindex $detected 1]
+            if {[llength $components] == 2} {
+                set mime_type [join $components /]
+                if {[regexp {^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$} $mime_type]} {
+                    return $mime_type
+                }
+            }
+        }
+        # Unrecognized content and failed probes retain the binary default.
+        return "application/octet-stream"
+    }
+
+    proc download_file {filename {mime_type {}}} {
+        variable delegated_source
+        variable output_buffer
+        variable application_object
+        variable transaction_id
+        if {![accepting_output]} {
+            error "no open application output transaction"
+        }
+        if {$delegated_source || $output_buffer ne {} || [response_is_prepared]} {
+            error "download must precede body output and response preparation"
+        }
+
+        set status 200
+        set detail {}
+        if {[catch {
+            set filename [file normalize $filename]
+            file stat $filename info
+            if {$info(type) ne "file"} {
+                set status 404
+                set detail "source is not a regular file"
+            } elseif {![file readable $filename]} {
+                set status 403
+                set detail "source is not readable"
+            } else {
+                # Probe access before committing headers; the connection agent
+                # will reopen and verify the source when it starts the transfer.
+                set source [open $filename rb]
+                close $source
+                set filesize $info(size)
+            }
+        } failure_message options]} {
+            set detail $failure_message
+            set status 500
+            if {[dict exists $options -errorcode]} {
+                switch -- [lindex [dict get $options -errorcode] 1] {
+                    ENOENT - ENOTDIR { set status 404 }
+                    EACCES - EPERM { set status 403 }
+                }
+            }
+        }
+        set fields [list "transaction_id=[::tclwire::logger::log_value $transaction_id]" \
+            "filename=[::tclwire::logger::log_value $filename]" "status=$status"]
+        if {$status != 200} {
+            lappend fields "reason=[::tclwire::logger::log_value $detail]"
+            catch {::tclwire::logger::log_error download_file [join $fields " "] error}
+            # Do not disclose the server's filesystem path in the error body.
+            set failure [::tclwire::http::errors response $status \
+                [dict create path [file tail $filename]]]
+            dict with failure {
+                response $status $reason $headers $body_mode $encoding
+                out $body $body_mode
+            }
+            return
+        }
+        if {$mime_type eq {}} {
+            require_application
+            set mime_type [$application_object content_type $filename]
+        }
+        set basename [file tail $filename]
+        regsub -all {[\x00-\x1f\x7f]} $basename _ basename
+        set basename [string map [list "\\" "\\\\" "\"" "\\\""] $basename]
+        set headers [response_headers [list \
+            [list Content-Type $mime_type] \
+            [list Content-Disposition "attachment; filename=\"$basename\""]]]
+        response 200 OK $headers binary
+        download [dict create filename $filename filesize $filesize]
+        lappend fields "filesize=$filesize" \
+            "content_type=[::tclwire::logger::log_value $mime_type]" "event=delegated"
+        catch {::tclwire::logger::log_error download_file [join $fields " "] debug}
+        return
+    }
+
     # A download supplies the entire response body. For channel sources a
     # successful thread transfer consumes ownership, even if the response is
     # subsequently rejected or its connection has already disappeared.
@@ -540,9 +696,9 @@ namespace eval ::tclwire::io {
     }
 
     namespace export begin end context response out buffer \
-                     discard_buffer puts flush complete download \
-                     close_connection fail configure_response_planner \
-                     response_descriptor response_is_prepared
+                     discard_buffer puts flush complete download download_file \
+                     close_connection fail configure_application \
+                     response_descriptor response_is_prepared register_mime_type
     namespace ensemble create
 }
 

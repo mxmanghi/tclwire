@@ -952,9 +952,9 @@ namespace eval ::tclwire::cga {
             # Request and response handling intentionally has three distinct
             # application stages.  Rewriting is allowed to alter request
             # routing, request preparation either passes control to normal
-            # generation or supplies an immediate descriptor, and response
-            # preparation is installed in the output bridge rather than called
-            # on this stack. The bridge is the sole component that knows the
+            # generation or supplies an immediate descriptor. The bridge binds
+            # the application and request, then calls prepare_response when
+            # output requires it. The bridge is the sole component that knows the
             # commitment boundary: for a buffered response it invokes the hook
             # at complete; for a stream it invokes it before the first flush
             # that can commit headers.  This prevents an apparently convenient
@@ -962,9 +962,7 @@ namespace eval ::tclwire::cga {
             # whose headers or chunks may already be on the wire.
 
             $application rewrite_request $request
-            set response_planner [list $application prepare_response $request]
-
-            ::tclwire::io configure_response_planner $response_planner
+            ::tclwire::io configure_application $application $request
             set action [$application prepare_request $request]
             if {[catch {dict size $action}] || ![dict exists $action action]} {
                 error "prepare_request must return a pass or reply action"

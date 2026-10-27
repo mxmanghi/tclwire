@@ -21,9 +21,18 @@ package require tclwire::connection_agent 0.1
 package require tclwire::http::errors 0.1
 package require tclwire::logger 0.1
 
+package require tclwire::application 0.1
+package require tclwire::http::request 0.1
+
 namespace eval ::tclwire::application_test {
     variable events {}
 }
+
+set ::tclwire::application_test::io_application [::tclwire::Application new \
+    [dict create docroot $project_root encoding utf-8]]
+set ::tclwire::application_test::io_request [::tclwire::HttpRequest new \
+    [dict create method GET path / transaction_id 1]]
+
 
 test transaction-descriptor-1.1 {
     request fields are immutable while transaction state remains mutable
@@ -4728,6 +4737,8 @@ test application-1.2 {CApplication reads content using its configured encoding} 
     set ::tclwire::application_test::events {}
     try {
         ::tclwire::io begin [::thread::id] $receiver 8
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         $application handle_request $request
         ::tclwire::io complete
         ::tclwire::io end
@@ -4948,6 +4959,8 @@ test application-io-1.1 {output commands send ordered transaction events} -body 
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 7
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::io out alpha
         ::tclwire::io flush
         ::tclwire::io complete
@@ -4974,6 +4987,8 @@ test application-io-download {download is an ordered control event and excludes 
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 17
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::io download [dict create filename /example.bin filesize 42]
         set mixed [catch {::tclwire::io out extra}]
         set duplicate [catch {::tclwire::io download [dict create filename /example.bin filesize 42]}]
@@ -4998,6 +5013,8 @@ test application-io-1.2 {buffer exposes pending application output} -body {
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 15
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::io out alpha
         set first [::tclwire::io buffer]
         ::tclwire::io puts -nonewline beta
@@ -5035,6 +5052,8 @@ test application-io-1.2a {caught mixed output errors are logged in both directio
         ::tclwire::logger start [dict create logfile $logfile logerr $logerr]
         foreach {first second} {binary text text binary} {
             ::tclwire::io begin [::thread::id] unused 151
+            ::tclwire::io configure_application $::tclwire::application_test::io_application \
+                $::tclwire::application_test::io_request
             ::tclwire::io out original $first
             set code [catch {::tclwire::io out rejected $second} message]
             lappend results $code $message [::tclwire::io buffer]
@@ -5065,6 +5084,8 @@ test application-io-1.3 {
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 19
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::io out alpha
         ::tclwire::io complete
 
@@ -5101,6 +5122,8 @@ test http-application-io-1.1 {HTTP header commands maintain and emit metadata} -
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 9
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::http::io header set Transfer-Encoding chunked
         ::tclwire::http::io header add Set-Cookie first=1
         ::tclwire::http::io header add Set-Cookie second=2
@@ -5134,6 +5157,8 @@ test http-application-io-1.2 {HTTP response headers reject line injection} -body
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 10
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         catch {
             ::tclwire::http::io header set X-Test "valid\r\nInjected: yes"
         } message
@@ -5149,6 +5174,8 @@ test http-application-io-1.3 {HTTP cookies support paths and expiration} -body {
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 11
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         set first [::tclwire::http::io cookie session abc123 \
             -path /account -expires 1893456000]
         set second [::tclwire::http::io cookie preference compact]
@@ -5184,6 +5211,8 @@ test http-application-io-1.4 {HTTP cookie expiration accepts dates} -body {
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 12
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::http::io cookie session abc123 \
             -expires {2030-01-01 00:00:00 UTC}
     } finally {
@@ -5196,6 +5225,8 @@ test http-application-io-1.5 {HTTP cookies reject invalid attributes} -body {
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 13
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         set messages {}
         foreach command {
             {::tclwire::http::io cookie {bad name} value}
@@ -5312,6 +5343,8 @@ test http-redirect-1.5 {redirect responses can be sent through application I/O} 
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 17
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         set redirect_response [::tclwire::http::redirect send /target \
             -status 303 \
             -body "redirect=/target\n" \
@@ -5355,6 +5388,8 @@ test application-io-1.8 {HTTP no_body discards pending application output} -body
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 18
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::io out "discarded body"
         ::tclwire::http::no_body
         set buffered [::tclwire::io buffer]
@@ -5378,6 +5413,8 @@ test application-io-1.9 {application output can request connection close} -body 
     set receiver [::tclwire::application_test::OutputReceiver new]
     try {
         ::tclwire::io begin [::thread::id] $receiver 20
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
         ::tclwire::io out "discarded body"
         ::tclwire::io close_connection
         set state [dict get [::tclwire::io context] response_state]
@@ -5424,6 +5461,8 @@ test application-1.4 {HEAD obtains file metadata without reading the file} -setu
         headers [dict create range bytes=2-5] \
         transaction_id 14]]
     ::tclwire::io begin [::thread::id] $receiver 14
+    ::tclwire::io configure_application $::tclwire::application_test::io_application \
+        $::tclwire::application_test::io_request
     $application handle_request $request
     ::tclwire::io end
     update
@@ -5474,6 +5513,8 @@ test application-1.5 {derived applications can serve abstract content ranges} -s
         headers [dict create range bytes=0-1,8-9] \
         transaction_id 16]]
     ::tclwire::io begin [::thread::id] $receiver 16
+    ::tclwire::io configure_application $::tclwire::application_test::io_application \
+        $::tclwire::application_test::io_request
     $application handle_request $request
     ::tclwire::io complete
     ::tclwire::io end
@@ -5530,5 +5571,261 @@ test http-errors-1.3 {unknown statuses use the catalog fallback template} -body 
         [dict get $response reason] \
         [string match {*<h1>599 Error</h1>*} [dict get $response body]]
 } -result {599 {Internal Server Error} 1}
+
+foreach {suffix data mime expected} {
+    txt hello {} {text/plain; charset=utf-8}
+    unknown {} {} application/octet-stream
+    pdf abc application/custom application/custom
+} {
+    test application-download-file-$suffix {whole file metadata and delegation} -body {
+        set filename [makeFile $data download.$suffix]
+        set receiver [::tclwire::application_test::OutputReceiver new]
+        set ::tclwire::application_test::events {}
+        try {
+            ::tclwire::io begin [::thread::id] $receiver 70
+            ::tclwire::io configure_application $::tclwire::application_test::io_application \
+                $::tclwire::application_test::io_request
+            ::tclwire::io download_file $filename $mime
+            set descriptor [::tclwire::io response_descriptor]
+            ::tclwire::io complete
+            update
+            set event [lindex [lindex $::tclwire::application_test::events 1] 1]
+            list [dict get $descriptor status] \
+                [dict get [dict get $event flags] filesize] \
+                [expr {[dict get $descriptor headers] eq [list \
+                    [list Content-Type $expected] \
+                    [list Content-Disposition "attachment; filename=\"download.$suffix\""]]}] \
+                [dict exists [dict get $event flags] range]
+        } finally {
+            ::tclwire::io end
+            $receiver destroy
+            removeFile download.$suffix
+        }
+    } -result [list 200 [expr {[string length $data] + 1}] 1 0]
+}
+
+test application-download-file-missing {missing file generates standard 404} -body {
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 71
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
+        ::tclwire::io download_file [file join [temporaryDirectory] nonexistent-download]
+        list [dict get [::tclwire::io response_descriptor] status] \
+            [expr {[string length [::tclwire::io buffer]] > 0}]
+    } finally {
+        ::tclwire::io end
+        update
+        $receiver destroy
+    }
+} -result {404 1}
+
+test application-download-file-empty {empty files and request MIME overrides} -body {
+    set filename [makeFile {} empty-download]
+    close [open $filename w]
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::tclwire::application_test::events {}
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 72
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
+        set override_application [::tclwire::Application new \
+            [dict create docroot $project_root encoding utf-8]]
+        oo::objdefine $override_application method content_type {path} {
+            return application/override
+        }
+        ::tclwire::io configure_application $override_application \
+            $::tclwire::application_test::io_request
+        ::tclwire::io download_file $filename
+        set headers [dict get [::tclwire::io response_descriptor] headers]
+        set duplicate [catch {::tclwire::io download_file $filename}]
+        ::tclwire::io complete
+        update
+        set event [lindex [lindex $::tclwire::application_test::events 1] 1]
+        list [lindex $headers 0] [dict get $event flags filesize] $duplicate
+    } finally {
+        ::tclwire::io end
+        $receiver destroy
+        $override_application destroy
+        removeFile empty-download
+    }
+} -result {{Content-Type application/override} 0 1}
+
+test application-download-file-unreadable {denied access returns 403 and logs the failure} -constraints unix -body {
+    set filename [makeFile secret unreadable-download]
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    rename ::tclwire::logger::log_error ::tclwire::logger::saved_download_log
+    proc ::tclwire::logger::log_error {args} {set ::download_log $args}
+    # Make access denial deterministic even when tests run as root.
+    rename ::file ::saved_download_file
+    proc ::file {subcommand args} {
+        if {$subcommand eq "readable"} {return 0}
+        tailcall ::saved_download_file $subcommand {*}$args
+    }
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 73
+        ::tclwire::io configure_application $::tclwire::application_test::io_application \
+            $::tclwire::application_test::io_request
+        ::tclwire::io download_file $filename
+        list [dict get [::tclwire::io response_descriptor] status] \
+            [lindex $::download_log 0] [lindex $::download_log 2] \
+            [string match {*status=403*} [lindex $::download_log 1]]
+    } finally {
+        rename ::file {}
+        rename ::saved_download_file ::file
+        rename ::tclwire::logger::log_error {}
+        rename ::tclwire::logger::saved_download_log ::tclwire::logger::log_error
+        unset -nocomplain ::download_log
+        ::tclwire::io end
+        update
+        $receiver destroy
+        removeFile unreadable-download
+    }
+} -result {403 download_file error 1}
+
+test application-mime-magic-1.1 {unknown extension is identified from PNG contents} -body {
+    set filename [makeFile {} magic-download.unknown]
+    try {
+        file copy -force [file join $project_root tests tcl9.png] $filename
+        ::tclwire::io::file_content_type $filename
+    } finally {
+        removeFile magic-download.unknown
+    }
+} -result image/png
+
+test application-mime-magic-1.2 {known extensions bypass magic and failed probes fall back} -body {
+    package require fileutil::magic::filetype 2
+    rename ::fileutil::magic::filetype ::fileutil::magic::saved_filetype
+    set ::magic_calls 0
+    proc ::fileutil::magic::filetype {path} {
+        incr ::magic_calls
+        error "probe failed"
+    }
+    try {
+        set known [::tclwire::io::file_content_type example.TXT iso8859-1]
+        set bypassed $::magic_calls
+        set unknown [::tclwire::io::file_content_type example.unknown]
+        list $known $bypassed $unknown $::magic_calls
+    } finally {
+        rename ::fileutil::magic::filetype {}
+        rename ::fileutil::magic::saved_filetype ::fileutil::magic::filetype
+        unset ::magic_calls
+    }
+} -result {{text/plain; charset=iso8859-1} 0 application/octet-stream 1}
+
+test application-mime-registration-1.1 {registered extensions override defaults and ignore case} -body {
+    set saved $::tclwire::io::mime_types
+    try {
+        ::tclwire::io register_mime_type .M text/x-matlab
+        ::tclwire::io register_mime_type .txt application/custom-text
+        set initial [list [::tclwire::io::file_content_type script.m] \
+            [::tclwire::io::file_content_type script.M] \
+            [::tclwire::io::file_content_type notes.TXT]]
+        ::tclwire::io register_mime_type .m text/x-other
+        list $initial [::tclwire::io::file_content_type script.m]
+    } finally {
+        set ::tclwire::io::mime_types $saved
+    }
+} -result {{text/x-matlab text/x-matlab application/custom-text} text/x-other}
+
+test application-mime-registration-1.2 {invalid registrations leave the registry intact} -body {
+    set saved $::tclwire::io::mime_types
+    set ::mime_registration_logs {}
+    rename ::tclwire::logger::log_error ::tclwire::logger::saved_registration_log
+    proc ::tclwire::logger::log_error {source message level} {
+        lappend ::mime_registration_logs [list $source $level]
+        return
+    }
+    try {
+        set rejected {}
+        foreach {extension mime} {
+            m text/x-matlab
+            . text/plain
+            .tar.gz application/gzip
+            {.bad suffix} text/plain
+            .a/b text/plain
+            .m invalid
+            .m {text/plain; charset=utf-8}
+        } {
+            lappend rejected [catch {::tclwire::io register_mime_type $extension $mime}]
+        }
+        lappend rejected [catch {::tclwire::io register_mime_type .m "text/plain\r\nX-Test: bad"}]
+        list $rejected [expr {$saved eq $::tclwire::io::mime_types}] \
+            [llength $::mime_registration_logs] \
+            [lsort -unique $::mime_registration_logs]
+    } finally {
+        rename ::tclwire::logger::log_error {}
+        rename ::tclwire::logger::saved_registration_log ::tclwire::logger::log_error
+        unset ::mime_registration_logs
+        set ::tclwire::io::mime_types $saved
+    }
+} -result {{0 0 0 0 0 0 0 0} 1 8 {{register_mime_type error}}}
+
+test application-mime-registration-1.3 {logging failures restore the original validation errors} -body {
+    set saved $::tclwire::io::mime_types
+    rename ::tclwire::logger::log_error ::tclwire::logger::saved_registration_log
+    proc ::tclwire::logger::log_error {args} {
+        error "logger unavailable"
+    }
+    try {
+        set extension_code [catch {
+            ::tclwire::io register_mime_type m text/x-matlab
+        } extension_message]
+        set mime_code [catch {
+            ::tclwire::io register_mime_type .m invalid
+        } mime_message]
+        list $extension_code $extension_message $mime_code $mime_message \
+            [expr {$saved eq $::tclwire::io::mime_types}]
+    } finally {
+        rename ::tclwire::logger::log_error {}
+        rename ::tclwire::logger::saved_registration_log ::tclwire::logger::log_error
+        set ::tclwire::io::mime_types $saved
+    }
+} -result {1 {file extension must be a single suffix beginning with a dot} 1 {MIME type must be a type/subtype without parameters} 1}
+
+test application-io-context-1.1 {application contract is inherited and preparation uses the bound request once} -body {
+    set app [::tclwire::Application new [dict create docroot $project_root encoding iso8859-1]]
+    set receiver [::tclwire::application_test::OutputReceiver new]
+    set ::context_calls {}
+    oo::objdefine $app method prepare_response {request response} {
+        lappend ::context_calls $request
+        return $response
+    }
+    try {
+        ::tclwire::io begin [::thread::id] $receiver 80
+        ::tclwire::io configure_application $app $::tclwire::application_test::io_request
+        ::tclwire::io complete
+        ::tclwire::io complete
+        list [$app content_type example.TXT] \
+            [expr {$::context_calls eq [list $::tclwire::application_test::io_request]}] \
+            [catch {::tclwire::io configure_application $app $::tclwire::application_test::io_request}]
+    } finally {
+        ::tclwire::io end
+        update
+        $receiver destroy
+        $app destroy
+        unset ::context_calls
+    }
+} -result {{text/plain; charset=iso8859-1} 1 1}
+
+test application-io-context-1.2 {application binding is required and cleared between transactions} -body {
+    set app $::tclwire::application_test::io_application
+    set request $::tclwire::application_test::io_request
+    try {
+        set inactive [catch {::tclwire::io configure_application $app $request}]
+        ::tclwire::io begin [::thread::id] unused 81
+        set missing [catch {::tclwire::io complete} missing_message]
+        ::tclwire::io configure_application $app $request
+        ::tclwire::io end
+        ::tclwire::io begin [::thread::id] unused 82
+        set cleared [catch {::tclwire::io complete} cleared_message]
+        list $inactive $missing $missing_message $cleared $cleared_message
+    } finally {
+        ::tclwire::io end
+    }
+} -result {1 1 {no application context is configured} 1 {no application context is configured}}
+
+$::tclwire::application_test::io_request destroy
+$::tclwire::application_test::io_application destroy
 
 cleanupTests

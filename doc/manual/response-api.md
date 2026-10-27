@@ -279,7 +279,72 @@ stronger consistency is added to the runtime, a central dictionary validator
 or constructor would preserve this value-oriented contract with less lifecycle
 coupling than making the transported descriptor itself an object.
 
+### Registering MIME Types
+
+Applications can register additional extension mappings before serving files:
+
+```tcl
+::tclwire::io register_mime_type .m text/x-matlab
+```
+
+The extension must include its leading dot and contain a single suffix. Matching
+is case-insensitive, so this registration also matches `analysis.M`. The MIME
+type must be a `type/subtype` without parameters; it is returned as registered,
+without an automatically appended charset. Registering the same extension again
+replaces its previous mapping, and registrations can override built-in types.
+Invalid extensions or MIME types are logged at error level and ignored; the
+procedure returns normally and leaves the registry unchanged. If logging fails,
+the procedure raises the original validation error instead.
+
+The registry is populated with the built-in extension mappings when
+`tclwire::application::io` loads. Detection looks up the extension in this single
+dictionary, then tries Tcllib's magic recognizer, and finally defaults to
+`application/octet-stream`. Built-in text mappings retain the application's
+charset; replacing one with `register_mime_type` returns the new MIME type
+without an appended charset. Both `Application content_type` and `download_file`
+use these mappings. An explicit MIME argument to `download_file` takes priority;
+an application overriding `content_type` controls its own detection behavior.
+
+The dictionary is local to each Tcl interpreter, shared by applications within
+that interpreter, and persists across requests. Register types in application
+initialization code that runs in each worker interpreter (for example, an
+`initialize` method). Registering in the main server interpreter alone does not
+propagate mappings to workers.
+
 ## Known-length downloads
+
+For a whole-file attachment, use:
+
+```tcl
+::tclwire::io download_file /srv/downloads/archive.zip application/zip
+# Infer the MIME type using the application's content_type method:
+::tclwire::io download_file /srv/downloads/report.pdf
+```
+
+These are alternative calls, each supplying the entire response. The optional
+MIME type defaults to Application's extension registry (and honors application
+overrides). When the extension is unknown or absent, TclWire lazily loads
+Tcllib's `fileutil::magic::filetype` (version 2 or later) and probes the file's
+contents for a MIME type. Recognized extensions bypass this probe. If the probe
+fails or supplies no MIME type, the result remains `application/octet-stream`. Text types use the application's configured encoding. The runtime binds the
+application and request with `::tclwire::io configure_application`; response
+preparation and automatic MIME detection require this context.
+The helper determines the size, sets status 200, Content-Type and an attachment
+Content-Disposition using the basename, then delegates to `download`. It sends
+the whole file, including empty files, without interpreting Range headers.
+Call it before any body output or response preparation, then return from the
+handler; normal application completion still applies.
+
+Missing files and non-regular sources produce the standard 404 response;
+denied read access produces 403, and other filesystem failures produce 500.
+Failures are logged at error level. Successful delegation is logged at debug
+level with transaction ID, filename, size, and MIME type. This records scheduling,
+not transfer completion. The connection agent reopens the file and verifies its
+size, so keep it available and unchanged until the asynchronous transfer finishes.
+The path is a server filesystem path; the application must authorize access before
+calling the helper. Use the lower-level `download` API for ranges or custom headers.
+
+
 
 `::tclwire::io download $descriptor` delegates the entire binary response body
 to the connection agent. Data moves directly from a source channel to the client

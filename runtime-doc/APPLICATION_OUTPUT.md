@@ -438,10 +438,82 @@ The existing 30-second connection timeout is refreshed at nonempty checkpoints;
 with `blocksize 0` there is no refresh during the copy. Bounded copies should be
 used for longer transfers.
 
-See the [Response API](../doc/manual/response-api.md#known-length-downloads)
+See the [Response API](manual/response-api.html)
 for further ownership and framing details.
 
-### Example: Download a File
+### Example: Download a Whole File
+
+For a whole-file attachment, the handler needs only one call:
+
+```tcl
+method handle_request {request} {
+    ::tclwire::io download_file /srv/downloads/report.pdf
+    # Returning lets the CGA complete the application side of the response.
+}
+```
+
+To specify the MIME type explicitly, replace the call with:
+
+```tcl
+::tclwire::io download_file /srv/downloads/archive.zip application/zip
+```
+
+These are alternative calls, each supplying the entire response. The optional
+MIME type defaults to Application's extension registry (and honors application
+overrides). When the extension is unknown or absent, TclWire lazily loads
+Tcllib's `fileutil::magic::filetype` (version 2 or later) and probes the file's
+contents for a MIME type. Recognized extensions bypass this probe. If the probe
+fails or supplies no MIME type, the result remains `application/octet-stream`. Text types use the application's configured encoding. The runtime binds the
+application and request with `::tclwire::io configure_application`; response
+preparation and automatic MIME detection require this context.
+The helper determines the size, sets status 200, Content-Type and an attachment
+Content-Disposition using the basename, then delegates to `download`. It sends
+the whole file, including empty files, without interpreting Range headers.
+Call it before any body output or response preparation, then return from the
+handler; normal application completion still applies.
+
+Missing files and non-regular sources produce the standard 404 response;
+denied read access produces 403, and other filesystem failures produce 500.
+Failures are logged at error level. Successful delegation is logged at debug
+level with transaction ID, filename, size, and MIME type. This records scheduling,
+not transfer completion. The connection agent reopens the file and verifies its
+size, so keep it available and unchanged until the asynchronous transfer finishes.
+The path is a server filesystem path; the application must authorize access before
+calling the helper. Use the lower-level `download` API for ranges or custom headers.
+
+### Registering MIME Types
+
+Applications can register additional extension mappings before serving files:
+
+```tcl
+::tclwire::io register_mime_type .m text/x-matlab
+```
+
+The extension must include its leading dot and contain a single suffix. Matching
+is case-insensitive, so this registration also matches `analysis.M`. The MIME
+type must be a `type/subtype` without parameters; it is returned as registered,
+without an automatically appended charset. Registering the same extension again
+replaces its previous mapping, and registrations can override built-in types.
+Invalid extensions or MIME types are logged at error level and ignored; the
+procedure returns normally and leaves the registry unchanged. If logging fails,
+the procedure raises the original validation error instead.
+
+The registry is populated with the built-in extension mappings when
+`tclwire::application::io` loads. Detection looks up the extension in this single
+dictionary, then tries Tcllib's magic recognizer, and finally defaults to
+`application/octet-stream`. Built-in text mappings retain the application's
+charset; replacing one with `register_mime_type` returns the new MIME type
+without an appended charset. Both `Application content_type` and `download_file`
+use these mappings. An explicit MIME argument to `download_file` takes priority;
+an application overriding `content_type` controls its own detection behavior.
+
+The dictionary is local to each Tcl interpreter, shared by applications within
+that interpreter, and persists across requests. Register types in application
+initialization code that runs in each worker interpreter (for example, an
+`initialize` method). Registering in the main server interpreter alone does not
+propagate mappings to workers.
+
+### Example: Download a File with Explicit Metadata
 
 This handler serves a fixed archive as an attachment. Replace the absolute path
 with a file available to the runtime:
@@ -476,19 +548,78 @@ explicitly is optional and does not wait for the transfer to finish.
 
 ### Example: Download a File Range
 
-To serve bytes 1024 through 2047 of a file containing at least 2048 bytes, replace
-the download call above with:
+The lower-level API allows the application to choose an inclusive byte range.
+This complete handler serves bytes 1024 through 2047 of a fixed, readable archive.
+It checks the file size before delegating and returns 416 if the selected range
+does not fit:
 
 ```tcl
-::tclwire::io download [dict create \
-    filename $filename filesize $filesize range {1024 2047}]
+method handle_request {request} {
+    # This example assumes this authorized source exists and is readable.
+    set filename /srv/downloads/archive.zip
+    set filesize [file size $filename]
+    set first 1024
+    set last 2047
+
+    if {$first < 0 || $last < $first || $last >= $filesize} {
+        ::tclwire::io response 416 {Range Not Satisfiable} [list \
+            "Content-Range: bytes */$filesize"]
+        return
+    }
+
+    ::tclwire::io response 200 OK [list \
+        "Content-Type: application/zip" \
+        {Content-Disposition: attachment; filename="archive.zip"}] binary
+    ::tclwire::io download [dict create \
+        filename $filename \
+        filesize $filesize \
+        range [list $first $last] \
+        blocksize 65536]
+}
 ```
 
-TclWire sets status 206, `Content-Range`, and `Content-Length: 1024`. The range
-is inclusive and must fit within the declared file size. This call does not
-parse the request's `Range` header: the application selects and validates the
-requested range before delegation. For an empty file, use `filesize 0` without
-a range.
+The initial response metadata uses status 200; the connection agent changes it
+to 206 when it processes the range descriptor. For a 4096-byte source, the final
+headers include `Content-Range: bytes 1024-2047/4096` and
+`Content-Length: 1024`. The descriptor's `filesize` is the size of the **entire
+file**, not the selected range.
+
+This example selects a fixed range; `download` does not parse the request's
+`Range` header. The application must parse and validate any client-supplied range
+before delegation. For an empty file, use `filesize 0` without a range, or use
+`download_file` to send the whole empty file.
+
+### Example: Return a 404 Response
+
+`download_file` automatically generates and logs a standard 404 when its source
+is missing. An application can also return 404 explicitly, for example when a
+requested download has no matching resource in its catalog. Use the shared error
+catalog to keep the reason, headers, and body consistent with other TclWire errors:
+
+```tcl
+package require tclwire::http::errors 0.1
+package require tclwire::logger::client 0.1
+
+method handle_request {request} {
+    # This branch handles a resource that the application could not find.
+    set path [$request path]
+    catch {
+        ::tclwire::logger::log_error application \
+            "status=404 path=[::tclwire::logger::log_value $path]" error
+    }
+    set failure [::tclwire::http::errors response 404 [dict create path $path]]
+    dict with failure {
+        ::tclwire::io response $status $reason $headers $body_mode $encoding
+        ::tclwire::io out $body $body_mode
+    }
+    return
+}
+```
+
+Use the requested URL path in the error message, rather than an internal
+filesystem path. Generate the error before response preparation or body output,
+and return without calling `download`. Returning lets the CGA complete the
+buffered error response; an explicit `complete` call is optional.
 
 ## Implementation References
 
