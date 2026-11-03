@@ -178,6 +178,10 @@ oo::class create ::tclwire::Application {
         return $response
     }
 
+    method content_type {path} {
+        return [::tclwire::io::file_content_type $path [my encoding]]
+    }
+
     method initialize {} {
         return
     }
@@ -455,30 +459,6 @@ oo::class create ::tclwire::CApplication {
             $logger log_error static_file [join $fields " "] $level $context
         }
         return
-    }
-
-    method content_type {path} {
-        set charset "; charset=[my encoding]"
-        switch -exact -- [string tolower [file extension $path]] {
-            .css  { return "text/css$charset" }
-            .gif  { return "image/gif" }
-            .htm -
-            .html { return "text/html$charset" }
-            .ico  { return "image/x-icon" }
-            .jpg -
-            .jpeg { return "image/jpeg" }
-            .js   { return "text/javascript$charset" }
-            .json { return "application/json$charset" }
-            .md   { return "text/markdown$charset" }
-            .pdf  { return "application/pdf" }
-            .png  { return "image/png" }
-            .svg  { return "image/svg+xml$charset" }
-            .tcl  -
-            .txt  { return "text/plain$charset" }
-            .webp { return "image/webp" }
-            .xml  { return "application/xml$charset" }
-            default { return "application/octet-stream" }
-        }
     }
 
     method send_error {status path} {

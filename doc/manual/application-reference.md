@@ -28,6 +28,26 @@ The connection worker owns HTTP parsing, response framing, and the socket.
 Applications should use only the output commands below; do not retain the
 request object or a spooled body path after the handler has returned.
 
+## Application response contract
+
+Every `Application` provides `prepare_response request response` and
+`content_type path`; subclasses, including `CApplication`, inherit these methods
+and may override them. The default `content_type` uses the MIME registry and
+magic fallback, applying the application's encoding to built-in text mappings.
+
+The runtime calls `::tclwire::io configure_application $application $request`
+after rewriting and before request preparation. The I/O bridge invokes
+`prepare_response` at the response commitment boundary and `content_type` when
+`download_file` needs automatic MIME detection. These are direct contract calls,
+without method-existence checks or separately registered callbacks.
+
+The binding lasts for one transaction: `begin` and `end` clear it. Response
+preparation and automatic MIME detection raise an error if no context is bound.
+The bridge borrows the objects; their owner must keep them alive through response
+preparation. Tests or frameworks driving the bridge directly must bind an
+application and request as the runtime does. This replaces the former
+`configure_response_planner` API.
+
 ## `HttpRequest`
 
 `request` is an `::tclwire::HttpRequest` instance. Its public methods are
@@ -133,7 +153,9 @@ copy a client filename into a destination path without validating it.
 
 These commands are available only while an application request is active. The
 runtime calls `begin` and `end`; handlers normally use `response`, `out`,
-`puts`, `flush`, and `complete`.
+`puts`, `flush`, and `complete`. See [Response API](response-api.md) for the
+response-descriptor schema, header representations, accepted values, and the
+commitment lifecycle.
 
 | Command | Description |
 | --- | --- |
@@ -148,7 +170,7 @@ runtime calls `begin` and `end`; handlers normally use `response`, `out`,
 | `::tclwire::io fail message` | Reports an application-output failure to the connection side. |
 | `::tclwire::io context` | Returns diagnostic transaction context. |
 | `::tclwire::io response_descriptor` / `response_is_prepared` | Inspect current response metadata and whether it is immutable. |
-| `::tclwire::io configure_response_planner commandPrefix` | Runtime/application-framework hook used to install `prepare_response`; not a normal handler command. |
+| `::tclwire::io configure_application application request` | Runtime hook binding the current application and request for response preparation and MIME detection; not a normal handler command. |
 | `::tclwire::io begin threadId agentId transactionId` / `end` | Runtime lifecycle commands. Do not call these from a handler. |
 
 ```tcl
@@ -173,10 +195,10 @@ framework.
 | `::tclwire::http::io header add name value` | Adds another response header (appropriate for repeated fields such as `Set-Cookie`). |
 | `::tclwire::http::io header remove name` | Removes response fields named `name`. |
 | `::tclwire::http::io header get name` | Returns all current values for `name`. |
-| `::tclwire::http::redirect response location ?options?` | Builds a redirect descriptor. Options: `-status` (301, 302, 303, 307, or 308), `-body`, and `-headers`. |
+| `::tclwire::http::redirect response location ?options?` | Builds a send-ready redirect dictionary. Its headers are formatted lines, not canonical descriptor pairs. Options: `-status` (301, 302, 303, 307, or 308), `-body`, and `-headers`. |
 | `::tclwire::http::redirect send location ?options?` | Sends that redirect metadata and optional body through `::tclwire::io`. |
 | `::tclwire::http::codes reason status` / `all` | Gets a conventional reason phrase or the complete status-to-reason dictionary. |
-| `::tclwire::http::errors load ?path?`, `messages`, `message status`, `response status ?context?` | Loads and uses the error catalog. `response` returns a response descriptor with HTML-escaped `{{name}}` substitutions from `context`. |
+| `::tclwire::http::errors load ?path?`, `messages`, `message status`, `response status ?context?` | Loads and uses the error catalog. `response` returns a send-ready dictionary with formatted header lines and HTML-escaped `{{name}}` substitutions from `context`. |
 
 ### HTTP syntax and multipart helpers
 

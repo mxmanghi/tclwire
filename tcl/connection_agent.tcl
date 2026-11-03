@@ -13,9 +13,16 @@ package require tclwire::transaction_descriptor 0.1
 namespace eval ::tclwire {}
 
 oo::class create ::tclwire::ConnectionAgent {
-    variable channel connection_id connection_key peer_host peer_port input_buffer timeout_id
+    variable channel
+    variable connection_id
+    variable connection_key
+    variable peer_host
+    variable peer_port
+    variable input_buffer
+    variable timeout_id
     variable initial_read_id
-    variable transaction_state closed
+    variable transaction_state
+    variable closed
     variable close_logger
 
     constructor {conn_channel id host port key} {
@@ -501,6 +508,10 @@ namespace eval ::tclwire {
 
     proc route_application_output {agent transaction_id event} {
         if {![info object isa object $agent]} {
+            if {[dict get $event type] eq "download" &&
+                    [dict exists $event flags channel]} {
+                catch {close [dict get $event flags channel]}
+            }
             return
         }
         $agent application_output $transaction_id $event

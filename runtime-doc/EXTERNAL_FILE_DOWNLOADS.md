@@ -278,7 +278,9 @@ an ordinary non-chunked response will stream immediately.
 ## Related Runtime APIs
 
 - [`WORKER_REQUEST_API.md`](WORKER_REQUEST_API.md) describes `HttpRequest`,
-  `prepare_request`, `prepare_response`, CGA output, and response commitment.
+  `prepare_request`, and `prepare_response`.
+- [Application Output](../runtime-docs/APPLICATION_OUTPUT.md) describes CGA
+  output, response commitment, and delegated file downloads.
 - [`CONFIGURATION_OPTIONS.md`](CONFIGURATION_OPTIONS.md) describes application
   `docroot`, `libdir`, aliases, and class configuration.
 - [`INTER_THREAD_COMMUNICATION.md`](INTER_THREAD_COMMUNICATION.md) describes

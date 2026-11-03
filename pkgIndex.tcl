@@ -171,6 +171,9 @@ package ifneeded tclwire::application_dispatcher 0.1 [subst {
     source [list [file join $dir tcl application_dispatcher.tcl]]
 }]
 
+package ifneeded tclwire::body_transfer 0.1 \
+    [list source [file join $dir tcl body_transfer.tcl]]
+
 package ifneeded tclwire::connection_agent 0.1 [subst {
     package require tclwire::transaction_descriptor 0.1
     source [list [file join $dir tcl connection_agent.tcl]]

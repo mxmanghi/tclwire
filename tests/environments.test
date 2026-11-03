@@ -13,9 +13,18 @@ package require tclwire::stdchans 0.1
 package require tclwire::rivet 0.1
 package require tclwire::rivetweb 0.1
 
+package require tclwire::application 0.1
+package require tclwire::http::request 0.1
+
 namespace eval ::tclwire::environment_test {
     variable events {}
 }
+
+set ::tclwire::environment_test::io_application [::tclwire::Application new \
+    [dict create docroot $project_root encoding utf-8]]
+set ::tclwire::environment_test::io_request [::tclwire::HttpRequest new \
+    [dict create method GET path / transaction_id 1]]
+
 
 oo::class create ::tclwire::environment_test::OutputReceiver {
     method application_output {transaction_id event} {
@@ -58,6 +67,8 @@ test stdchans-1.2 {stdchans captures app-namespace stdout during active output t
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 21
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         namespace eval ::tclwire::app {
             puts stdout alpha
             puts -nonewline stdout beta
@@ -120,6 +131,8 @@ test stdchans-1.2a {
             [dict create configuration $configuration]
         ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 22
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         namespace eval ::tclwire::app {
             puts -nonewline stdout alpha
             flush stdout
@@ -172,6 +185,8 @@ test stdchans-1.3aa {stdchans captures explicitly qualified global stdout} -body
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 23
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         ::puts stdout alpha
         ::puts -nonewline stdout beta
         set buffered [::tclwire::io buffer]
@@ -239,6 +254,8 @@ test stdchans-1.5 {stdchans keeps app stdout virtualized after response completi
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 22
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         namespace eval ::tclwire::app {
             puts stdout alpha
         }
@@ -306,6 +323,8 @@ test stdchans-1.7 {stdchans chan puts and flush stdout use TclWire I/O} -body {
     try {
         ::tclwire::envs::stdchans install
         ::tclwire::io begin [::thread::id] $receiver 26
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         chan puts stdout alpha
         chan puts -nonewline stdout beta
         chan flush stdout
@@ -851,6 +870,8 @@ test rivet-1.2e {rivet cookie set and delete update jar and emit Set-Cookie head
         ::tclwire::app::begin_request \
             [dict create request $request request_descriptor [$request snapshot]]
         ::tclwire::io begin [::thread::id] $receiver 32
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         set first [::rivet::cookie set session xyz \
             -expires {Tue, 01-Jan-30 00:00:00 GMT} \
             -path /account \
@@ -1418,6 +1439,8 @@ test rivet-1.2gg {rivet parray_table writes escaped HTML table} -body {
         ::tclwire::envs::stdchans install
         ::tclwire::envs::rivet install
         ::tclwire::io begin [::thread::id] $receiver 25
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         ::rivet::parray_table values * [list class debug id values]
         ::tclwire::io flush
         ::tclwire::io complete
@@ -1505,6 +1528,8 @@ test rivet-1.2i {rivet html writes tagged output} -body {
         ::tclwire::envs::stdchans install
         ::tclwire::envs::rivet install
         ::tclwire::io begin [::thread::id] $receiver 24
+        ::tclwire::io configure_application $::tclwire::environment_test::io_application \
+            $::tclwire::environment_test::io_request
         ::rivet::html Test b i
         ::tclwire::io flush
         ::tclwire::io complete
@@ -1678,5 +1703,8 @@ test rivet-1.3b {rivet inspect without arguments returns scoped configuration} -
         removeDirectory $docroot
     }
 } -result [list {dir server user} {} {} after.tcl 4096 0]
+
+$::tclwire::environment_test::io_request destroy
+$::tclwire::environment_test::io_application destroy
 
 cleanupTests
