@@ -9,10 +9,12 @@
 # console_reactor, and application_dispatcher.
 
 namespace eval ::tclwire::runtime {
+    variable started_ticks {}
 
     # Actually starting the application server
 
     proc start {argv} {
+        variable started_ticks
         variable active
         variable active_config
         variable shutdown_requested
@@ -117,12 +119,14 @@ namespace eval ::tclwire::runtime {
         }
 
         set active_config $config
+        set started_ticks [clock clicks -milliseconds]
         set active 1
         set shutdown_requested 0
         return $config
     }
 
     proc stop {} {
+        variable started_ticks
         variable active
         variable active_config
         variable shutdown_requested
@@ -151,6 +155,7 @@ namespace eval ::tclwire::runtime {
         catch {::tclwire::logger stop}
 
         set active 0
+        set started_ticks {}
         set active_config {}
         set shutdown_requested 1
 
@@ -164,6 +169,16 @@ namespace eval ::tclwire::runtime {
     proc is_running {} {
         variable active
         return $active
+    }
+
+    # Uptime begins when startup succeeds, not when configuration is inspected.
+    # Elapsed clock ticks avoid timezone and daylight-saving adjustments.
+    proc uptime_seconds {} {
+        variable started_ticks
+        if {$started_ticks eq {}} {
+            return {}
+        }
+        return [expr {max(0, ([clock clicks -milliseconds] - $started_ticks) / 1000)}]
     }
 
     proc config {} {
@@ -259,7 +274,7 @@ namespace eval ::tclwire::runtime {
         return $config
     }
 
-    namespace export usage  prepare_config start stop is_running \
+    namespace export usage  prepare_config start stop is_running uptime_seconds \
                      config transport_reactor transport_reactors request_shutdown run implemented_protocols \
                      default_protocols application_dispatcher console_reactor
     namespace ensemble create

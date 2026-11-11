@@ -7,6 +7,7 @@ package require json::write
 package require tclwire::constants 0.1
 package require tclwire::accounting 1.2
 package require tclwire::logger::control 0.1
+package require tclwire::tpba::control 0.1
 
 namespace eval ::tclwire::console {
     ::tclwire::define_constant ps_columns {
@@ -446,6 +447,95 @@ namespace eval ::tclwire::console {
         return $rows
     }
 
+    # Keep days separate from HH:MM:SS: clock format would wrap long uptimes.
+    proc format_uptime {seconds} {
+        if {$seconds eq {}} {
+            return unavailable
+        }
+        return [format "%dd %02d:%02d:%02d" \
+            [expr {$seconds / 86400}] [expr {($seconds / 3600) % 24}] \
+            [expr {($seconds / 60) % 60}] [expr {$seconds % 60}]]
+    }
+
+    # Build a summary from snapshots. Pool ownership identifies applications
+    # exactly, including applications that share hostnames on different services.
+    # Aliases share one pool and therefore appear together on a single row.
+    proc status_table {config pools threads connections uptime} {
+        set rows {}
+        set application_threads 0
+        if {[dict exists $config applications]} {
+            foreach application_id [lsort [dict keys [dict get $config applications]]] {
+                set descriptor [dict get $config applications $application_id]
+                set hosts $application_id
+                if {[dict exists $descriptor hosts] && [dict get $descriptor hosts] ne {}} {
+                    set hosts [join [dict get $descriptor hosts] {, }]
+                }
+                set count 0
+                set busy 0
+                set pool_key app:[string tolower [string trim $application_id]]
+                if {[dict exists $pools $pool_key stats per_status_lists]} {
+                    dict for {state ids} [dict get $pools $pool_key stats per_status_lists] {
+                        if {$state in {created allocated idle running}} {
+                            incr count [llength $ids]
+                        }
+                        if {$state in {allocated running}} {
+                            incr busy [llength $ids]
+                        }
+                    }
+                }
+                incr application_threads $count
+                lappend rows [dict create application_id $application_id hosts $hosts \
+                    threads $count busy_threads $busy]
+            }
+        }
+
+        # A connection worker can own several agents. Count the actual agent
+        # records separately; omit console clients, pending accepts, and retained
+        # closed records even when debug_connection is enabled.
+        set connection_workers 0
+        dict for {thread_id record} $threads {
+            if {[connection_worker_family [dict get $record family]] &&
+                    [dict get $record status] in {created allocated idle running}} {
+                incr connection_workers
+            }
+        }
+        set connection_agents 0
+        dict for {key record} $connections {
+            if {[dict get $record protocol] ne "console" &&
+                    [dict get $record status] in {open closing} &&
+                    [dict get $record agent_id] ne {}} {
+                incr connection_agents
+            }
+        }
+        set services 0
+        if {[dict exists $config services]} {
+            set services [llength [dict get $config services]]
+        }
+        set summary [dict create pid [pid] uptime [format_uptime $uptime] \
+            uptime_seconds $uptime services $services application_threads $application_threads \
+            connection_agents $connection_agents connection_workers $connection_workers]
+        return [table_message STATUS {application_id hosts threads busy_threads} $rows \
+            {} [dict create summary $summary]]
+    }
+
+    # Fetch one broker snapshot rather than asking each application worker.
+    # Accounting and broker snapshots are sequential, so totals may change
+    # slightly during a request that overlaps thread or connection turnover.
+    proc status_message {} {
+        variable active_config
+        set response [::tclwire::tpba request [dict create operation diagnostics]]
+        if {![dict get $response ok]} {
+            error [dict get $response error]
+        }
+        set uptime {}
+        if {[info commands ::tclwire::runtime::uptime_seconds] ne {}} {
+            set uptime [::tclwire::runtime::uptime_seconds]
+        }
+        return [status_table $active_config [dict get $response result pools] \
+            [::tclwire::accounting get_threads_database] \
+            [::tclwire::accounting get_connections_database] $uptime]
+    }
+
     proc dispatch {line} {
         variable ps_columns
         variable connection_columns
@@ -458,6 +548,15 @@ namespace eval ::tclwire::console {
         set args [lrange $words 1 end]
 
         switch -exact -- $command {
+            STATUS {
+                if {[llength $args] != 0} {
+                    return [error_message $command bad_arguments "STATUS accepts no arguments"]
+                }
+                if {[catch {status_message} message]} {
+                    return [error_message $command status_unavailable $message]
+                }
+                return $message
+            }
             PS {
                 if {[catch {parse_ps_args {*}$args} message]} {
                     return [error_message $command bad_arguments \

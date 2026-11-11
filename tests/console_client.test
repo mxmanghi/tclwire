@@ -584,4 +584,15 @@ test console-client-1.7 {history file is loaded through readline initialization}
 } -result [list [list [list initialize \
     [file join [temporaryDirectory] tclwire-history-[pid]]]] 123]
 
+test console-client-status-1.1 {STATUS displays summary and host worker columns} -body {
+    set response [::json::json2dict [::tclwire::console::status_table \
+        [dict create services {} applications [dict create default \
+            [dict create hosts localhost]]] {} {} {} 90061]]
+    set preamble [::tclwire::console_client::status_preamble [dict get $response summary]]
+    list [string match {*uptime 1d 01:01:01*} $preamble] \
+        [string match {*Connection agents: 0   Connection workers: 0*} $preamble] \
+        [::tclwire::console_client::matrix_from_response $response] \
+        [regexp -line {^  STATUS +\S} [::tclwire::console_client::help_text]]
+} -result {1 1 {{Application {Virtual hosts} Threads Busy} {default localhost 0 0}} 1}
+
 cleanupTests

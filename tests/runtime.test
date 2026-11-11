@@ -612,6 +612,24 @@ test runtime-1.5 {runtime starts internal agents and the hardcoded HTTP listener
         id http:8990 secure 0 description "HTTP application service"]] \
     1 1 1 1 127.0.0.1 8990 1]
 
+test runtime-status-1.1 {STATUS uses runtime uptime and resets it on stop} -body {
+    ::tclwire::runtime start [list --logfile $::tclwire::runtime_test::logfile]
+    try {
+        set response [::json::json2dict [::tclwire::console dispatch status]]
+        set summary [dict get $response summary]
+        set result [list [dict get $response ok] [dict get $response command] \
+            [expr {[dict get $summary uptime_seconds] >= 0}] \
+            [expr {[dict get $summary pid] == [pid]}] \
+            [dict get $summary services] \
+            [dict get [lindex [dict get $response rows] 0] application_id]]
+        ::tclwire::runtime stop
+        lappend result [::tclwire::runtime uptime_seconds]
+        set result
+    } finally {
+        ::tclwire::runtime_test::cleanup
+    }
+} -result {true STATUS 1 1 1 default {}}
+
 test runtime-1.5a {missing document root is seeded from generated documentation} -body {
     set docroot [file join [temporaryDirectory] tclwire-runtime-docroot-[pid]]
     catch {file delete -force $docroot}

@@ -22,6 +22,25 @@ receives one newline-terminated JSON response.
 
 ## Commands
 
+### `STATUS`
+
+Returns formatted runtime uptime, PID, service count, application worker totals,
+and separate counts of connection agents and connection worker threads. The
+client prints these above a table of application IDs, virtual-host aliases,
+worker counts (`Threads`), and busy worker counts (`Busy`). Host aliases share
+one application pool. Configured applications with no workers remain visible.
+
+`Threads` includes created, idle, allocated, and running workers; `Busy` includes
+allocated and running workers. Terminating workers are excluded. Connection
+agents include open/closing agents, excluding console clients, pending accepts
+without agents, and retained closed/failed records. One connection worker may
+host several agents. Uptime begins at successful runtime startup.
+
+Arguments: none. Commands are case-insensitive. The JSON table response adds a
+`summary` object and uses `application_id hosts threads busy_threads` columns.
+The command takes sequential accounting snapshots and synchronously queries
+the pool broker; it is not an independent watchdog.
+
 ### `PS`
 
 Returns thread accounting data from the shared accounting store.

@@ -402,4 +402,44 @@ test console-protocol-1.5 {LOGROTATE reopens logger files and returns OK} -body 
     }
 } -result {true ok LOGROTATE {logs reopened} 1 1}
 
+test console-status-1.1 {STATUS formats long uptimes and distinguishes workers from agents} -body {
+    set config [dict create services {http https} applications [dict create \
+        web [dict create hosts {example.org www.example.org}] \
+        secure [dict create hosts example.org] \
+        unused [dict create hosts unused.example.org]]]
+    set pools [dict create \
+        app:web [dict create stats [dict create per_status_lists \
+            [dict create idle {a b} running c allocated d terminating e]]] \
+        app:secure [dict create stats [dict create per_status_lists [dict create idle f]]]]
+    set threads [dict create \
+        c1 [dict create family http status running] \
+        c2 [dict create family https status idle] \
+        c3 [dict create family http status terminating] \
+        a [dict create family application status idle]]
+    set connections {}
+    foreach {key protocol state agent} {
+        one http open agent1 two http open agent2 three https closing agent3
+        four http closed old five http failed old six console open console1
+        seven http opening {} eight http open {}
+    } {
+        dict set connections $key [dict create protocol $protocol status $state agent_id $agent]
+    }
+    set response [::json::json2dict [::tclwire::console::status_table \
+        $config $pools $threads $connections 1062123]]
+    set rows [dict get $response rows]
+    set summary [dict get $response summary]
+    list [dict get $response command] [dict get $summary uptime] \
+        [dict get $summary connection_agents] [dict get $summary connection_workers] \
+        [dict get $summary application_threads] \
+        [lmap row $rows {list [dict get $row application_id] [dict get $row hosts] \
+            [dict get $row threads] [dict get $row busy_threads]}]
+} -result {STATUS {12d 07:02:03} 3 2 5 {{secure example.org 1 0} {unused unused.example.org 0 0} {web {example.org, www.example.org} 4 2}}}
+
+test console-status-1.2 {STATUS validates arguments and formats unavailable uptime} -body {
+    set response [::json::json2dict [::tclwire::console dispatch {status extra}]]
+    list [dict get $response command] [dict get $response error code] \
+        [::tclwire::console::format_uptime {}] \
+        [::tclwire::console::format_uptime 0]
+} -result {STATUS bad_arguments unavailable {0d 00:00:00}}
+
 cleanupTests

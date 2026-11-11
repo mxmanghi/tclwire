@@ -26,6 +26,7 @@ namespace eval ::tclwire::console_client {
     variable history_limit 200
     variable readline_eof 0
     variable commands {
+        STATUS    {Show uptime, virtual-host worker counts, and connection-agent totals.}
         PS        {List thread accounting and status.}
         SERVICES  {List running services with ports and descriptions.}
         CONN      {List connections; optionally filter by -port or -remote.}
@@ -44,6 +45,10 @@ namespace eval ::tclwire::console_client {
         last_run_start last_run_end created_on opened_at closed_at
     }
     variable column_labels {
+        application_id Application
+        hosts {Virtual hosts}
+        threads Threads
+        busy_threads Busy
         thread_id Thread
         status Status
         family Family
@@ -451,6 +456,15 @@ namespace eval ::tclwire::console_client {
         puts [fallback_table $matrix]
     }
 
+    # STATUS keeps the ordinary table response and adds summary metadata. This
+    # preamble presents service totals once, above the application/host rows.
+    proc status_preamble {summary} {
+        return [join [list \
+            "TclWire PID [dict get $summary pid] — uptime [dict get $summary uptime]" \
+            "Services: [dict get $summary services]   Application threads: [dict get $summary application_threads]" \
+            "Connection agents: [dict get $summary connection_agents]   Connection workers: [dict get $summary connection_workers]"] "\n"]
+    }
+
     proc print_response {response} {
         if {![dict get $response ok]} {
             set error [dict get $response error]
@@ -459,6 +473,9 @@ namespace eval ::tclwire::console_client {
         }
         switch -exact -- [dict get $response type] {
             table {
+                if {[dict get $response command] eq "STATUS" && [dict exists $response summary]} {
+                    puts [status_preamble [dict get $response summary]]
+                }
                 print_table $response
             }
             ok {

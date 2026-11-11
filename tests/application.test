@@ -2472,7 +2472,7 @@ puts [expr {[file normalize $server(SERVER_CONF)] eq \
     catch {::tclwire::accounting remove_thread $worker_id}
     catch {::tclwire::io end}
     removeDirectory $docroot
-} -result [list 1 "1\n3.3.0tw\n1\n"]
+} -result [list 1 "1\n3.3.1tw\n1\n"]
 
 test application-configuration-1.4ff {
     rivet headers adapts to TclWire HTTP header commands
