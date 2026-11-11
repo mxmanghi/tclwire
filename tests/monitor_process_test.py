@@ -1,6 +1,9 @@
 """Standalone tests: python3 -m unittest discover -s tests -p '*_test.py'."""
 
 import importlib.util
+import argparse
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +23,72 @@ SPEC.loader.exec_module(monitor)
 
 class MonitorTests(unittest.TestCase):
     """Cover proc parsing, identity safeguards, and the actual collector CLI."""
+
+    def test_tclwire_command_matching(self):
+        """Recognize versioned shells and paths without matching unrelated commands."""
+        for argv in (["tclsh", "tclwire.tcl"],
+                     ["/usr/bin/tclsh8.6", "/srv/tclwire/tcl/tclwire.tcl", "config.toml"],
+                     ["tclsh9.0", "-encoding", "utf-8", "a path/tclwire.tcl"]):
+            with self.subTest(argv=argv):
+                self.assertTrue(monitor.is_tclwire_command(argv))
+        for argv in ([], ["tclsh"], ["tclsh", "other.tcl", "tclwire.tcl"],
+                     ["bash", "-c", "tclsh8.6 tclwire.tcl config.toml"],
+                     ["vim", "tclwire.tcl"], ["tclsh8x6", "tclwire.tcl"],
+                     ["tclsh", "tclwire.tcl.bak"]):
+            with self.subTest(argv=argv):
+                self.assertFalse(monitor.is_tclwire_command(argv))
+
+    def test_discovery(self):
+        """Scan a proc fixture including vanished, zombie, and unrelated entries."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for pid, argv, state in (
+                    (30, ["tclsh8.6", "/srv/tclwire.tcl", "a.toml"], "S"),
+                    (10, ["/bin/tclsh9.0", "tclwire.tcl"], "R"),
+                    (20, ["sh", "-c", "tclsh tclwire.tcl"], "S"),
+                    (40, ["tclsh", "tclwire.tcl"], "Z")):
+                path = root / str(pid)
+                path.mkdir()
+                fields = [state] + [str(number) for number in range(4, 25)]
+                (path / "stat").write_text(f"{pid} (tclsh) " + " ".join(fields))
+                (path / "cmdline").write_bytes(b"\0".join(os.fsencode(arg) for arg in argv) + b"\0")
+            (root / "50").mkdir()
+            (root / "self").mkdir()
+            matches = monitor.discover_processes(root)
+            self.assertEqual([match["pid"] for match in matches], [10, 30])
+            self.assertEqual(matches[0]["start_ticks"], 22)
+
+    def test_selection(self):
+        """Select one match, reject zero/multiple matches, and honor explicit PID."""
+        parser = argparse.ArgumentParser()
+        match = {"pid": 123, "start_ticks": 456, "argv": ["tclsh8.6", "tclwire.tcl", "a.toml"]}
+        with patch.object(monitor, "discover_processes", return_value=[match]) as discover:
+            self.assertEqual(monitor.select_process(parser, 999), (999, None))
+            discover.assert_not_called()
+            self.assertEqual(monitor.select_process(parser, None), (123, 456))
+        for matches in ([], [match, dict(match, pid=789)]):
+            with self.subTest(matches=matches), patch.object(
+                    monitor, "discover_processes", return_value=matches):
+                output = io.StringIO()
+                with contextlib.redirect_stderr(output), self.assertRaises(SystemExit) as result:
+                    monitor.select_process(parser, None)
+                self.assertEqual(result.exception.code, 2)
+                self.assertIn("--pid", output.getvalue())
+                if matches:
+                    for pid in (123, 789):
+                        self.assertIn(f"PID {pid}:", output.getvalue())
+                    self.assertIn("tclsh8.6 tclwire.tcl a.toml", output.getvalue())
+
+    def test_conflicting_pid_arguments(self):
+        """Reject ambiguous CLI input before opening an output log."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "resources.jsonl"
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "123", "--pid", "456", "--output", str(path)],
+                capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("not both", result.stderr)
+            self.assertFalse(path.exists())
 
     def test_stat_command_with_spaces_and_parentheses(self):
         """Command names must not shift the documented proc field positions."""
@@ -84,7 +153,7 @@ class MonitorTests(unittest.TestCase):
         """Exercise real proc reads and ensure that the target is unaffected."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "resources.jsonl"
-            subprocess.run([sys.executable, str(SCRIPT), str(os.getpid()),
+            subprocess.run([sys.executable, str(SCRIPT), "--pid", str(os.getpid()),
                             "--output", str(path), "--interval", "0.02", "--count", "3"],
                            check=True, timeout=10, capture_output=True)
             records = [json.loads(line) for line in path.read_text().splitlines()]

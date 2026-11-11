@@ -48,20 +48,35 @@ loop, broker, shared accounting locks, or logger. Bash could collect these files
 too; Python handles parsing, interval calculations, JSON output, and rotation
 without launching several commands per sample.
 
-Run it as the same user as TclWire, using the **server PID**, not the PID of a
+Run it as the same user as TclWire. With no PID argument, the collector searches
+visible `/proc` command lines for `tclsh`, `tclsh8.6`, `tclsh9.0`, or another
+numeric Tcl shell version running `tclwire.tcl`. Absolute paths and Tcl's
+`-encoding` option are accepted. Argument boundaries prevent a shell or editor
+merely mentioning that command from being selected.
+
+```sh
+python3 utils/monitor_process.py --output /tmp/tclwire-resources.jsonl
+```
+
+One match starts collection. Multiple matches print their PIDs and commands to
+stderr and exit with status 2 without opening the resource log. No matches also
+produces an explanatory error and status 2. Processes hidden by `/proc`
+permissions cannot be discovered.
+
+To select an instance explicitly, use `--pid` with the **server PID**, not the PID of a
 shell wrapper. For a systemd service, `systemctl show --property MainPID --value
 tclwire.service` can supply that PID; check that your unit's main process is
 actually TclWire. Replace `12345` below with the verified PID:
 
 ```sh
-python3 utils/monitor_process.py 12345 \
+python3 utils/monitor_process.py --pid 12345 \
     --output /tmp/tclwire-resources.jsonl --interval 5
 ```
 
 For a collector that survives logout:
 
 ```sh
-nohup python3 utils/monitor_process.py 12345 \
+nohup python3 utils/monitor_process.py --pid 12345 \
     --output /tmp/tclwire-resources.jsonl --interval 5 \
     > /tmp/tclwire-monitor.out 2>&1 &
 ```
@@ -70,7 +85,9 @@ Use a persistent directory owned by the service user instead of `/tmp` if the
 records must survive reboot or temporary-file cleanup. The output directory must
 already exist. Newly created logs have owner-only permissions; existing files
 retain their permissions. The collector records neither process arguments nor
-environment variables.
+environment variables in the resource log. Commands are displayed only when
+discovery finds multiple matches. The original positional PID form remains
+supported; it cannot be combined with `--pid`.
 
 Every sample is one JSON object on its own line, with a UTC timestamp. It contains:
 
@@ -106,8 +123,9 @@ the collector with a nonzero exit status and a message on stderr.
 
 The collector writes a final stop record when the process exits, becomes a
 zombie, or its PID is reused. It also stops cleanly on SIGINT/SIGTERM. **Restart
-the collector with the new PID whenever TclWire restarts.** It deliberately does
-not follow a process by name. For a short capture, use `--count 12` to take twelve
+the collector whenever TclWire restarts**, using discovery again or supplying the
+new PID. Discovery happens only at startup; it does not follow replacements.
+For a short capture, use `--count 12` to take twelve
 samples. Run `python3 utils/monitor_process.py --help` for all options.
 
 The in-process `diagnostics_enabled` setting complements this collector with

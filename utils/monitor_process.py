@@ -13,10 +13,74 @@ import logging.handlers
 import math
 import os
 from pathlib import Path
+import re
+import shlex
 import signal
 import sys
 import threading
 import time
+
+
+def is_tclwire_command(argv):
+    """Match Tcl shells running the TclWire entry script using real arguments.
+
+    Accept tclsh, tclsh8.6, tclsh9.0, and absolute interpreter/script paths.
+    Inspect argument boundaries rather than searching flattened command text:
+    a shell or editor mentioning a TclWire command is not a server instance.
+    Tcl's optional -encoding argument precedes the script filename.
+    """
+    if not argv or not re.fullmatch(r"tclsh(?:\d+(?:\.\d+)*)?", Path(argv[0]).name):
+        return False
+    script_index = 3 if len(argv) > 1 and argv[1] == "-encoding" else 1
+    return len(argv) > script_index and Path(argv[script_index]).name == "tclwire.tcl"
+
+
+def discover_processes(proc_root=Path("/proc")):
+    """Find visible live TclWire instances and preserve their start identities.
+
+    Process exits during enumeration are normal. Unreadable entries are skipped;
+    discovery can only consider processes visible to the collector's user.
+    Read stat on both sides of cmdline to reject PID reuse during discovery.
+    """
+    matches = []
+    for path in proc_root.iterdir():
+        if not path.name.isdecimal():
+            continue
+        try:
+            before = parse_stat((path / "stat").read_text())
+            argv = [os.fsdecode(value) for value in
+                    (path / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")]
+            if not is_tclwire_command(argv):
+                continue
+            after = parse_stat((path / "stat").read_text())
+        except (OSError, ValueError, IndexError):
+            continue
+        if before["start_ticks"] != after["start_ticks"] or after["state"] in ("Z", "X", "x"):
+            continue
+        matches.append({"pid": int(path.name), "argv": argv,
+                        "start_ticks": after["start_ticks"]})
+    return sorted(matches, key=lambda match: match["pid"])
+
+
+def select_process(parser, explicit_pid):
+    """Select an explicit PID or the sole discovered instance; explain ambiguity."""
+    if explicit_pid is not None:
+        return explicit_pid, None
+    matches = discover_processes()
+    if not matches:
+        parser.error("no visible TclWire process found; use --pid PID to select one explicitly")
+    if len(matches) > 1:
+        print("Multiple TclWire processes found. Select one with --pid PID:", file=sys.stderr)
+        for match in matches:
+            # Escape control characters so each process occupies one terminal
+            # line, even if an argument contains a newline or terminal escape.
+            command = shlex.join(match["argv"])
+            command = "".join(char if char.isprintable() else ascii(char)[1:-1]
+                              for char in command)
+            print(f"  PID {match['pid']}: {command}", file=sys.stderr)
+        parser.exit(2)
+    match = matches[0]
+    return match["pid"], match["start_ticks"]
 
 
 def parse_stat(text):
@@ -215,7 +279,10 @@ def positive_interval(value):
 def main(argv=None):
     """Run sampling until the target exits, a signal arrives, or count is met."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pid", type=positive_integer, help="PID of the TclWire process")
+    parser.add_argument("legacy_pid", nargs="?", type=positive_integer,
+                        help="PID (legacy positional form; prefer --pid)")
+    parser.add_argument("--pid", type=positive_integer,
+                        help="process PID (default: discover a single TclWire instance)")
     parser.add_argument("--output", required=True, type=Path, help="JSON Lines log (parent directory must exist)")
     parser.add_argument("--interval", type=positive_interval, default=5.0, help="sample interval in seconds (default: 5)")
     parser.add_argument("--max-mib", type=positive_integer, default=20, help="rotate at this many MiB (default: 20)")
@@ -225,11 +292,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not sys.platform.startswith("linux"):
         parser.error("this collector requires Linux /proc")
+    if args.pid is not None and args.legacy_pid is not None:
+        parser.error("specify either --pid or a positional PID, not both")
+    args.pid, discovered_start = select_process(parser, args.pid or args.legacy_pid)
 
     # Restrict newly created logs to this user. Existing files retain their
     # permissions. Never record command-line arguments or the environment.
     os.umask(0o077)
     collector = Collector(args.pid, not args.no_threads)
+    if discovered_start is not None and collector.start_ticks != discovered_start:
+        parser.error("discovered process exited and its PID was reused; run discovery again")
     handler = StrictRotatingHandler(args.output, maxBytes=args.max_mib * 1024 * 1024,
                                     backupCount=args.backups, encoding="utf-8")
     logger = logging.Logger("process-monitor", level=logging.INFO)
